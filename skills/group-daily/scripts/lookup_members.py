@@ -15,12 +15,20 @@ def _resolve_default_db() -> str:
     """解析联系人数据库默认路径。
 
     优先级:
-      1. VCHAT_DATA_DIR 环境变量 + /decrypted/contact/contact.db
-      2. ~/Projects/wechat-decrypt/decrypted/contact/contact.db
+      1. VCHAT_DATA_DIR
+      2. WECHAT_DECRYPT_PATH (旧名兼容)
+      3. ~/.vchat/data
+      4. ~/Projects/wechat-decrypt (老 fallback)
     """
-    root = os.environ.get("VCHAT_DATA_DIR",
-                          "~/Projects/wechat-decrypt")
-    return os.path.expanduser(f"{root}/decrypted/contact/contact.db")
+    for env in ("VCHAT_DATA_DIR", "WECHAT_DECRYPT_PATH"):
+        v = os.environ.get(env)
+        if v:
+            return os.path.expanduser(f"{v}/decrypted/contact/contact.db")
+    for default in ("~/.vchat/data", "~/Projects/wechat-decrypt"):
+        p = os.path.expanduser(f"{default}/decrypted/contact/contact.db")
+        if os.path.exists(p):
+            return p
+    return os.path.expanduser("~/.vchat/data/decrypted/contact/contact.db")
 
 
 DEFAULT_DB = _resolve_default_db()
