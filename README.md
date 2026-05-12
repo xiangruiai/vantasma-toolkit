@@ -102,10 +102,7 @@ cp -r skills/feishu-proposal ~/.claude/skills/
 
 ## 关于万涂幻象
 
-万涂幻象（vantasma）是李祥瑞主理的 AI 落地工作室，专注：
-- 飞书 / 多维表格生态深度玩法
-- AI 工具开源（社区已有 5 万+ 成员）
-- 一人公司 / OPC 数字工具栈
+**万涂幻象** · 李祥瑞主理的社区，深耕飞书多维表格 + AI 落地。
 
 公众号：**万涂幻象**  ·  开源知识库：[vantasma.feishu.cn/wiki/space/7574356946532925441](https://vantasma.feishu.cn/wiki/space/7574356946532925441)
 
