@@ -51,7 +51,7 @@ vantasma-toolkit/
 
 ---
 
-## 1. cli/vchat — 微信本地数据 CLI
+## 1. vchat — 微信本地数据 CLI
 
 63 个子命令，覆盖微信本地数据的查询、解密、导出场景。
 
@@ -93,7 +93,7 @@ vchat --help                                    # 看全部 63 命令
 
 ---
 
-## 2. skills/ — 5 个 Claude Code Skills
+## 2. Claude Code Skills
 
 | Skill | 用途 | 详情 |
 |---|---|---|
