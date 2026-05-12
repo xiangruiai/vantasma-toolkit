@@ -37,9 +37,9 @@ SOFTWARE.
    - 《中华人民共和国数据安全法》
    - 微信、飞书、滴滴等平台的《软件许可及服务协议》《用户协议》
 
-3. 微信、WeChat、飞书、Lark、滴滴、SQLCipher、WCDB 等均为其各自持有人
-   的注册商标。本项目与腾讯、字节跳动、滴滴出行、Zetetic 等公司均无
-   任何关联，亦未获其授权或背书。
+3. 微信、WeChat、飞书、Lark、滴滴、SQLCipher、WCDB 等名称归其各自
+   持有人所有。本项目与腾讯、字节跳动、滴滴出行、Zetetic 等公司或
+   开源项目均无任何关联，亦未获其授权或背书。
 
 4. 本仓库的 cli/vchat（前身 wxchat）涉及对加密本地数据库的逆向解密。
    该实现仅参考 SQLCipher 公开设计文档（zetetic.net）与 Tencent WCDB
