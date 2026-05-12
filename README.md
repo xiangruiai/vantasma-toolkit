@@ -2,7 +2,7 @@
 
 > 万涂幻象出品的个人工具合集 · **仅供个人学习与研究用途**
 >
-> 含 1 个 CLI（vchat）+ 5 个 Claude Code Skills，全部我们自己写/维护。
+> 含 1 个 CLI（vchat）+ 5 个 Claude Code Skills。
 
 ---
 
@@ -53,27 +53,40 @@ vantasma-toolkit/
 
 ## 1. cli/vchat — 微信本地数据 CLI
 
-**63 个子命令**，覆盖微信本地数据的所有查询、解密、导出场景。
-**100% 我们自己写**（5200 行 Python + C），零外部代码依赖。
+63 个子命令，覆盖微信本地数据的查询、解密、导出场景。
+
+### 让 Agent 自动安装（推荐）
+
+把下面这句话贴给你的 AI Agent（Claude Code / Cursor / aider 都行）：
+
+> **「帮我安装 https://github.com/Larkin0302/vantasma-toolkit 里的 vchat CLI（路径 cli/vchat）。按它 README 的步骤跑：clone → bash install.sh → 装 cryptography + zstandard → sudo vchat setup。完成后跑 vchat doctor 确认本地 db 全部解密。」**
+
+Agent 会自动跑完，需要你介入的只有：
+- 一次 `gh auth login`（如果没登 GitHub）
+- 一次 sudo 密码输入
+- 微信桌面版保持开着 + 登录状态
+
+### 手动安装
 
 ```bash
-# 安装（macOS / Windows / Linux）
-cd cli/vchat
+git clone git@github.com:Larkin0302/vantasma-toolkit.git
+cd vantasma-toolkit/cli/vchat
 bash install.sh
+pip3 install cryptography zstandard
+sudo vchat setup        # macOS（Windows 用 python vchat setup）
+```
 
-# 一键解密（仅 macOS / Windows，Linux 无微信桌面版）
-sudo vchat setup   # macOS
-python vchat setup # Windows
+### 常用命令
 
-# 用起来
-vchat ls 20                         # 最近 20 个会话
-vchat history "某群" -n 5000        # 拉历史
-vchat search "关键词" --fast        # FTS 全库搜
-vchat group-info "某群"             # 群主 + 公告 + 成员数
-vchat group-members "某群" --avatars -o dir/  # 列成员 + 批量头像
-vchat watch --chat "某群"           # 实时监听新消息
-vchat --json ls 50                  # JSON 输出供 AI Agent 用
-vchat --help                        # 看全部 63 命令
+```bash
+vchat ls 20                                    # 最近 20 个会话
+vchat history "某群" -n 5000                    # 拉历史
+vchat search "关键词" --fast                    # FTS 全库搜
+vchat group-info "某群"                         # 群主 + 公告 + 成员数
+vchat group-members "某群" --avatars -o dir/    # 列成员 + 批量头像
+vchat watch --chat "某群"                       # 实时监听新消息
+vchat --json ls 50                              # JSON 输出供 AI Agent 用
+vchat --help                                    # 看全部 63 命令
 ```
 
 详见 [`cli/vchat/README.md`](cli/vchat/README.md)。
