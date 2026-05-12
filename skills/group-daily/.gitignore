@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+
+# 转写缓存（含用户语音 hash，不公开）
+voice_cache.json
+
+# 测试输出
+.DS_Store
+/tmp/
+*.png.bak
+
+# IDE
+.vscode/
+.idea/
+
+# 用户私有的群风格 / 归档数据
+# （styles 默认存在 $GROUP_DAILY_VAULT 里，不在 skill 仓库；
+#   但如果有人把 GROUP_DAILY_VAULT 指到 skill 目录，这里兜底忽略）
+styles/
+archive/
+*.story.json
+2026-*.json

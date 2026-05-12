@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{TITLE}} · {{DATE}}</title>
+<style>
+@font-face {
+  font-family: 'SerifCJK';
+  src: local('Songti SC'), local('STSong'), local('SimSun'),
+       local('Noto Serif CJK SC'), local('Source Han Serif SC');
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { background: #ede5d0; }
+body {
+    font-family: 'SerifCJK', 'Songti SC', 'STSong', Georgia, serif;
+    background: #ede5d0;
+    color: #1a1815;
+    line-height: 1.95;
+    padding: 0;
+    -webkit-font-smoothing: antialiased;
+}
+body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      radial-gradient(circle at 20% 30%, rgba(184,68,60,0.025) 0%, transparent 50%),
+      radial-gradient(circle at 80% 70%, rgba(212,160,23,0.03) 0%, transparent 50%);
+    pointer-events: none;
+    z-index: 0;
+}
+.container {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 56px 36px 80px;
+    position: relative;
+    z-index: 1;
+}
+
+/* ====== Masthead 报头 ====== */
+.masthead {
+    border-top: 4px solid #1a1815;
+    border-bottom: 1px solid #1a1815;
+    padding: 22px 0 18px;
+    margin-bottom: 56px;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+}
+.masthead-name {
+    font-family: 'SerifCJK', Georgia, serif;
+    font-size: 38px;
+    font-weight: 900;
+    line-height: 1;
+    letter-spacing: -0.5px;
+}
+.masthead-sub {
+    font-size: 11px;
+    color: #8a8270;
+    letter-spacing: 5px;
+    margin-top: 6px;
+    text-transform: uppercase;
+}
+.masthead-right { font-family: Georgia, serif; font-size: 12px; text-align: right; }
+.masthead-right .issue { font-size: 14px; letter-spacing: 2px; font-style: italic; }
+.masthead-right .date { font-size: 11px; color: #8a8270; margin-top: 2px; letter-spacing: 1px; }
+
+/* ====== Lead 主标题 ====== */
+.lead { margin-bottom: 80px; }
+.lead-eyebrow {
+    font-size: 11px;
+    letter-spacing: 4px;
+    color: #b8443c;
+    margin-bottom: 14px;
+    font-family: Georgia, serif;
+    text-transform: uppercase;
+    font-style: italic;
+}
+.lead-title {
+    font-family: 'SerifCJK', serif;
+    font-size: 48px;
+    font-weight: 900;
+    line-height: 1.2;
+    margin-bottom: 24px;
+    letter-spacing: -1px;
+}
+.lead-deck {
+    font-family: 'SerifCJK', serif;
+    font-size: 16px;
+    line-height: 1.95;
+    color: #3a342a;
+    border-top: 1px solid #c9bfa2;
+    border-bottom: 1px solid #c9bfa2;
+    padding: 22px 0;
+    margin-top: 28px;
+}
+.drop-cap {
+    float: left;
+    font-family: 'SerifCJK', serif;
+    font-size: 64px;
+    line-height: 0.85;
+    font-weight: 900;
+    color: #b8443c;
+    padding-right: 10px;
+    padding-top: 4px;
+}
+
+/* ====== Section 分隔 ====== */
+.section-divider {
+    text-align: center;
+    margin: 64px 0 40px;
+    font-family: Georgia, serif;
+    font-size: 11px;
+    letter-spacing: 6px;
+    color: #8a8270;
+    text-transform: uppercase;
+}
+.section-divider::before, .section-divider::after {
+    content: '';
+    display: inline-block;
+    width: 60px;
+    height: 1px;
+    background: #c9bfa2;
+    vertical-align: middle;
+    margin: 0 16px;
+}
+
+/* ====== 时间故事线 ====== */
+.story {
+    margin-bottom: 64px;
+    padding-bottom: 56px;
+    border-bottom: 1px solid #c9bfa2;
+}
+.story:last-of-type { border-bottom: none; }
+.story-header { display: flex; align-items: flex-start; gap: 24px; margin-bottom: 20px; }
+.story-no {
+    font-family: Georgia, serif;
+    font-size: 96px;
+    font-weight: 900;
+    line-height: 0.85;
+    color: #b8443c;
+    flex-shrink: 0;
+    letter-spacing: -3px;
+}
+.story-meta { flex: 1; padding-top: 14px; }
+.story-time { font-family: Georgia, serif; font-size: 13px; color: #8a8270; letter-spacing: 2px; margin-bottom: 4px; }
+.story-badge { font-family: 'SerifCJK', serif; font-size: 13px; color: #b8443c; font-style: italic; }
+.story-theme {
+    font-family: 'SerifCJK', serif;
+    font-size: 30px;
+    font-weight: 900;
+    line-height: 1.3;
+    margin: 8px 0 24px;
+    letter-spacing: -0.5px;
+}
+.story-cast {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 22px;
+    padding: 14px 0;
+    border-top: 1px dashed #c9bfa2;
+    border-bottom: 1px dashed #c9bfa2;
+}
+.cast-avatars { display: flex; }
+.cast-avatars .avatar { margin-left: -8px; border: 2px solid #ede5d0; }
+.cast-avatars .avatar:first-child { margin-left: 0; }
+.cast-label { font-family: Georgia, serif; font-size: 11px; color: #8a8270; letter-spacing: 2px; text-transform: uppercase; margin-right: 8px; }
+.cast-names { font-family: 'SerifCJK', serif; font-size: 14px; }
+
+.avatar {
+    display: inline-block;
+    border-radius: 50%;
+    object-fit: cover;
+    vertical-align: middle;
+    width: 44px;
+    height: 44px;
+    background: #c9bfa2;
+}
+.avatar-text {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #1a1815;
+    color: #ede5d0;
+    font-family: 'SerifCJK', serif;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+.story-text {
+    font-family: 'SerifCJK', serif;
+    font-size: 16px;
+    line-height: 2;
+    margin-bottom: 28px;
+    text-align: justify;
+}
+.story-quotes { margin: 28px 0; padding: 0 20px; border-left: 3px solid #b8443c; }
+.story-quote { margin-bottom: 18px; font-family: 'SerifCJK', serif; }
+.story-quote:last-child { margin-bottom: 0; }
+.quote-text {
+    font-size: 18px;
+    line-height: 1.8;
+    font-style: italic;
+    margin-bottom: 6px;
+    quotes: "「" "」";
+}
+.quote-text::before { content: open-quote; color: #b8443c; }
+.quote-text::after { content: close-quote; color: #b8443c; }
+.quote-attr { font-family: Georgia, serif; font-size: 12px; color: #8a8270; letter-spacing: 1px; }
+.voice-badge {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 7px;
+    background: rgba(184, 68, 60, 0.12);
+    color: #b8443c;
+    border-radius: 8px;
+    font-family: 'SerifCJK', Georgia, serif;
+    font-size: 10.5px;
+    letter-spacing: 0;
+    font-style: normal;
+    vertical-align: 1px;
+}
+.story-output {
+    font-family: Georgia, serif;
+    font-size: 12px;
+    color: #8a8270;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    padding-top: 18px;
+    border-top: 1px dashed #c9bfa2;
+}
+.story-output b {
+    font-family: 'SerifCJK', serif;
+    font-size: 14px;
+    color: #1a1815;
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 500;
+    margin-left: 6px;
+}
+
+/* ====== 高光人物 ====== */
+.highlights { display: grid; grid-template-columns: 1fr 1fr; gap: 40px 28px; margin-bottom: 32px; }
+.hl { display: flex; gap: 18px; align-items: flex-start; }
+.hl-avatar {
+    width: 72px !important;
+    height: 72px !important;
+    flex-shrink: 0;
+    border: 1px solid #1a1815;
+    box-shadow: 4px 4px 0 #b8443c;
+    border-radius: 50%;
+}
+.hl-info { flex: 1; padding-top: 4px; }
+.hl-name { font-family: 'SerifCJK', serif; font-size: 20px; font-weight: 900; margin-bottom: 2px; letter-spacing: -0.3px; }
+.hl-tag { font-family: Georgia, serif; font-size: 11px; color: #b8443c; letter-spacing: 2px; text-transform: uppercase; font-style: italic; margin-bottom: 8px; }
+.hl-desc { font-family: 'SerifCJK', serif; font-size: 13.5px; color: #3a342a; line-height: 1.75; }
+
+/* ====== 折叠区 ====== */
+details { margin-bottom: 14px; border-top: 1px solid #c9bfa2; padding-top: 16px; }
+details summary {
+    cursor: pointer;
+    list-style: none;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-family: 'SerifCJK', serif;
+    font-size: 18px;
+    font-weight: 700;
+    padding: 8px 0;
+}
+details summary::-webkit-details-marker { display: none; }
+details summary::after { content: '展开'; font-family: Georgia, serif; font-size: 11px; color: #b8443c; letter-spacing: 2px; font-style: italic; }
+details[open] summary::after { content: '收起'; }
+details .body { padding: 14px 0 8px; }
+
+.sop-block { margin-bottom: 32px; }
+.sop-title { font-family: 'SerifCJK', serif; font-size: 17px; font-weight: 700; margin-bottom: 4px; }
+.sop-meta { font-family: Georgia, serif; font-size: 11px; color: #8a8270; letter-spacing: 1px; margin-bottom: 14px; }
+.sop-steps { list-style: none; counter-reset: step; padding: 0; }
+.sop-step {
+    counter-increment: step;
+    position: relative;
+    padding: 8px 0 8px 36px;
+    font-family: 'SerifCJK', serif;
+    font-size: 14px;
+    line-height: 1.85;
+    border-bottom: 1px dashed #d6cdaf;
+}
+.sop-step:last-child { border-bottom: none; }
+.sop-step::before {
+    content: counter(step, decimal-leading-zero);
+    position: absolute;
+    left: 0; top: 8px;
+    font-family: Georgia, serif;
+    font-size: 13px;
+    color: #b8443c;
+    letter-spacing: 1px;
+    font-style: italic;
+}
+.sop-out {
+    margin-top: 14px;
+    padding: 12px 16px;
+    background: rgba(212,160,23,0.12);
+    border-left: 2px solid #d4a017;
+    font-family: 'SerifCJK', serif;
+    font-size: 13px;
+    color: #6b5a1a;
+    line-height: 1.7;
+}
+
+.qa-item { padding: 14px 0; border-bottom: 1px dashed #d6cdaf; }
+.qa-item:last-child { border: none; }
+.qa-q { font-family: 'SerifCJK', serif; font-size: 15px; font-weight: 700; margin-bottom: 8px; }
+.qa-q .asker { font-family: Georgia, serif; font-size: 11px; color: #8a8270; font-weight: normal; font-style: italic; margin-left: 6px; }
+.qa-a {
+    padding: 6px 0 6px 14px;
+    font-family: 'SerifCJK', serif;
+    font-size: 13.5px;
+    color: #3a342a;
+    border-left: 2px solid #d6cdaf;
+    margin: 4px 0;
+    line-height: 1.7;
+}
+.qa-a b { color: #b8443c; font-weight: 600; margin-right: 4px; }
+
+/* ====== Colophon 底部 ====== */
+.colophon { margin-top: 80px; padding-top: 36px; border-top: 4px solid #1a1815; text-align: center; }
+.colophon-stats { display: flex; justify-content: center; gap: 36px; margin-bottom: 24px; flex-wrap: wrap; }
+.colophon-num { text-align: center; }
+.colophon-num .n { font-family: Georgia, serif; font-size: 34px; font-weight: 900; line-height: 1; }
+.colophon-num .l { font-family: Georgia, serif; font-size: 10px; color: #8a8270; letter-spacing: 3px; text-transform: uppercase; margin-top: 6px; }
+.colophon-quote { font-family: 'SerifCJK', serif; font-style: italic; font-size: 14px; color: #3a342a; margin-top: 24px; padding: 0 40px; }
+.colophon-quote .attr { display: block; margin-top: 8px; font-family: Georgia, serif; font-style: normal; font-size: 11px; color: #8a8270; letter-spacing: 2px; }
+.colophon-meta { font-family: Georgia, serif; font-size: 10px; color: #8a8270; letter-spacing: 3px; margin-top: 32px; text-transform: uppercase; }
+
+@media (max-width: 600px) {
+    .container { padding: 32px 22px 60px; }
+    .lead-title { font-size: 34px; }
+    .story-no { font-size: 64px; }
+    .story-theme { font-size: 22px; }
+    .highlights { grid-template-columns: 1fr; }
+    .masthead-name { font-size: 28px; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+<div class="masthead">
+  <div class="masthead-left">
+    <div class="masthead-name">群日报</div>
+    <div class="masthead-sub">A DAILY OF A COMMUNITY</div>
+  </div>
+  <div class="masthead-right">
+    <div class="issue">Vol. {{VOL}}</div>
+    <div class="date">{{GROUP_NAME}}</div>
+  </div>
+</div>
+
+<div class="lead">
+  <div class="lead-eyebrow">{{LEAD_EYEBROW}}</div>
+  <h1 class="lead-title">{{LEAD_TITLE}}</h1>
+  <div class="lead-deck">{{OPENING}}</div>
+</div>
+
+{{TIMELINE}}
+
+{{HIGHLIGHTS}}
+
+{{APPENDIX_DIVIDER}}
+{{SOPS}}
+{{QAS}}
+
+{{COLOPHON}}
+
+</div>
+</body>
+</html>

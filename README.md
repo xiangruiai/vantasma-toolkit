@@ -97,6 +97,7 @@ vchat --help                                    # 看全部 63 命令
 
 | Skill | 用途 | 详情 |
 |---|---|---|
+| `group-daily` | **群日报**：微信群一天聊天 → 杂志风 HTML + PNG（依赖 vchat CLI） | [README](skills/group-daily/README.md) |
 | `feishu-proposal` | 飞书会议纪要 → 客户方案文档 | [README](skills/feishu-proposal/README.md) |
 | `feishu-bitable-skill` | 飞书多维表格搭建（OpenClaw） | [README](skills/feishu-bitable-skill/README.md) |
 | `feishu-bitable-system-prompt` | 飞书多维表格 AI 提示词设计 | [README](skills/feishu-bitable-system-prompt/README.md) |
