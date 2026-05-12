@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+audit.jsonl
+_lark_tmp.json
+_bitable_patch.json

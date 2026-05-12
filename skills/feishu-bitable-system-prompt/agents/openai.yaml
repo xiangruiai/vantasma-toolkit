@@ -1,0 +1,7 @@
+interface:
+  display_name: "系统提示词设计器"
+  short_description: "先追问业务逻辑，再产出飞书系统提示词"
+  default_prompt: "Use $feishu-bitable-prompt-designer to ask clarifying questions first and turn my fuzzy business requirement into a Feishu Bitable AI expert-mode system prompt."
+
+policy:
+  allow_implicit_invocation: true

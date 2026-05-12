@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# OS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
+.claude/
+
+# wxchat / vchat 私人缓存 + 数据
+decrypted/
+decoded_voices/
+voice_transcriptions.json
+keys.json
+all_keys.json
+config.json
+*.db
+*.db-shm
+*.db-wal
+*_export*.json
+*_transcribed*.json
+
+# 编译产物
+cli/vchat/vchat_native/find_keys_macos
+cli/vchat/__pycache__/
+
+# 临时输出
+out/
+tmp/
+.v2_recovery/
