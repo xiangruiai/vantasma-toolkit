@@ -2,7 +2,7 @@
 
 > 万涂幻象出品的个人工具合集 · **仅供个人学习与研究用途**
 >
-> 含 1 个 CLI（vchat）+ 5 个 Claude Code Skills。
+> 含 1 个 CLI（vchat）+ 6 个 Claude Code Skills。
 
 ---
 
@@ -46,6 +46,8 @@ vantasma-toolkit/
     ├── feishu-bitable-skill/        飞书多维表格搭建
     ├── feishu-bitable-system-prompt/ 飞书多维表格 AI 系统提示词设计
     ├── feishu-proposal/             飞书客户方案自动生成
+    ├── group-daily/                 微信群杂志风日报
+    ├── ming-li/                     八字 / 紫微 / 六爻 命理分析
     └── mp-data/                     公众号数据抓取
 ```
 
@@ -98,6 +100,7 @@ vchat --help                                    # 看全部 63 命令
 | Skill | 用途 | 详情 |
 |---|---|---|
 | `group-daily` | **群日报**：微信群一天聊天 → 杂志风 HTML + PNG（依赖 vchat CLI） | [README](skills/group-daily/README.md) |
+| `ming-li` | **命理大师**：八字四家合一 + 紫微 + 六爻 → 新中式古典风 HTML 卷轴 + PNG 长图 | [README](skills/ming-li/README.md) |
 | `feishu-proposal` | 飞书会议纪要 → 客户方案文档 | [README](skills/feishu-proposal/README.md) |
 | `feishu-bitable-skill` | 飞书多维表格搭建（OpenClaw） | [README](skills/feishu-bitable-skill/README.md) |
 | `feishu-bitable-system-prompt` | 飞书多维表格 AI 提示词设计 | [README](skills/feishu-bitable-system-prompt/README.md) |
