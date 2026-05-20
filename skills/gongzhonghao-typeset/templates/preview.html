@@ -1292,6 +1292,9 @@
       target.removeAttribute('class');
       target.removeAttribute('id');
     });
+    // flatten 完之后再移除 SVG 装饰：公众号编辑器对 <svg> 标签上的 width="N" 属性
+    // 也会触发「宽度异常」检测。浏览器预览里 SVG 仍在不影响视觉调试，剪贴板里去掉。
+    clone.querySelectorAll('svg').forEach(s => s.remove());
     return clone;
   }
 
