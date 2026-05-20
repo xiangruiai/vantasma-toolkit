@@ -190,7 +190,9 @@ def render_paragraph(text, theme):
 def render_image(name, caption, theme, search_dirs):
     src = img_to_data_uri(name, search_dirs)
     cap = inline(caption, theme) if caption else ''
-    cap_html = (f'<p style="margin:12px 0 0;font-size:13px;color:var(--c-mute);'
+    # margin-bottom 兜底：公众号编辑器把外层 <section> 的 margin 抹掉时，
+    # caption 不会跟下一段正文挤在一起
+    cap_html = (f'<p style="margin:12px 0 18px;font-size:13px;color:var(--c-mute);'
                 f'line-height:1.7;text-align:center;">{cap}</p>') if cap else ''
     is_scrollbox = any(k in name for k in ('全图', '长图', 'scrollbox', 'longshot'))
     if is_scrollbox:
