@@ -2,7 +2,7 @@
 
 > 万涂幻象出品的个人工具合集 · **仅供个人学习与研究用途**
 >
-> 含 1 个 CLI（vchat）+ 6 个 Claude Code Skills。
+> 含 1 个 CLI（vchat）+ 7 个 Claude Code Skills。
 
 ---
 
@@ -46,6 +46,7 @@ vantasma-toolkit/
     ├── feishu-bitable-skill/        飞书多维表格搭建
     ├── feishu-bitable-system-prompt/ 飞书多维表格 AI 系统提示词设计
     ├── feishu-proposal/             飞书客户方案自动生成
+    ├── gongzhonghao-typeset/        公众号排版 · 写完 md 一键排成可粘贴的公众号 HTML
     ├── group-daily/                 微信群杂志风日报
     ├── ming-li/                     八字 / 紫微 / 六爻 命理分析
     └── mp-data/                     公众号数据抓取
@@ -105,6 +106,7 @@ vchat --help                                    # 看全部 63 命令
 | `feishu-bitable-skill` | 飞书多维表格搭建（OpenClaw） | [README](skills/feishu-bitable-skill/README.md) |
 | `feishu-bitable-system-prompt` | 飞书多维表格 AI 提示词设计 | [README](skills/feishu-bitable-system-prompt/README.md) |
 | `didi-ride-skill` | 飞书里一句话叫滴滴（OpenClaw） | [README](skills/didi-ride-skill/README.md) |
+| `gongzhonghao-typeset` | **公众号排版**：写完 md 一键排成可粘贴的公众号 HTML，带实时控制面板（品牌/配色/排版/图片）+ 三种吸色 | [README](skills/gongzhonghao-typeset/README.md) |
 | `mp-data` | 公众号全量文章数据抓取 + 可视化 | [README](skills/mp-data/README.md) |
 
 ### 安装 Claude Code Skill

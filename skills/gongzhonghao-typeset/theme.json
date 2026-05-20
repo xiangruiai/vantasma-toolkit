@@ -1,0 +1,34 @@
+{
+  "_comment": "公众号排版主题配置。这是万涂幻象默认主题（嫩翠绿骨架 + 粉莓点缀）。装这个 skill 后复制一份改成你自己的品牌风。",
+  "brand": {
+    "name": "万涂幻象",
+    "magazine_suffix": "MAGAZINE",
+    "chapter_stamp": "万涂幻象 ─",
+    "issue_prefix": "VOL.",
+    "issue_number": 1,
+    "case_prefix": "CASE",
+    "feature_label": "ISSUE FEATURE"
+  },
+  "colors": {
+    "bg": "#ffffff",
+    "main": "#22a667",
+    "soft": "#a3d97d",
+    "soft_bg": "#e8f5e9",
+    "img_border": "#a5d6a7",
+    "accent": "#e84a6d",
+    "highlight_pink": "#ffe5ec",
+    "btn_bg": "#f3f4f6",
+    "step_bg": "#1a1a1a",
+    "text": "#3a3a3a",
+    "text_strong": "#1a1a1a",
+    "mute": "#737373",
+    "faint": "#a3a3a3"
+  },
+  "typography": {
+    "body_font_size_px": 15,
+    "body_line_height": 1.85,
+    "chapter_number_size_px": 58,
+    "h3_size_px": 17,
+    "h3_bar_color": "main"
+  }
+}
