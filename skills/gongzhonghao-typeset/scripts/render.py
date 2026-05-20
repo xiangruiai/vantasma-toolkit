@@ -190,26 +190,26 @@ def render_paragraph(text, theme):
 def render_image(name, caption, theme, search_dirs):
     src = img_to_data_uri(name, search_dirs)
     cap = inline(caption, theme) if caption else ''
-    # margin-bottom 兜底：公众号编辑器把外层 <section> 的 margin 抹掉时，
-    # caption 不会跟下一段正文挤在一起
-    cap_html = (f'<p style="margin:12px 0 18px;font-size:13px;color:var(--c-mute);'
+    # caption 不再嵌套在 section 内（公众号编辑器把 section 当 inline 时会撞段），
+    # 改用独立 <p> 平铺在外层 section 之后。<p> 之间的间距公众号保留得最好。
+    cap_html = (f'<p style="margin:12px 0 32px;font-size:13px;color:var(--c-mute);'
                 f'line-height:1.7;text-align:center;">{cap}</p>') if cap else ''
     is_scrollbox = any(k in name for k in ('全图', '长图', 'scrollbox', 'longshot'))
     if is_scrollbox:
-        return (f'<section style="margin:32px auto;text-align:center;">'
+        return (f'<section style="margin:32px auto 0;text-align:center;">'
                 f'<section style="max-height:560px;overflow-y:auto;-webkit-overflow-scrolling:touch;'
                 f'border-radius:var(--img-radius);border:var(--img-border-width) solid var(--c-img-border);'
                 f'box-shadow:0 8px var(--img-shadow-blur) rgba(0,0,0,0.12);background:#ede4cd;">'
                 f'<img src="{src}" style="width:100%;display:block;border-radius:0;">'
-                f'</section>'
-                f'<p style="margin:8px 0 0;font-size:11px;color:var(--c-mute);letter-spacing:1px;">'
+                f'</section></section>'
+                f'<p style="margin:8px 0 0;font-size:11px;color:var(--c-mute);letter-spacing:1px;text-align:center;">'
                 f'↕ 在框内上下滑动可浏览完整长图 ↕</p>'
-                f'{cap_html}</section>')
-    return (f'<section style="margin:32px auto;text-align:center;">'
+                f'{cap_html}')
+    return (f'<section style="margin:32px auto 0;text-align:center;">'
             f'<img src="{src}" style="max-width:100%;height:auto;display:block;margin:0 auto;'
             f'border-radius:var(--img-radius);border:var(--img-border-width) solid var(--c-img-border);'
             f'box-shadow:0 8px var(--img-shadow-blur) rgba(0,0,0,0.12);">'
-            f'{cap_html}</section>')
+            f'</section>{cap_html}')
 
 
 def render_table(rows, theme):
