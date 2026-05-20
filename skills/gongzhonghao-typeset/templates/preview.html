@@ -1272,14 +1272,13 @@
       const target = cloneAll[i];
       const isRoot = (origEl === rootEl);
       const display = cs.getPropertyValue('display');
-      // 块级和 inline-block 元素的 width 不写 inline——公众号内容结构检测只允许 auto/100%。
-      // 原本依赖固定 px width 的装饰（H3 竖条 / 三段短横 / 列表圆点 / 引用装饰）已改用 SVG 实现，
-      // SVG 的 width/height 是属性不是 CSS，绕过检测。
-      const isBlockLike = display === 'block' || display === 'flex' || display === 'grid' || display === 'list-item' || display === 'inline-block';
+      // width 一律不写 inline——公众号内容结构检测只允许 auto/100%。所有需要固定宽度
+      // 的装饰元素都已经改用 SVG（width/height 走属性而非 CSS），不依赖 CSS width。
+      // getComputedStyle 对 inline 元素（如 img）会返回实际像素值，留下来会被检测拦截。
       let s = '';
       KEEP_PROPS.forEach(k => {
         if (isRoot && ROOT_STRIP.has(k)) return;
-        if (isBlockLike && k === 'width') return;
+        if (k === 'width') return;
         const v = cs.getPropertyValue(k);
         if (!v) return;
         if (v === 'normal' && (k === 'letter-spacing' || k === 'font-style')) return;
