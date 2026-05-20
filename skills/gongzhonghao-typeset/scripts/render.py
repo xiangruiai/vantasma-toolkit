@@ -341,6 +341,104 @@ def render_step_card(num, title, theme, label_text=None):
 H2_LITE_WHITELIST = {'写在最后'}
 CAPTION_PREFIX_RE = re.compile(r'^>\s*(配图来源|图片来源|图注|图|来源|Source|Figure)\s*[:：]\s*(.+)$')
 
+# 分级前缀关键词 → 编号（用于 inline_heading 和 tier_card 调度）
+STAGE_MAP = {'第一件事': 1, '第二件事': 2, '第三件事': 3, '第四件事': 4, '第五件事': 5}
+FACTION_MAP = {'第一派': 1, '第二派': 2, '第三派': 3, '第四派': 4}
+STEP_MAP = {'第一步': 1, '第二步': 2, '第三步': 3, '第四步': 4, '第五步': 5}
+TIER_MAP = {'第一档': 1, '第二档': 2, '第三档': 3}
+INLINE_HEADING_PREFIX = {**STAGE_MAP, **FACTION_MAP, **STEP_MAP}
+
+
+def infer_caption_from_filename(name):
+    """无 caption 时，从文件名推断：去扩展名 + 去数字编号 + 去常见语义前缀。"""
+    from pathlib import Path as _P
+    stem = _P(name).stem
+    stem = re.sub(r'^\d{1,2}[-_]', '', stem)
+    for prefix in ('部署-', '场景-', '架构-', '对比-', '收束图-', '场景适配-'):
+        if stem.startswith(prefix):
+            stem = stem[len(prefix):]
+            break
+    return stem
+
+
+def render_slider(items, theme, search_dirs, title=''):
+    """横向滑动图片组：浏览器预览可左右滑（scroll-snap），微信粘贴后降级为纵向小图。
+    items: [(img_name, caption_text), ...]
+    """
+    cards = []
+    for img_name, caption in items:
+        src = img_to_data_uri(img_name, search_dirs)
+        cap = inline(caption, theme) if caption else ''
+        cap_html = (f'<p style="margin:10px 0 0;font-size:12px;color:var(--c-mute);'
+                    f'line-height:1.7;text-align:center;">{cap}</p>') if cap else ''
+        cards.append(
+            f'<section style="flex:0 0 78%;max-width:360px;margin-right:14px;scroll-snap-align:start;">'
+            f'<img src="{src}" style="width:100%;display:block;border-radius:14px;'
+            f'border:var(--img-border-width) solid var(--c-img-border);'
+            f'box-shadow:0 8px 24px rgba(0,0,0,0.12),0 2px 6px rgba(0,0,0,0.06);">'
+            f'{cap_html}</section>'
+        )
+    title_label = f'← SWIPE · {title} · 共 {len(items)} 张 →' if title else f'← SWIPE · 共 {len(items)} 张 →'
+    return (f'<section style="margin:36px 0;">'
+            f'<p style="margin:0 0 14px;font-size:12px;color:var(--c-main);'
+            f'letter-spacing:3px;font-weight:700;">{title_label}</p>'
+            f'<section style="display:flex;overflow-x:auto;scroll-snap-type:x mandatory;'
+            f'padding-bottom:14px;-webkit-overflow-scrolling:touch;">'
+            f'{"".join(cards)}</section></section>')
+
+
+def render_inline_heading(prefix, title, theme, body=''):
+    """轻量 inline 小标题（第X件事 / 第X派 / 第X步）：主色序号 + 粗体标题一行。"""
+    body_html = (f'<p style="margin:0 0 18px;font-size:16px;line-height:1.9;">'
+                 f'{inline(body, theme)}</p>') if body else ''
+    return (f'<p style="margin:28px 0 14px;font-size:17px;font-weight:700;'
+            f'color:var(--c-text);line-height:1.55;">'
+            f'<span style="color:var(--c-main);margin-right:10px;">{prefix}</span>'
+            f'{inline(title, theme)}</p>'
+            f'{body_html}')
+
+
+def render_warn_card(title, body, theme):
+    """警告/提醒卡（暖色底 + 焦橙描边）"""
+    return (f'<section style="margin:32px 0;padding:22px 26px;background:#fff7ed;'
+            f'border-radius:16px;border:1px solid #fed7aa;">'
+            f'<section style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">'
+            f'<span style="font-size:18px;">⚠️</span>'
+            f'<p style="margin:0;font-size:14px;font-weight:800;color:#c2410c;'
+            f'letter-spacing:0.5px;">{inline(title, theme)}</p>'
+            f'</section>'
+            f'<p style="margin:0;font-size:14px;color:var(--c-text);line-height:1.8;">'
+            f'{inline(body, theme)}</p></section>')
+
+
+def render_big_quote(text, theme):
+    """金句大字屏：深色底 + 主色 THE POINT 标签 + 居中白字"""
+    return (f'<section style="margin:44px 0;padding:44px 32px;'
+            f'background:var(--c-text-strong);color:#fff;text-align:center;">'
+            f'<p style="margin:0 0 14px;font-size:10px;color:var(--c-main);'
+            f'letter-spacing:5px;font-weight:800;">◆ THE POINT</p>'
+            f'<p style="margin:0;font-size:20px;font-weight:800;line-height:1.6;'
+            f'letter-spacing:0.5px;">{inline(text, theme)}</p>'
+            f'</section>')
+
+
+def render_tier_card(tier, title, desc, theme, highlight=False):
+    """套餐/分档卡（第X档：xxx）"""
+    bg = 'var(--c-main)' if highlight else '#ffffff'
+    color = '#fff' if highlight else 'var(--c-text)'
+    sub_color = 'rgba(255,255,255,0.8)' if highlight else 'var(--c-mute)'
+    border = 'transparent' if highlight else '#f0efe9'
+    return (f'<section style="margin:14px 0;padding:18px 22px;background:{bg};'
+            f'border-radius:14px;box-shadow:0 2px 10px rgba(0,0,0,0.05);'
+            f'border:1px solid {border};">'
+            f'<section style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">'
+            f'<span style="font-size:10px;font-weight:800;letter-spacing:2px;color:{sub_color};">'
+            f'TIER {tier:02d}</span>'
+            f'<span style="font-size:15px;font-weight:800;color:{color};">{inline(title, theme)}</span>'
+            f'</section>'
+            f'<p style="margin:0;font-size:13px;color:{sub_color};line-height:1.75;">'
+            f'{inline(desc, theme)}</p></section>')
+
 
 def _peek_caption(lines, i):
     if i + 1 >= len(lines):
@@ -372,6 +470,57 @@ def md_to_html(body, theme, search_dirs):
             chapter_counter += 1
             out.append(render_step_card(chapter_counter, arabic_m.group(2).strip(), theme))
             i += 1
+            continue
+        # 分级识别：第X步 / 第X件事 / 第X派 → 轻量 inline 小标题
+        num_m = re.match(r'^\*\*(第[一二三四五](?:步|件事|派))[，,:：]?\s*([^*]+?)\*\*。?(.*)$', line)
+        if num_m and num_m.group(1) in INLINE_HEADING_PREFIX:
+            prefix = num_m.group(1)
+            title = num_m.group(2).strip().rstrip('。')
+            rest = num_m.group(3).strip()
+            out.append(render_inline_heading(prefix, title, theme, rest))
+            i += 1
+            continue
+        # 客户三档识别：**第X档：XXX**。YYY（YYY 可跨行）
+        tier_m = re.match(r'^\*\*(第[一二三]档)[:：]([^*]+?)\*\*。?\s*(.*)$', line)
+        if tier_m and tier_m.group(1) in TIER_MAP:
+            num = TIER_MAP[tier_m.group(1)]
+            title = tier_m.group(2).strip()
+            desc = tier_m.group(3).strip() or ''
+            i += 1
+            while (i < len(lines) and lines[i].strip()
+                   and not lines[i].startswith('!')
+                   and not re.match(r'^\*\*第[一二三]档', lines[i])
+                   and not lines[i].startswith('##')
+                   and not lines[i].startswith('**')):
+                desc += ' ' + lines[i].strip()
+                i += 1
+            out.append(render_tier_card(num, title, desc, theme))
+            continue
+        # 滑动图组：<!-- SLIDER: 标题 --> ... <!-- /SLIDER -->
+        slider_m = re.match(r'<!--\s*SLIDER(?::\s*([^-]+?))?\s*-->', line)
+        if slider_m:
+            slider_title = (slider_m.group(1) or '').strip()
+            i += 1
+            items = []
+            while i < len(lines) and not re.match(r'<!--\s*/SLIDER\s*-->', lines[i].strip()):
+                cur = lines[i].strip()
+                im = re.match(r'!\[\[([^\]]+)\]\]', cur)
+                if im:
+                    name = im.group(1)
+                    cap = ''
+                    trailing = cur[im.end():].strip()
+                    if trailing:
+                        cap = trailing
+                    elif (i + 1 < len(lines) and lines[i + 1].startswith('*')
+                          and lines[i + 1].rstrip().endswith('*')
+                          and not lines[i + 1].startswith('**')):
+                        cap = lines[i + 1].strip('*').strip()
+                        i += 1
+                    items.append((name, cap))
+                i += 1
+            i += 1  # 跳过 </SLIDER>
+            if items:
+                out.append(render_slider(items, theme, search_dirs, slider_title))
             continue
         if (line.startswith('|') and line.endswith('|')
                 and i + 1 < len(lines) and re.match(r'^\|[\s\-:|]+\|$', lines[i + 1].strip())):
