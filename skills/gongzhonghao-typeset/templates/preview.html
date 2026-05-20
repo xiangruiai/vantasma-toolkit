@@ -703,7 +703,7 @@
 
       <header class="masthead">
         <span class="left"><span data-brand>万涂幻象</span> <span data-suffix>MAGAZINE</span></span>
-        <span class="right"><span data-issue-prefix>VOL.</span><span data-vol>187</span> · 2026.05.19</span>
+        <span class="right"><span data-issue-prefix>VOL.</span><span data-vol>1</span> · 2026.05.19</span>
       </header>
 
       <span class="feature"><span data-feature-label>ISSUE FEATURE</span> · 工具 × 排版</span>
@@ -757,7 +757,7 @@
 
       <footer class="colophon">
         <span class="left"><span data-brand>万涂幻象</span> <span data-suffix>MAGAZINE</span></span>
-        <span><span data-issue-prefix>VOL.</span><span data-vol>187</span> · 2026.05.19</span>
+        <span><span data-issue-prefix>VOL.</span><span data-vol>1</span> · 2026.05.19</span>
       </footer>
 
     </section>
@@ -791,7 +791,7 @@
           <div class="row-name">期号</div>
           <div class="row-sub">第几篇原创</div>
         </div>
-        <input type="text" id="ctrl-vol" value="187" class="row-input">
+        <input type="text" id="ctrl-vol" value="1" class="row-input">
       </div>
     </div>
 
@@ -986,7 +986,7 @@
   const setVar = (k, v) => root.style.setProperty(k, v);
 
   const DEFAULTS = {
-    brand: '万涂幻象', vol: '187', stamp: '万涂幻象',
+    brand: '万涂幻象', vol: '1', stamp: '万涂幻象',
     main: '#22a667', hl: '#ffe5ec', soft: '#a3d97d', text: '#3a3a3a',
     size: 15, lh: 1.85, num: 58,
     imgRadius: 16, imgBorder: 2, imgShadow: 16, imgBorderColor: '#a5d6a7',
@@ -1011,7 +1011,10 @@
     document.getElementById('ctrl-stamp').value = e.target.value;
   });
   document.getElementById('ctrl-stamp').addEventListener('input', e => setText('stamp', e.target.value));
-  document.getElementById('ctrl-vol').addEventListener('input', e => setText('vol', e.target.value));
+  document.getElementById('ctrl-vol').addEventListener('input', e => {
+    const v = e.target.value.trim();
+    setText('vol', /^\d+$/.test(v) ? v.padStart(3, '0') : v);
+  });
 
   // === 配色（带 dot 同步） ===
   function bindColor(ctrlId, cssVar, valId, dotId) {
