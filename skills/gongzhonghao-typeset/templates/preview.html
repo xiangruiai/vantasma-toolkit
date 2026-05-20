@@ -1295,27 +1295,53 @@
     return clone;
   }
 
-  document.getElementById('copy-html').addEventListener('click', async () => {
+  // 跟 wechat-editorial 一致的复制策略：selection + execCommand，浏览器原生复制。
+  // 不跑 getComputedStyle flatten——避免把 width 实际像素值等 computed style 写到
+  // inline style 里触发公众号「宽度异常」检测。
+  // 唯一一步差异：因为 panel 用 CSS 变量驱动，复制前把 inline style 里的 var(--xxx)
+  // 替换成 :root 上的实际值（公众号编辑器不认 :root 变量）。
+  function resolveCssVarsInline(rootEl) {
+    const clone = rootEl.cloneNode(true);
+    const rootStyles = window.getComputedStyle(document.documentElement);
+    const all = [clone, ...clone.querySelectorAll('*')];
+    all.forEach(el => {
+      const s = el.getAttribute('style');
+      if (!s || !s.includes('var(--')) return;
+      const replaced = s.replace(/var\(\s*(--[\w-]+)\s*(?:,[^)]*)?\)/g, (_, name) => {
+        const v = rootStyles.getPropertyValue(name).trim();
+        return v || 'inherit';
+      });
+      el.setAttribute('style', replaced);
+    });
+    return clone;
+  }
+
+  document.getElementById('copy-html').addEventListener('click', () => {
     const orig = document.getElementById('article');
-    const flat = flattenStyles(orig);
-    const html = flat.outerHTML;
-    const plain = flat.textContent;
+    const resolved = resolveCssVarsInline(orig);
+    // 临时插入到 body 末尾（off-screen），selection 复制完移除
+    resolved.style.position = 'fixed';
+    resolved.style.left = '-99999px';
+    resolved.style.top = '0';
+    document.body.appendChild(resolved);
     try {
-      if (navigator.clipboard && window.ClipboardItem) {
-        await navigator.clipboard.write([
-          new ClipboardItem({
-            'text/html': new Blob([html], { type: 'text/html' }),
-            'text/plain': new Blob([plain], { type: 'text/plain' }),
-          })
-        ]);
+      const range = document.createRange();
+      range.selectNodeContents(resolved);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      const ok = document.execCommand('copy');
+      sel.removeAllRanges();
+      if (ok) {
         toast('已复制，去粘 mp.weixin.qq.com');
       } else {
-        await navigator.clipboard.writeText(html);
-        toast('已复制 HTML（纯文本）');
+        alert('复制失败，请手动 Cmd+A 全选');
       }
     } catch (err) {
       console.error(err);
       alert('复制失败：' + err.message);
+    } finally {
+      document.body.removeChild(resolved);
     }
   });
 
