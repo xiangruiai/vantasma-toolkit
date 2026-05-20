@@ -93,8 +93,21 @@
   /* === 主布局 === */
   .layout {
     display: grid;
-    grid-template-columns: 1fr 400px;
+    grid-template-columns: minmax(560px, 1fr) 400px;
     height: calc(100vh - 51px);
+  }
+  @media (max-width: 1280px) {
+    .layout {
+      grid-template-columns: 1fr !important;
+      height: auto !important;
+    }
+    .preview-area { overflow-y: visible !important; }
+    .panel {
+      border-left: 0 !important;
+      border-top: 1px solid var(--ui-border) !important;
+      max-height: none !important;
+      position: static !important;
+    }
   }
   .preview-area {
     background: var(--ui-bg);
@@ -1259,9 +1272,10 @@
       const target = cloneAll[i];
       const isRoot = (origEl === rootEl);
       const display = cs.getPropertyValue('display');
-      // 块级元素（block/flex/grid）的 width 不写 inline——让公众号容器决定宽度
-      // inline-block 装饰元素（H3 竖条 / 引用灰点 / 三段短横 / 列表圆点）必须保留 width，否则塌成 0
-      const isBlockLike = display === 'block' || display === 'flex' || display === 'grid' || display === 'list-item';
+      // 块级和 inline-block 元素的 width 不写 inline——公众号内容结构检测只允许 auto/100%。
+      // 原本依赖固定 px width 的装饰（H3 竖条 / 三段短横 / 列表圆点 / 引用装饰）已改用 SVG 实现，
+      // SVG 的 width/height 是属性不是 CSS，绕过检测。
+      const isBlockLike = display === 'block' || display === 'flex' || display === 'grid' || display === 'list-item' || display === 'inline-block';
       let s = '';
       KEEP_PROPS.forEach(k => {
         if (isRoot && ROOT_STRIP.has(k)) return;

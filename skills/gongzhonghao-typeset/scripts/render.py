@@ -245,7 +245,7 @@ def render_quote(text, theme):
     return (f'<section style="margin:26px 0;background:#ffffff;border:1px solid #e5e5e5;'
             f'border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,0.04);overflow:hidden;">'
             f'<section style="padding:14px 14px 0 14px;">'
-            f'<section style="width:9px;height:9px;background:#c4c4c4;border-radius:50%;"></section>'
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 9 9" style="display:block;flex-shrink:0;"><circle cx="4.5" cy="4.5" r="4.5" fill="#c4c4c4"/></svg>'
             f'</section>'
             f'<section style="padding:10px 26px 22px 26px;">'
             f'<p style="margin:0;font-size:15px;line-height:1.9;color:var(--c-text);">'
@@ -265,7 +265,7 @@ def render_code_block(code, theme):
     return (f'<section style="margin:26px 0;background:#ffffff;border:1px solid #e5e5e5;'
             f'border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,0.04);overflow:hidden;">'
             f'<section style="padding:14px 14px 0 14px;">'
-            f'<section style="width:9px;height:9px;background:#c4c4c4;border-radius:50%;"></section>'
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 9 9" style="display:block;flex-shrink:0;"><circle cx="4.5" cy="4.5" r="4.5" fill="#c4c4c4"/></svg>'
             f'</section>'
             f'<section style="padding:10px 26px 22px 26px;">{"".join(lines)}</section></section>')
 
@@ -273,17 +273,16 @@ def render_code_block(code, theme):
 def render_h2(text, theme):
     return (f'<section style="margin:48px 0 24px;display:flex;align-items:center;'
             f'justify-content:center;gap:14px;">'
-            f'<section style="width:28px;height:2px;background:var(--c-main);border-radius:1px;"></section>'
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="28" height="2" viewBox="0 0 28 2" style="display:block;flex-shrink:0;color:var(--c-main);"><rect width="28" height="2" rx="1" fill="currentColor"/></svg>'
             f'<span style="font-size:22px;font-weight:800;color:var(--c-main);line-height:1.4;'
             f'letter-spacing:0.5px;">{inline(text, theme)}</span>'
-            f'<section style="width:28px;height:2px;background:var(--c-main);border-radius:1px;"></section>'
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="28" height="2" viewBox="0 0 28 2" style="display:block;flex-shrink:0;color:var(--c-main);"><rect width="28" height="2" rx="1" fill="currentColor"/></svg>'
             f'</section>')
 
 
 def render_h3(text, theme):
     return (f'<section style="margin:34px 0 14px;display:flex;align-items:center;gap:10px;">'
-            f'<section style="flex-shrink:0;width:4px;height:20px;background:var(--c-main);'
-            f'border-radius:2px;"></section>'
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="4" height="20" viewBox="0 0 4 20" style="display:block;flex-shrink:0;color:var(--c-main);"><rect width="4" height="20" rx="2" fill="currentColor"/></svg>'
             f'<span style="font-size:var(--h3-size);font-weight:800;color:var(--c-text-strong);'
             f'line-height:1.4;letter-spacing:0.3px;">{inline(text, theme)}</span></section>')
 
@@ -325,7 +324,7 @@ def render_step_card(num, title, theme, label_text=None):
             f'<section style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">'
             f'<span style="font-size:9px;color:var(--c-main);letter-spacing:3px;font-weight:800;">'
             f'{stamp}</span>'
-            f'<section style="width:14px;height:1px;background:var(--c-main);"></section></section>'
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="14" height="1" viewBox="0 0 14 1" style="display:block;flex-shrink:0;color:var(--c-main);"><rect width="14" height="1" fill="currentColor"/></svg></section>'
             f'<span style="display:block;font-size:var(--chapter-num-size);font-weight:900;'
             f'color:#d4d4d4;line-height:0.95;letter-spacing:-2px;'
             f'font-family:-apple-system,BlinkMacSystemFont,\'Helvetica Neue\',sans-serif;">'
@@ -501,9 +500,9 @@ def render_article_body(md_text, theme, img_dir=None, plain=False):
             f'<p style="margin:0 0 18px;font-size:22px;font-weight:700;color:var(--c-text-strong);'
             f'line-height:1.55;letter-spacing:0.2px;">{subtitle}</p>'
             f'<section style="display:flex;gap:4px;margin-bottom:36px;">'
-            f'<section style="width:36px;height:3px;background:var(--c-main);border-radius:2px;"></section>'
-            f'<section style="width:14px;height:3px;background:var(--c-soft);border-radius:2px;"></section>'
-            f'<section style="width:6px;height:3px;background:#d4d4d4;border-radius:2px;"></section>'
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="36" height="3" viewBox="0 0 36 3" style="display:block;flex-shrink:0;color:var(--c-main);"><rect width="36" height="3" rx="2" fill="currentColor"/></svg>'
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="14" height="3" viewBox="0 0 14 3" style="display:block;flex-shrink:0;color:var(--c-soft);"><rect width="14" height="3" rx="2" fill="currentColor"/></svg>'
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="6" height="3" viewBox="0 0 6 3" style="display:block;flex-shrink:0;"><rect width="6" height="3" rx="2" fill="#d4d4d4"/></svg>'
             f'</section>'
         )
         tail = (
