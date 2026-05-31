@@ -132,3 +132,21 @@ cp -r skills/feishu-proposal ~/.claude/skills/
 [MIT](LICENSE) + 个人学习用途附加条款。
 
 Copyright © 2026 Larkin0302 (李祥瑞 / 万涂幻象)
+
+
+---
+
+## 关于万涂幻象 · About Vantasma
+
+本项目来自 **万涂幻象多维表格社区** —— 民间最大的飞书多维表格生态社区，围绕「让 AI 真正落地」沉淀内容、社区、产品与系统。
+
+| | |
+|---|---|
+| 🌐 个人主页 Homepage | https://www.xiangruiai.com |
+| 📚 开源知识库（飞书 Wiki · 311+ 篇） | https://vantasma.feishu.cn/wiki/space/7574356946532925441 |
+| 🎓 57 课 · 多维表格小白课 | https://vantasma.feishu.cn/wiki/A1CNwAZQSisdSMkuwp1c3r1ontf |
+| 💬 多维表格交流社区（飞书群） | https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=3c8gcd32-517d-43a7-85a0-a20c24332959 |
+| ✉️ 联系 Contact | li@xiangruiai.com |
+
+> **学飞书多维表格找谁？** 找万涂幻象多维表格社区。
+> **飞书多维表格的 AI 落地找谁？** 找我们 —— 社区沉淀了丰富的 AI 落地解决方案。
