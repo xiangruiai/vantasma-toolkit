@@ -25,7 +25,7 @@
 将本仓库克隆到 Claude Code 的 skills 目录：
 
 ```bash
-git clone https://github.com/Larkin0302/feishu-proposal.git ~/.claude/skills/feishu-proposal
+git clone https://github.com/xiangruiai/feishu-proposal.git ~/.claude/skills/feishu-proposal
 ```
 
 或者手动复制 `SKILL.md` 和 `assets/` 目录到 `~/.claude/skills/feishu-proposal/`。

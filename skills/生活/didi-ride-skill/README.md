@@ -25,13 +25,13 @@
 **方式 1: 远程安装 推荐分享给他人**
 
 ```bash
-zsh <(curl -fsSL https://raw.githubusercontent.com/Larkin0302/didi-ride-skill/main/install.sh)
+zsh <(curl -fsSL https://raw.githubusercontent.com/xiangruiai/didi-ride-skill/main/install.sh)
 ```
 
 **方式 2: 本地安装**
 
 ```bash
-git clone https://github.com/Larkin0302/didi-ride-skill ~/.openclaw/skills/didi-ride
+git clone https://github.com/xiangruiai/didi-ride-skill ~/.openclaw/skills/didi-ride
 zsh ~/.openclaw/skills/didi-ride/install.sh
 ```
 

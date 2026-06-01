@@ -6,10 +6,10 @@
 # 两种安装方式：
 #
 #   方式 1 — 远程安装（推荐分享给他人）:
-#     zsh <(curl -fsSL https://raw.githubusercontent.com/Larkin0302/didi-ride-skill/main/install.sh)
+#     zsh <(curl -fsSL https://raw.githubusercontent.com/xiangruiai/didi-ride-skill/main/install.sh)
 #
 #   方式 2 — 本地安装（clone 后执行）:
-#     git clone https://github.com/Larkin0302/didi-ride-skill ~/.openclaw/skills/didi-ride
+#     git clone https://github.com/xiangruiai/didi-ride-skill ~/.openclaw/skills/didi-ride
 #     zsh ~/.openclaw/skills/didi-ride/install.sh
 #
 set -euo pipefail
@@ -24,7 +24,7 @@ SKILL_DST="$HOME/.openclaw/skills/$SKILL_NAME"
 PLUGIN_SPEC="@larksuiteoapi/feishu-openclaw-plugin"
 PLUGIN_ID="feishu-openclaw-plugin"
 STOCK_PLUGIN_ID="feishu"
-REPO_URL="${DIDI_RIDE_REPO:-https://github.com/Larkin0302/didi-ride-skill.git}"
+REPO_URL="${DIDI_RIDE_REPO:-https://github.com/xiangruiai/didi-ride-skill.git}"
 CONFIG="$HOME/.openclaw/openclaw.json"
 MIN_PLUGIN_VERSION="2026.3.0"
 
@@ -527,7 +527,7 @@ report() {
 
     echo "  ${DIM}更新技能: cd ~/.openclaw/skills/didi-ride && git pull${NC}"
     echo "  ${DIM}卸载技能: zsh ~/.openclaw/skills/didi-ride/uninstall.sh${NC}"
-    echo "  ${DIM}问题反馈: https://github.com/Larkin0302/didi-ride-skill/issues${NC}"
+    echo "  ${DIM}问题反馈: https://github.com/xiangruiai/didi-ride-skill/issues${NC}"
     echo ""
 }
 

@@ -11,13 +11,13 @@ OpenClaw 技能：飞书多维表格的完整生命周期管理 — 从零搭建
 ## 一键安装
 
 ```bash
-zsh <(curl -fsSL https://raw.githubusercontent.com/Larkin0302/feishu-bitable-skill/main/install.sh)
+zsh <(curl -fsSL https://raw.githubusercontent.com/xiangruiai/feishu-bitable-skill/main/install.sh)
 ```
 
 或者手动安装：
 
 ```bash
-git clone https://github.com/Larkin0302/feishu-bitable-skill ~/.openclaw/skills/feishu-bitable
+git clone https://github.com/xiangruiai/feishu-bitable-skill ~/.openclaw/skills/feishu-bitable
 zsh ~/.openclaw/skills/feishu-bitable/install.sh
 ```
 

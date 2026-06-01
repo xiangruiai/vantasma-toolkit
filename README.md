@@ -68,7 +68,7 @@ vantasma-toolkit/
 
 把下面这句话贴给你的 AI Agent（Claude Code / Cursor / aider 都行）：
 
-> **「帮我安装 https://github.com/Larkin0302/vantasma-toolkit 里的 vchat CLI（路径 cli/vchat）。按它 README 的步骤跑：clone → bash install.sh → 装 cryptography + zstandard → sudo vchat setup。完成后跑 vchat doctor 确认本地 db 全部解密。」**
+> **「帮我安装 https://github.com/xiangruiai/vantasma-toolkit 里的 vchat CLI（路径 cli/vchat）。按它 README 的步骤跑：clone → bash install.sh → 装 cryptography + zstandard → sudo vchat setup。完成后跑 vchat doctor 确认本地 db 全部解密。」**
 
 Agent 会自动跑完，需要你介入的只有：
 - 一次 `gh auth login`（如果没登 GitHub）
@@ -78,7 +78,7 @@ Agent 会自动跑完，需要你介入的只有：
 ### 手动安装
 
 ```bash
-git clone git@github.com:Larkin0302/vantasma-toolkit.git
+git clone git@github.com:xiangruiai/vantasma-toolkit.git
 cd vantasma-toolkit/cli/vchat
 bash install.sh
 pip3 install cryptography zstandard
@@ -158,7 +158,7 @@ cp -r skills/飞书办公/feishu-proposal ~/.claude/skills/
 
 [MIT](LICENSE) + 个人学习用途附加条款。
 
-Copyright © 2026 Larkin0302 (李祥瑞 / 万涂幻象)
+Copyright © 2026 xiangruiai (李祥瑞 / 万涂幻象)
 
 ---
 

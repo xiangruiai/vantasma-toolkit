@@ -8,13 +8,13 @@
 
 把下面这句话复制粘贴到 Claude Code 里，它会自动完成所有安装：
 
-> 帮我安装公众号数据分析 skill：从 https://github.com/Larkin0302/mp-data clone 下来，安装 playwright 和 chromium 依赖
+> 帮我安装公众号数据分析 skill：从 https://github.com/xiangruiai/mp-data clone 下来，安装 playwright 和 chromium 依赖
 
 <details>
 <summary>或者手动安装</summary>
 
 ```bash
-git clone https://github.com/Larkin0302/mp-data.git
+git clone https://github.com/xiangruiai/mp-data.git
 pip install playwright && playwright install chromium
 ```
 </details>
