@@ -33,9 +33,9 @@ pip install playwright && playwright install chromium
 ## 报告内容
 
 - **KPI 概览**：总篇数、总阅读、篇均阅读、中位数、互动率
-- **阅读量分布**：直方图 + 统计特征（均值/中位数/标准差/P90）
+- **阅读量分布**：直方图 + 统计特征 均值/中位数/标准差/P90
 - **趋势图表**：月度阅读、发文量、互动率趋势、内容类型对比
-- **数据表格**：TOP 20 文章（按阅读量/互动率）、月度汇总、高潜力文章
+- **数据表格**：TOP 20 文章 按阅读量/互动率、月度汇总、高潜力文章
 
 ## 工作原理
 
@@ -54,3 +54,7 @@ pip install playwright && playwright install chromium
 │   ├── scrape.py         # Playwright 驱动的全量抓取
 │   └── report_html.py    # HTML 可视化报告生成
 ```
+
+---
+
+**万涂幻象出品** · 作者 **祥瑞** · 个人网站 [www.xiangruiai.com](https://www.xiangruiai.com)

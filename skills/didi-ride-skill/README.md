@@ -1,6 +1,6 @@
 # didi-ride-skill
 
-在飞书里说一句话叫车。龙虾（OpenClaw）的滴滴打车技能。
+在飞书里说一句话叫车。龙虾 OpenClaw的滴滴打车技能。
 
 在飞书对话里说"帮我叫个车从A到B"，龙虾自动查价格、发交互卡片，点一下按钮车就来了。
 
@@ -15,14 +15,14 @@
 ## 前置条件
 
 - [OpenClaw](https://github.com/nicepkg/openclaw) 已安装并运行
-- 滴滴 MCP API Key（申请地址：https://mcp.didichuxing.com ）
-- 飞书应用凭据（appId + appSecret）
+- 滴滴 MCP API Key 申请地址：https://mcp.didichuxing.com 
+- 飞书应用凭据 appId + appSecret
 
 > 飞书官方插件会由安装脚本自动安装，不需要手动装。
 
 ## 一键安装
 
-**方式 1: 远程安装（推荐分享给他人）**
+**方式 1: 远程安装 推荐分享给他人**
 
 ```bash
 zsh <(curl -fsSL https://raw.githubusercontent.com/Larkin0302/didi-ride-skill/main/install.sh)
@@ -38,9 +38,9 @@ zsh ~/.openclaw/skills/didi-ride/install.sh
 安装脚本会自动完成全部 7 步：
 
 1. 部署技能文件到 OpenClaw skills 目录
-2. 自动安装/更新飞书官方插件（`feishu-openclaw-plugin`）
-3. 部署打车工具代码 + Patch 插件（index.js / monitor.js）
-4. 引导配置飞书凭据（appId + appSecret）
+2. 自动安装/更新飞书官方插件 `feishu-openclaw-plugin`
+3. 部署打车工具代码 + Patch 插件 index.js / monitor.js
+4. 引导配置飞书凭据 appId + appSecret
 5. 引导配置滴滴 MCP API Key
 6. 推荐模型 + 设置超时
 7. 自动重启 Gateway
@@ -71,7 +71,7 @@ cp skill/SKILL.md ~/.openclaw/skills/didi-ride/
 
 在 `~/.openclaw/extensions/feishu-openclaw-plugin/index.js` 中：
 
-添加 import（放在其他 import 附近）：
+添加 import 放在其他 import 附近：
 ```js
 import { registerDiDiRideTool } from "./src/tools/didi-ride/register.js";
 ```
@@ -123,13 +123,13 @@ openclaw gateway restart
 3. 发送交互式选车卡片
 
 在卡片上你可以：
-- 点击「叫车 ¥XX」按钮下单
-- 点击「刷新状态」查看最新订单信息（司机、车牌、预计到达）
-- 点击「取消订单」取消
+- 点击叫车 ¥XX按钮下单
+- 点击刷新状态查看最新订单信息 司机、车牌、预计到达
+- 点击取消订单取消
 
 ## 沙箱测试模式
 
-默认安装后使用沙箱环境（模拟数据，不产生真实订单），方便先跑通流程。
+默认安装后使用沙箱环境 模拟数据，不产生真实订单，方便先跑通流程。
 
 切换到正式环境：编辑 `~/.openclaw/extensions/feishu-openclaw-plugin/src/tools/didi-ride/client.js`，将：
 
@@ -167,10 +167,14 @@ zsh ~/.openclaw/skills/didi-ride/uninstall.sh
 
 核心链路：
 - **client.js** - 滴滴 MCP JSON-RPC 2.0 HTTP 客户端，封装所有 API 调用
-- **cards.js** - 飞书 CardKit v2 交互卡片模板（7 种状态卡片）
+- **cards.js** - 飞书 CardKit v2 交互卡片模板 7 种状态卡片
 - **register.js** - OpenClaw 工具注册 + 查价流程编排
-- **handler.js** - 飞书卡片按钮回调处理（叫车/刷新/取消）
+- **handler.js** - 飞书卡片按钮回调处理 叫车/刷新/取消
 
 ## License
 
 MIT
+
+---
+
+**万涂幻象出品** · 作者 **祥瑞** · 个人网站 [www.xiangruiai.com](https://www.xiangruiai.com)

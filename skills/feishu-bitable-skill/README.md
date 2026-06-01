@@ -24,15 +24,15 @@ zsh ~/.openclaw/skills/feishu-bitable/install.sh
 安装器会自动：
 1. 部署技能文件到 `~/.openclaw/skills/feishu-bitable/`
 2. 安装飞书官方插件 (`@larksuiteoapi/feishu-openclaw-plugin`)
-3. 禁用 OpenClaw 自带的 stock feishu 插件（避免冲突）
+3. 禁用 OpenClaw 自带的 stock feishu 插件 避免冲突
 4. 检查 Python 依赖和飞书凭据
 
 ## 前置要求
 
 - [OpenClaw](https://openclaw.com) 已安装
 - Python 3 + `requests` 库
-- 飞书自建应用的 App ID / App Secret（[创建指南](https://open.feishu.cn/document/home/introduction-to-custom-app-development/self-built-application-development-process)）
-- **推荐模型**：`claude-opus-4-6` 或 `claude-sonnet-4-6`（需要强指令遵循能力，弱模型可能不按技能流程执行）
+- 飞书自建应用的 App ID / App Secret [创建指南](https://open.feishu.cn/document/home/introduction-to-custom-app-development/self-built-application-development-process)
+- **推荐模型**：`claude-opus-4-6` 或 `claude-sonnet-4-6` 需要强指令遵循能力，弱模型可能不按技能流程执行
 
 > **飞书应用权限要求**：多维表格读写、云文档创建、通讯录读取。具体权限列表见飞书开放平台文档。
 
@@ -55,11 +55,11 @@ zsh ~/.openclaw/skills/feishu-bitable/install.sh
 
 | 在飞书中说 | 功能 |
 |-----------|------|
-| 「搭建一个项目管理系统」 | 从零搭建多维表格 |
-| 「做一个 CRM」 | 需求分析 → 表结构设计 → 自动创建 |
-| 「查一下客户表的记录」 | 查询记录 |
-| 「批量导入这些数据」 | 批量写入 |
-| 「给订单表加一个状态字段」 | 字段管理 |
+| 搭建一个项目管理系统 | 从零搭建多维表格 |
+| 做一个 CRM | 需求分析 → 表结构设计 → 自动创建 |
+| 查一下客户表的记录 | 查询记录 |
+| 批量导入这些数据 | 批量写入 |
+| 给订单表加一个状态字段 | 字段管理 |
 
 ## 文件结构
 
@@ -90,3 +90,7 @@ cd ~/.openclaw/skills/feishu-bitable && git pull
 ## License
 
 MIT
+
+---
+
+**万涂幻象出品** · 作者 **祥瑞** · 个人网站 [www.xiangruiai.com](https://www.xiangruiai.com)
