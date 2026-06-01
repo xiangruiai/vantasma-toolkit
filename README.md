@@ -2,7 +2,7 @@
 
 > 万涂幻象出品的个人工具合集 · **仅供个人学习与研究用途**
 >
-> 含 1 个 CLI（vchat）+ 7 个 Claude Code Skills。
+> 含 1 个 CLI（vchat）+ 8 个 Claude Code Skills。
 
 ---
 
@@ -108,6 +108,7 @@ vchat --help                                    # 看全部 63 命令
 | `didi-ride-skill` | 飞书里一句话叫滴滴（OpenClaw） | [README](skills/didi-ride-skill/README.md) |
 | `gongzhonghao-typeset` | **公众号排版**：写完 md 一键排成可粘贴的公众号 HTML，带实时控制面板（品牌/配色/排版/图片）+ 三种吸色 | [README](skills/gongzhonghao-typeset/README.md) |
 | `mp-data` | 公众号全量文章数据抓取 + 可视化 | [README](skills/mp-data/README.md) |
+| `daily-log` | **收工日志**：一句「收工」→ 飞书全链路足迹自动聚合成带链接、能 @ 人的日报文档（依赖 lark-cli） | [README](skills/daily-log/README.md) |
 
 ### 安装 Claude Code Skill
 
