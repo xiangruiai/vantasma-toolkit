@@ -29,7 +29,7 @@
 
 把下面这句话贴给你的 AI Agent Claude Code / Cursor / aider 都行：
 
-> **帮我安装 https://github.com/xiangruiai/vantasma-toolkit 里的 ming-li skill 路径 `skills/ming-li/`。把整个目录 clone / 复制到 `~/.claude/skills/ming-li/`，然后给我一句话演示触发：『帮我算个八字，1990 年 5 月 1 日上午 10 点，山西出生』。**
+> **帮我安装 https://github.com/xiangruiai/vantasma-toolkit 里的 ming-li skill 路径 `skills/内容设计/ming-li/`。把整个目录 clone / 复制到 `~/.claude/skills/ming-li/`，然后给我一句话演示触发：『帮我算个八字，1990 年 5 月 1 日上午 10 点，山西出生』。**
 
 Agent 会自动跑完。需要你介入的只有：
 
@@ -47,7 +47,7 @@ git clone https://github.com/xiangruiai/vantasma-toolkit.git
 cd vantasma-toolkit
 
 # 2. 复制 skill 到 Claude Code skills 目录
-cp -r skills/ming-li ~/.claude/skills/
+cp -r skills/内容设计/ming-li ~/.claude/skills/
 
 # 3. 装 PNG 导出依赖
 pip3 install Pillow --break-system-packages

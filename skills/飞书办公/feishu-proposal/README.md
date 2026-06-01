@@ -22,13 +22,12 @@
 
 ### 安装 Skill
 
-将本仓库克隆到 Claude Code 的 skills 目录：
+从 toolkit 克隆后，把本 skill 目录复制到 Claude Code 的 skills 目录：
 
 ```bash
-git clone https://github.com/xiangruiai/feishu-proposal.git ~/.claude/skills/feishu-proposal
+git clone https://github.com/xiangruiai/vantasma-toolkit.git
+cp -r vantasma-toolkit/skills/飞书办公/feishu-proposal ~/.claude/skills/
 ```
-
-或者手动复制 `SKILL.md` 和 `assets/` 目录到 `~/.claude/skills/feishu-proposal/`。
 
 ## 使用
 

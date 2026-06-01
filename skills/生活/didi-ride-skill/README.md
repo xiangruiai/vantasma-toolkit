@@ -25,14 +25,14 @@
 **方式 1: 远程安装 推荐分享给他人**
 
 ```bash
-zsh <(curl -fsSL https://raw.githubusercontent.com/xiangruiai/didi-ride-skill/main/install.sh)
+zsh <(curl -fsSL "https://raw.githubusercontent.com/xiangruiai/vantasma-toolkit/main/skills/生活/didi-ride-skill/install.sh")
 ```
 
-**方式 2: 本地安装**
+**方式 2: 本地安装（从 toolkit clone）**
 
 ```bash
-git clone https://github.com/xiangruiai/didi-ride-skill ~/.openclaw/skills/didi-ride
-zsh ~/.openclaw/skills/didi-ride/install.sh
+git clone https://github.com/xiangruiai/vantasma-toolkit.git
+zsh "vantasma-toolkit/skills/生活/didi-ride-skill/install.sh"
 ```
 
 安装脚本会自动完成全部 7 步：

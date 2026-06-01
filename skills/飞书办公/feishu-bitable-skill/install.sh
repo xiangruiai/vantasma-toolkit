@@ -6,11 +6,11 @@
 # 两种安装方式：
 #
 #   方式 1 — 远程安装（推荐分享给他人）:
-#     zsh <(curl -fsSL https://raw.githubusercontent.com/xiangruiai/feishu-bitable-skill/main/install.sh)
+#     zsh <(curl -fsSL "https://raw.githubusercontent.com/xiangruiai/vantasma-toolkit/main/skills/飞书办公/feishu-bitable-skill/install.sh")
 #
-#   方式 2 — 本地安装（clone 后执行）:
-#     git clone https://github.com/xiangruiai/feishu-bitable-skill ~/.openclaw/skills/feishu-bitable
-#     zsh ~/.openclaw/skills/feishu-bitable/install.sh
+#   方式 2 — 本地安装（从 toolkit clone 后执行）:
+#     git clone https://github.com/xiangruiai/vantasma-toolkit.git
+#     zsh "vantasma-toolkit/skills/飞书办公/feishu-bitable-skill/install.sh"
 #
 set -euo pipefail
 
@@ -24,7 +24,8 @@ SKILL_DST="$HOME/.openclaw/skills/$SKILL_NAME"
 PLUGIN_SPEC="@larksuiteoapi/feishu-openclaw-plugin"
 PLUGIN_ID="feishu-openclaw-plugin"
 STOCK_PLUGIN_ID="feishu"
-REPO_URL="${FEISHU_BITABLE_REPO:-https://github.com/xiangruiai/feishu-bitable-skill.git}"
+TOOLKIT_REPO="${VANTASMA_TOOLKIT_REPO:-https://github.com/xiangruiai/vantasma-toolkit.git}"
+SKILL_SUBPATH="skills/飞书办公/feishu-bitable-skill"
 CONFIG="$HOME/.openclaw/openclaw.json"
 MIN_PLUGIN_VERSION="2026.3.0"
 
@@ -117,18 +118,18 @@ deploy_skill() {
             exit 1
         fi
         mkdir -p "$HOME/.openclaw/skills"
-        if [ -d "$SKILL_DST" ]; then
-            info "更新已有技能..."
-            (cd "$SKILL_DST" && git pull --ff-only 2>/dev/null) && ok "技能已更新" || {
-                warn "git pull 失败，重新 clone"
-                rm -rf "$SKILL_DST"
-                git clone "$REPO_URL" "$SKILL_DST"
-                ok "技能已重新部署"
-            }
+        info "从 vantasma-toolkit 拉取 $SKILL_SUBPATH ..."
+        local _tmp
+        _tmp="$(mktemp -d)"
+        if git clone --depth=1 "$TOOLKIT_REPO" "$_tmp" 2>/dev/null; then
+            [ -d "$SKILL_DST" ] && rm -rf "$SKILL_DST"
+            cp -R "$_tmp/$SKILL_SUBPATH" "$SKILL_DST"
+            rm -rf "$_tmp"
+            ok "技能已部署到 $SKILL_DST"
         else
-            info "从 GitHub clone..."
-            git clone "$REPO_URL" "$SKILL_DST"
-            ok "技能已部署"
+            rm -rf "$_tmp"
+            fail "clone vantasma-toolkit 失败"
+            exit 1
         fi
     fi
 
@@ -437,7 +438,7 @@ report() {
     echo ""
 
     echo "  ${DIM}更新技能: cd ~/.openclaw/skills/feishu-bitable && git pull${NC}"
-    echo "  ${DIM}问题反馈: https://github.com/xiangruiai/feishu-bitable-skill/issues${NC}"
+    echo "  ${DIM}问题反馈: https://github.com/xiangruiai/vantasma-toolkit/issues${NC}"
     echo ""
 }
 

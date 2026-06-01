@@ -8,13 +8,14 @@
 
 把下面这句话复制粘贴到 Claude Code 里，它会自动完成所有安装：
 
-> 帮我安装公众号数据分析 skill：从 https://github.com/xiangruiai/mp-data clone 下来，安装 playwright 和 chromium 依赖
+> 帮我安装公众号数据分析 skill：从 https://github.com/xiangruiai/vantasma-toolkit clone 下来，取 `skills/数据抓取/mp-data` 目录，安装 playwright 和 chromium 依赖
 
 <details>
 <summary>或者手动安装</summary>
 
 ```bash
-git clone https://github.com/xiangruiai/mp-data.git
+git clone https://github.com/xiangruiai/vantasma-toolkit.git
+cp -r vantasma-toolkit/skills/数据抓取/mp-data ~/.claude/skills/
 pip install playwright && playwright install chromium
 ```
 </details>
