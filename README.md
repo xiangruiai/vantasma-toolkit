@@ -41,17 +41,21 @@ vantasma-toolkit/
 │       ├── install.sh
 │       ├── README.md
 │       └── CHANGELOG.md
-└── skills/                              ← 10 个 Skill，目录平铺，[ ] 内为所属领域
-    ├── feishu-bitable-skill/        [飞书办公] 飞书多维表格搭建
-    ├── feishu-bitable-system-prompt/ [飞书办公] 多维表格 AI 系统提示词设计
-    ├── feishu-proposal/             [飞书办公] 飞书客户方案自动生成
-    ├── daily-log/                   [飞书办公] 收工日志 · 飞书全链路足迹聚合
-    ├── gongzhonghao-typeset/        [内容设计] 公众号排版 · md 一键转公众号 HTML
-    ├── group-daily/                 [内容设计] 微信群杂志风日报
-    ├── group-daily-newspaper/       [内容设计] 微信群 A3 报纸版日报（可印刷彩打）
-    ├── ming-li/                     [内容设计] 八字 / 紫微 / 六爻 命理分析
-    ├── mp-data/                     [数据抓取] 公众号数据抓取
-    └── didi-ride-skill/             [生活]     飞书叫滴滴
+└── skills/                              ← 10 个 Skill，按领域分 4 类
+    ├── 飞书办公/
+    │   ├── feishu-bitable-skill/        飞书多维表格搭建
+    │   ├── feishu-bitable-system-prompt/ 多维表格 AI 系统提示词设计
+    │   ├── feishu-proposal/             飞书客户方案自动生成
+    │   └── daily-log/                   收工日志 · 飞书全链路足迹聚合
+    ├── 内容设计/
+    │   ├── gongzhonghao-typeset/        公众号排版 · md 一键转公众号 HTML
+    │   ├── group-daily/                 微信群杂志风日报
+    │   ├── group-daily-newspaper/       微信群 A3 报纸版日报（可印刷彩打）
+    │   └── ming-li/                     八字 / 紫微 / 六爻 命理分析
+    ├── 数据抓取/
+    │   └── mp-data/                     公众号数据抓取
+    └── 生活/
+        └── didi-ride-skill/             飞书叫滴滴
 ```
 
 ---
@@ -100,43 +104,43 @@ vchat --help                                    # 看全部 63 命令
 
 ## 2. Skills
 
-10 个 Skill 按领域分 4 类。目录平铺在 `skills/` 下，可单独取用。
+10 个 Skill 按领域分 4 类，分别归在 `skills/<领域>/` 下，可单独取用。
 
-### 🗂 飞书 · 办公
-
-| Skill | 用途 | 详情 |
-|---|---|---|
-| `feishu-bitable-skill` | 飞书多维表格搭建（OpenClaw） | [README](skills/feishu-bitable-skill/README.md) |
-| `feishu-bitable-system-prompt` | 飞书多维表格 AI 提示词设计 | [README](skills/feishu-bitable-system-prompt/README.md) |
-| `feishu-proposal` | 飞书会议纪要 → 客户方案文档 | [README](skills/feishu-proposal/README.md) |
-| `daily-log` | **收工日志**：一句「收工」→ 飞书全链路足迹自动聚合成带链接、能 @ 人的日报文档（依赖 lark-cli） | [README](skills/daily-log/README.md) |
-
-### 🎨 内容 · 设计
+### 🗂 飞书办公
 
 | Skill | 用途 | 详情 |
 |---|---|---|
-| `gongzhonghao-typeset` | **公众号排版**：写完 md 一键排成可粘贴的公众号 HTML，带实时控制面板（品牌/配色/排版/图片）+ 三种吸色 | [README](skills/gongzhonghao-typeset/README.md) |
-| `group-daily` | **群日报**：微信群一天聊天 → 杂志风 HTML + PNG（依赖 vchat CLI） | [README](skills/group-daily/README.md) |
-| `group-daily-newspaper` | **群报**：微信群一天聊天 → 人民日报式 A3 报纸版，AI 自适应 2/4/6 版、每版精确等高、可印刷彩打（依赖 vchat CLI） | [README](skills/group-daily-newspaper/README.md) |
-| `ming-li` | **命理大师**：八字四家合一 + 紫微 + 六爻 → 新中式古典风 HTML 卷轴 + PNG 长图 | [README](skills/ming-li/README.md) |
+| `feishu-bitable-skill` | 飞书多维表格搭建（OpenClaw） | [README](skills/飞书办公/feishu-bitable-skill/README.md) |
+| `feishu-bitable-system-prompt` | 飞书多维表格 AI 提示词设计 | [README](skills/飞书办公/feishu-bitable-system-prompt/README.md) |
+| `feishu-proposal` | 飞书会议纪要 → 客户方案文档 | [README](skills/飞书办公/feishu-proposal/README.md) |
+| `daily-log` | **收工日志**：一句「收工」→ 飞书全链路足迹自动聚合成带链接、能 @ 人的日报文档（依赖 lark-cli） | [README](skills/飞书办公/daily-log/README.md) |
+
+### 🎨 内容设计
+
+| Skill | 用途 | 详情 |
+|---|---|---|
+| `gongzhonghao-typeset` | **公众号排版**：写完 md 一键排成可粘贴的公众号 HTML，带实时控制面板（品牌/配色/排版/图片）+ 三种吸色 | [README](skills/内容设计/gongzhonghao-typeset/README.md) |
+| `group-daily` | **群日报**：微信群一天聊天 → 杂志风 HTML + PNG（依赖 vchat CLI） | [README](skills/内容设计/group-daily/README.md) |
+| `group-daily-newspaper` | **群报**：微信群一天聊天 → 人民日报式 A3 报纸版，AI 自适应 2/4/6 版、每版精确等高、可印刷彩打（依赖 vchat CLI） | [README](skills/内容设计/group-daily-newspaper/README.md) |
+| `ming-li` | **命理大师**：八字四家合一 + 紫微 + 六爻 → 新中式古典风 HTML 卷轴 + PNG 长图 | [README](skills/内容设计/ming-li/README.md) |
 
 ### 📊 数据抓取
 
 | Skill | 用途 | 详情 |
 |---|---|---|
-| `mp-data` | 公众号全量文章数据抓取 + 可视化 | [README](skills/mp-data/README.md) |
+| `mp-data` | 公众号全量文章数据抓取 + 可视化 | [README](skills/数据抓取/mp-data/README.md) |
 
 ### 🚕 生活
 
 | Skill | 用途 | 详情 |
 |---|---|---|
-| `didi-ride-skill` | 飞书里一句话叫滴滴（OpenClaw） | [README](skills/didi-ride-skill/README.md) |
+| `didi-ride-skill` | 飞书里一句话叫滴滴（OpenClaw） | [README](skills/生活/didi-ride-skill/README.md) |
 
 ### 安装 Skill
 
 ```bash
-# 把某个 skill 复制到 Claude Code 的 skills 目录
-cp -r skills/feishu-proposal ~/.claude/skills/
+# 把某个 skill 复制到 Claude Code 的 skills 目录（注意带上领域目录）
+cp -r skills/飞书办公/feishu-proposal ~/.claude/skills/
 # 然后重启 Claude Code，跟它说话即可触发
 ```
 
