@@ -1,6 +1,6 @@
 # ming-li
 
-> 一个专业命理分析的 Claude Code Skill。
+> 一个专业命理分析的 Skill。
 > 八字四家合一 + 紫微斗数 + 六爻文王课，骨架来自韦千里 8 步范式 + ISAR 国际占星标准 + 心理咨询 SOAP 流程。
 > 输出新中式古典风的 HTML 长卷 + 2× DPI PNG 长图，方便发朋友圈或保留在 vault。
 

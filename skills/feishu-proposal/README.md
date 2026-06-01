@@ -1,6 +1,6 @@
 # feishu-proposal
 
-基于[飞书 CLI](https://github.com/larksuite/cli) 的客户方案自动生成技能 Claude Code Skill。
+基于[飞书 CLI](https://github.com/larksuite/cli) 的客户方案自动生成 Skill。
 
 从一场飞书会议的智能纪要 + 文字记录出发，自动生成结构化的客户方案文档，并写到飞书。
 
