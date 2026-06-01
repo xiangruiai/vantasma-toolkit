@@ -2,7 +2,7 @@
 
 > 万涂幻象出品的个人工具合集 · **仅供个人学习与研究用途**
 >
-> 含 1 个 CLI（vchat）+ 8 个 Claude Code Skills。
+> 含 1 个 CLI（vchat）+ 10 个 Claude Code Skills。
 
 ---
 
@@ -48,6 +48,7 @@ vantasma-toolkit/
     ├── feishu-proposal/             飞书客户方案自动生成
     ├── gongzhonghao-typeset/        公众号排版 · 写完 md 一键排成可粘贴的公众号 HTML
     ├── group-daily/                 微信群杂志风日报
+    ├── group-daily-newspaper/       微信群人民日报式 A3 报纸版日报（可印刷彩打）
     ├── ming-li/                     八字 / 紫微 / 六爻 命理分析
     └── mp-data/                     公众号数据抓取
 ```
@@ -101,6 +102,7 @@ vchat --help                                    # 看全部 63 命令
 | Skill | 用途 | 详情 |
 |---|---|---|
 | `group-daily` | **群日报**：微信群一天聊天 → 杂志风 HTML + PNG（依赖 vchat CLI） | [README](skills/group-daily/README.md) |
+| `group-daily-newspaper` | **群报**：微信群一天聊天 → 人民日报式 A3 报纸版，AI 自适应 2/4/6 版、每版精确等高、可印刷彩打（依赖 vchat CLI） | [README](skills/group-daily-newspaper/README.md) |
 | `ming-li` | **命理大师**：八字四家合一 + 紫微 + 六爻 → 新中式古典风 HTML 卷轴 + PNG 长图 | [README](skills/ming-li/README.md) |
 | `feishu-proposal` | 飞书会议纪要 → 客户方案文档 | [README](skills/feishu-proposal/README.md) |
 | `feishu-bitable-skill` | 飞书多维表格搭建（OpenClaw） | [README](skills/feishu-bitable-skill/README.md) |

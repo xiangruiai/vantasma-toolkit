@@ -72,8 +72,8 @@ vchat contacts "示例联系人A"
 
 ```bash
 # 单个
-vchat avatar "李祥瑞" -o /tmp/avatars
-# 输出: /tmp/avatars/李祥瑞_wxid_example002.jpg
+vchat avatar "你的昵称" -o /tmp/avatars
+# 输出: /tmp/avatars/你的昵称_wxid_example002.jpg
 
 # 批量（不推荐，7000+ 个）
 vchat avatar --all -o /tmp/all_avatars

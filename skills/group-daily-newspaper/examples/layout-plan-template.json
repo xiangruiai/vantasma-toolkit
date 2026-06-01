@@ -1,0 +1,214 @@
+{
+  "_about": "layout-plan v1.2 空白模板 · 跑新群时复制此文件改名 layout-plan-<日期>-<群名>.json 后填写",
+  "_schema": "见 references/newspaper-schema.md",
+  "_workflow": "1) AI 先分析当天聊天 + 群图 2) 写 story.json（group-daily skill 产出）3) 复制本模板，按当天素材填字段 4) python3 render_newspaper.py story.json avatars.json plan.json out.html 5) 自检 1587 + PDF",
+
+  "masthead": {
+    "name_top": "群名前几字（如 你的群名）",
+    "name_bot": "日报",
+    "pinyin": "GROUP-NAME · DAILY",
+    "slogan_en": "A NEWSPAPER FOR ONE WECHAT GROUP",
+    "slogan_cn_html": "<两行风格 slogan>",
+    "promo_tag": "推广链接 · domain.com",
+    "lunar": "丙午年三月三十（按日期填农历）",
+    "publisher": "<群名>群出版",
+    "cn_no": "CN 11-MMDD",
+    "issue_code": "代号 1-1",
+    "issue_no": "第 MMDD 期",
+    "total_pages": "今日 4 版",
+    "footer_brand": "<群名>日报 · DAILY"
+  },
+
+  "page1": {
+    "name": "头 版 要 闻",
+    "foot": "第 1 版 / 共 4 版 · 头 版 要 闻",
+    "lead_kicker": "头 版 头 条 · <群名> · 当 日 实 录",
+    "hero": {
+      "eyebrow": "头 版 独 家 深 度 · EXCLUSIVE REPORT",
+      "title_html": "<头版主标题>",
+      "time": "<HH:MM – HH:MM>",
+      "badge": "<主线 badge>",
+      "timeline_indices": [0, 6],
+      "story_break_html": "▼ <分隔小标题> ▼",
+      "quotes_pick": [[0, 0], [0, 1], [6, 1], [6, 2]],
+      "produced_html": "<b>PRODUCED ·</b> <当日主线产出>"
+    },
+    "aside": {
+      "figure": {
+        "image": "file:///tmp/<群名>_images/<图文件名>",
+        "alt": "<图描述>",
+        "eyebrow": "现 场 直 击 · ON THE SCENE",
+        "text": "<图说 100-150 字>",
+        "credit": "— <群名> <日期> 流转截图"
+      },
+      "side_banner": "今 日 花 絮 · <群名> 边 讯",
+      "briefings": [
+        {"time": "HH:MM", "title": "<小标题>", "desc": "<花絮一句>"},
+        {"time": "HH:MM", "title": "<小标题>", "desc": "<花絮一句>"},
+        {"time": "HH:MM", "title": "<小标题>", "desc": "<花絮一句>"}
+      ],
+      "side_quote": {
+        "text_html": "<2-4 字封顶金句>",
+        "attr": "— <作者> · HH:MM 封顶金句"
+      }
+    },
+    "photo_strip": {
+      "banner": "今 日 合 影 · TODAY'S CAST · <群名> 8 位主演",
+      "caption": "<日期> · <群名>主要参演阵容 · 排名不分先后"
+    },
+    "day_stats": {
+      "banner": "今 日 数 字 · BY THE NUMBERS · <群名> <日期> 当 日 实 测",
+      "items": [
+        {"n": "<数字>", "l": "<标签>"},
+        {"n": "<数字>", "l": "<标签>"},
+        {"n": "<数字>", "l": "<标签>"},
+        {"n": "<数字>", "l": "<标签>"},
+        {"n": "<数字>", "l": "<标签>"},
+        {"n": "<数字>", "l": "<标签>"},
+        {"n": "<数字>", "l": "<标签>"},
+        {"n": "<数字>", "l": "<标签>"}
+      ]
+    }
+  },
+
+  "page2": {
+    "name": "<主题英文 · BUILD TOGETHER>",
+    "foot": "第 2 版 / 共 4 版 · <主题>",
+    "theme_title_html": "<2 版主题大字>",
+    "theme_en": "<English subtitle>",
+    "person_card": {
+      "image": "file:///tmp/<群名>_images/<人物 profile 图>",
+      "alt": "<人物名 · PERSONAL PROFILE>",
+      "eyebrow": "本 版 关 键 人 物 · KEY PERSON",
+      "quote_block_title": "<人物名> <HH:MM> 录 音 笔 · 三 句 话 把 ...",
+      "quote_block_lines": [
+        ["HH:MM", "原话"],
+        ["HH:MM", "原话"],
+        ["HH:MM", "原话"]
+      ],
+      "caption_html": "<b>图：</b><人物图说 + 简介 + 当日关键动作>"
+    },
+    "hero": {
+      "eyebrow": "本 版 头 条 · LEAD STORY · 主 角 ：<人物名>",
+      "title_html": "<二版主稿标题><br><span class=\"deck\">副标题</span>",
+      "time": "<HH:MM – HH:MM>",
+      "badge": "<badge 标签>",
+      "timeline_indices": [3, 7],
+      "story_break_html": "▼ <分隔小标题> ▼",
+      "quotes_pick": [[3, 0], [3, 1], [3, 2]],
+      "produced_html": "<b>PRODUCED ·</b> <本版产出>"
+    },
+    "produced_list": {
+      "banner": "今 日 产 出 物 · PRODUCED TODAY",
+      "items": [
+        {"no": "01", "title": "<产出 1>", "desc": "<简述>"},
+        {"no": "02", "title": "<产出 2>", "desc": "<简述>"},
+        {"no": "03", "title": "<产出 3>", "desc": "<简述>"}
+      ]
+    },
+    "timeline_strip": {
+      "banner": "<主线名 · 时间段 · X 小时主线 · 起止时间>",
+      "items": [
+        {"time": "HH:MM", "text": "<节点描述>", "who": "— <发言人>"},
+        {"time": "HH:MM", "text": "<节点描述>", "who": "— <发言人>"},
+        {"time": "HH:MM", "text": "<节点描述>", "who": "— <发言人>"},
+        {"time": "HH:MM", "text": "<节点描述>", "who": "— <发言人>"},
+        {"time": "HH:MM", "text": "<节点描述>", "who": "— <发言人>"},
+        {"time": "HH:MM", "text": "<节点描述>", "who": "— <发言人>"}
+      ]
+    },
+    "quote_wall": {
+      "banner": "群 成 员 当 日 金 句 · <群名> 一 日 实 录 · TODAY'S VOICES",
+      "items": [
+        {"t": "<原话>", "cite": "<发言人> · HH:MM · <场景>"},
+        {"t": "<原话>", "cite": "<发言人> · HH:MM · <场景>"},
+        {"t": "<原话>", "cite": "<发言人> · HH:MM · <场景>"},
+        {"t": "<原话>", "cite": "<发言人> · HH:MM · <场景>"},
+        {"t": "<原话>", "cite": "<发言人> · HH:MM · <场景>"},
+        {"t": "<原话>", "cite": "<发言人> · HH:MM · <场景>"},
+        {"t": "<原话>", "cite": "<发言人> · HH:MM · <场景>"},
+        {"t": "<原话>", "cite": "<发言人> · HH:MM · <场景>"}
+      ]
+    }
+  },
+
+  "page3": {
+    "name": "副刊 · 群魂 · SUNDAY READING",
+    "foot": "第 3 版 / 共 4 版 · 副 刊 · 群 魂",
+    "theme_title_html": "<副刊主题大字>",
+    "theme_en": "<English subtitle>",
+    "banner_image": {
+      "image": "file:///tmp/<群名>_images/<横图>",
+      "alt": "<图描述>",
+      "eyebrow": "本 版 镇 版 图 · COVER IMAGE",
+      "title": "<图标题>",
+      "text": "<图说 200-300 字>",
+      "credit": "— <群名> <日期> 流转图片 · 拍摄者署名"
+    },
+    "hero": {
+      "eyebrow": "本 版 头 条 · SUNDAY FEATURE",
+      "title_html": "<副刊主稿标题><br><span class=\"deck\">副标题</span>",
+      "time": "<HH:MM – HH:MM>",
+      "badge": "<badge 标签>",
+      "timeline_indices": [4, 5],
+      "story_break_html": "▼ <分隔小标题> ▼",
+      "quotes_pick": [[4, 0], [4, 1], [5, 0], [5, 1]],
+      "produced_html": "<b>PRODUCED ·</b> <副刊产出>"
+    },
+    "timeline_strip": {
+      "banner": "<次主线名 · 时间段>",
+      "items": [
+        {"time": "HH:MM", "text": "<节点>", "who": "— <发言人>"},
+        {"time": "HH:MM", "text": "<节点>", "who": "— <发言人>"},
+        {"time": "HH:MM", "text": "<节点>", "who": "— <发言人>"},
+        {"time": "HH:MM", "text": "<节点>", "who": "— <发言人>"},
+        {"time": "HH:MM", "text": "<节点>", "who": "— <发言人>"},
+        {"time": "HH:MM", "text": "<节点>", "who": "— <发言人>"}
+      ]
+    },
+    "letters": {
+      "banner": "听 友 催 更 · LETTERS · <日期> 群 友 反 馈",
+      "items": [
+        {"text": "<群友原话>", "from": "— <发言人> · HH:MM"},
+        {"text": "<群友原话>", "from": "— <发言人> · HH:MM"},
+        {"text": "<群友原话>", "from": "— <发言人> · HH:MM"}
+      ]
+    },
+    "lingo": {
+      "banner": "今 日 黑 话 · <群名> 当 日 出 现 · TODAY'S LINGO",
+      "items": [
+        {"w": "<词>", "d": "<上下文解释>"},
+        {"w": "<词>", "d": "<上下文解释>"},
+        {"w": "<词>", "d": "<上下文解释>"},
+        {"w": "<词>", "d": "<上下文解释>"},
+        {"w": "<词>", "d": "<上下文解释>"},
+        {"w": "<词>", "d": "<上下文解释>"}
+      ]
+    }
+  },
+
+  "page4": {
+    "name": "人物 · 高光 · 附录 · THE CAST",
+    "foot": "第 4 版 / 共 4 版 · 人 物 · 附 录",
+    "theme_title_html": "今 日 高 光 · 让 这 一 天 立 住 的 8 个 人",
+    "theme_en": "Today's Cast · Eight People Who Made the Day",
+    "appendix_banner": "附 录 · APPENDIX · 可 抄 作 业 · BRING YOUR OWN WORKFLOW",
+    "sop_title": "可 抄 作 业 · 实 操 SOP",
+    "qa_title": "群 友 答 疑 · Q & A",
+    "tomorrow": {
+      "banner": "下 回 分 解 · COMING TOMORROW · <副标题>",
+      "items": [
+        {"tag": "<时间标签>", "title": "<预告标题>", "desc": "<详情 1-2 句>"},
+        {"tag": "<时间标签>", "title": "<预告标题>", "desc": "<详情 1-2 句>"},
+        {"tag": "<时间标签>", "title": "<预告标题>", "desc": "<详情 1-2 句>"},
+        {"tag": "<时间标签>", "title": "<预告标题>", "desc": "<详情 1-2 句>"}
+      ],
+      "qr": {
+        "image": "file:///tmp/<群名>_images/<二维码图>",
+        "alt": "<二维码描述>",
+        "title_html": "<二维码标题><br>第二行",
+        "desc": "<二维码说明 + 有效期>"
+      }
+    }
+  }
+}

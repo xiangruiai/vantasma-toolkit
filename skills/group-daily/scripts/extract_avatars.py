@@ -74,7 +74,7 @@ def main():
 
     if not os.path.exists(args.db):
         sys.exit(f"head_image.db 不存在: {args.db}\n"
-                 "请先确保微信数据已解密（祥瑞的解密工具产出路径）。")
+                 "请先确保微信数据已解密（vchat decrypt 产出路径）。")
 
     mapping = load_wxids(args)
     wxids = list(mapping.keys())

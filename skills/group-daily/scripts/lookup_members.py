@@ -2,7 +2,7 @@
 """根据群名查 chatroom 成员，输出 wxid + 昵称 + 备注 映射。
 
 用法:
-    python3 lookup_members.py --group-name "祥瑞和Ta的社区朋友们"
+    python3 lookup_members.py --group-name "<群名>"
     python3 lookup_members.py --group-name "XX群" --names 示例联系人A,示例联系人C --out /tmp/members.json
 """
 import argparse

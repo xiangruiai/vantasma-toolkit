@@ -28,10 +28,12 @@ def find_chrome():
     sys.exit("没找到 Chrome / Chromium。请安装其一。")
 
 
-def shoot(chrome, html_path, png_path, width, height):
+def shoot(chrome, html_path, png_path, width, height, scale=2):
+    """用 headless=new + 高 DPI 截图，得到 Retina 级清晰度。"""
     cmd = [
-        chrome, "--headless", "--disable-gpu", "--no-sandbox",
-        "--virtual-time-budget=4000", "--hide-scrollbars",
+        chrome, "--headless=new", "--disable-gpu", "--no-sandbox",
+        "--virtual-time-budget=10000", "--hide-scrollbars",
+        f"--force-device-scale-factor={scale}",
         f"--window-size={width},{height}",
         f"--screenshot={png_path}",
         f"file://{os.path.abspath(html_path)}",
@@ -80,6 +82,8 @@ def main():
     ap.add_argument("--width", type=int, default=900)
     ap.add_argument("--height", type=int, default=18000,
                     help="截图高度上限（实际会被自适应裁掉空白）")
+    ap.add_argument("--scale", type=int, default=2,
+                    help="设备像素比，2=Retina 级清晰，3=超清。默认 2。")
     args = ap.parse_args()
 
     html_path = os.path.expanduser(args.html)
@@ -89,8 +93,8 @@ def main():
     os.makedirs(os.path.dirname(png_path), exist_ok=True)
 
     chrome = find_chrome()
-    print(f"▶ 用 {chrome} 截图 {args.width}×{args.height}...", file=sys.stderr)
-    shoot(chrome, html_path, png_path, args.width, args.height)
+    print(f"▶ 用 {chrome} 截图 {args.width}×{args.height}（{args.scale}x DPI）...", file=sys.stderr)
+    shoot(chrome, html_path, png_path, args.width, args.height, args.scale)
 
     print(f"▶ 自适应裁底...", file=sys.stderr)
     w, h, bg = trim_bottom(png_path)

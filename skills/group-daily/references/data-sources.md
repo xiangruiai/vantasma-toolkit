@@ -32,7 +32,7 @@
 -- 群本身（local_type=2 是群）
 CREATE TABLE contact(
     id INTEGER PRIMARY KEY,
-    username TEXT,         -- 群 wxid，如 45404041702@chatroom
+    username TEXT,         -- 群 wxid，如 example12345@chatroom
     local_type INTEGER,    -- 2 = 群聊
     nick_name TEXT,        -- 群名
     remark TEXT,           -- 群备注
@@ -65,7 +65,7 @@ WHERE cm.room_id = ?;
 
 ```bash
 python3 scripts/lookup_members.py \
-    --group-name "祥瑞和Ta的社区朋友们" \
+    --group-name "示例社区群" \
     --names "示例联系人A,示例联系人C,示例联系人D" \
     --out /tmp/members.json
 ```

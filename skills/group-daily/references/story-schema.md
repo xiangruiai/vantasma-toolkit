@@ -6,7 +6,7 @@ AI 在分析完聊天记录后，准备一份 story.json 文件喂给 `make_dail
 
 ```json
 {
-  "group_name": "祥瑞和Ta的社区朋友们",
+  "group_name": "示例社区群",
   "date": "2026-05-11",
   "time_range": "09:08 → 22:00",
 

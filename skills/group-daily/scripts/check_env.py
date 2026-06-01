@@ -101,7 +101,7 @@ def check_vchat():
         return True
     warn("vchat 不在 PATH 中（强烈建议安装）",
          "见 https://github.com/<wechat-decrypt-repo>"
-         "（祥瑞 wechat-decrypt 项目目前未开源，"
+         "（vchat 是微信数据本地解密 CLI，"
          "可暂用 MCP 工具 + 本 skill 自带脚本作为兜底）")
     return False
 
