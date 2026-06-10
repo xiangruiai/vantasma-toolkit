@@ -91,7 +91,13 @@ python3 $SKILL/scripts/tts.py --storyboard sb.json --workdir .
 - ✅ **场景智能转场**（render.py，`sb["transitions"]` 默认开）：xfade 自实现叠化/闪白/黑场，
   按场景语义匹配（impact_text=闪白、concept_card=黑场叠、其余=自然叠化），不为配而配；
   转场缩短时间轴后自动重算 SFX 对齐
-- 规划：画面特效（震动/缩放/故障/聚焦，CSS 或 ffmpeg）、钩子大字砸场、数字滚动
+- ✅ **GSAP 动画引擎**（2026-06-11 接入，jheaven 级动效）：`assets/vendor/gsap.min.js` 已附带，
+  record_scene.js 已支持逐帧捕获 GSAP（`gsap.globalTimeline.totalTime(t)` seek，rAF 驱动不走 WAAPI）。
+  **demo 场景动画优先用 GSAP** 而非 CSS keyframes：timeline 精确编排出场序列、elastic/back/expo
+  专业缓动（真弹性物理回弹，CSS 做不出）、stagger 错落出场一行搞定、数字滚动、SplitText 文字逐字。
+  HTML 里 `<script src="file://.../assets/vendor/gsap.min.js"></script>` 引入即可。
+  写 GSAP 代码参考已装的 gsap-core / gsap-timeline / gsap-plugins skill（官方知识，按需加载）
+- 规划：画面特效（震动/缩放/故障/聚焦）、钩子大字砸场、数字滚动用 GSAP 重做
 
 ### Step 6: 渲染成片
 ```bash

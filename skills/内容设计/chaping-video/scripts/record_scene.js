@@ -30,9 +30,13 @@ const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
   await page.goto('file://' + path.resolve(htmlPath), { waitUntil: 'load' });
   // 等字体就绪，避免前几帧字体闪替
   await page.evaluate(() => document.fonts.ready);
-  // 接管时间轴：全部动画归零并暂停
+  // 接管时间轴：CSS/WAAPI 动画归零暂停；GSAP 走 rAF 不在 getAnimations 里，单独接管全局时间线
   await page.evaluate(() => {
     document.getAnimations().forEach((a) => { a.pause(); a.currentTime = 0; });
+    if (window.gsap && window.gsap.globalTimeline) {
+      window.gsap.globalTimeline.pause();           // 停掉 rAF 驱动，改由我们逐帧 seek
+      window.gsap.ticker.lagSmoothing(0);
+    }
   });
 
   const client = await page.createCDPSession();
@@ -40,6 +44,10 @@ const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
   for (let i = 0; i < totalFrames; i++) {
     await page.evaluate((t) => {
       document.getAnimations().forEach((a) => { a.currentTime = t; });
+      // GSAP 确定性 seek：把全局时间线拨到 t 秒（含所有 tween/timeline/stagger）
+      if (window.gsap && window.gsap.globalTimeline) {
+        window.gsap.globalTimeline.totalTime(t / 1000);
+      }
     }, i * stepMs);
     const shot = await client.send('Page.captureScreenshot', { format: 'png' });
     fs.writeFileSync(path.join(outDir, `f_${String(i + 1).padStart(5, '0')}.png`),
