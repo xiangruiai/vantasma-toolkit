@@ -138,8 +138,38 @@ def main():
 
     sf.save()
 
+    ddir = os.path.join(draft_root, name)
+    import shutil
+
+    # 关键①：剪映是沙盒应用，无权访问 ~/Projects 下的素材（显示"暂无访问权限"）。
+    # 把素材复制进草稿目录 materials/（剪映对自己草稿目录有完整权限），并改写 JSON 路径。
+    matdir = os.path.join(ddir, "materials")
+    os.makedirs(matdir, exist_ok=True)
+    main_json = os.path.join(ddir, "draft_content.json")
+    txt = open(main_json).read()
+    import re
+    path_map = {}
+    for p in set(re.findall(r'/[^"]*?\.(?:mp4|mp3|jpg|png|wav)', txt)):
+        if os.path.exists(p) and matdir not in p:
+            dst = os.path.join(matdir, os.path.basename(p))
+            shutil.copy(p, dst)
+            path_map[p] = dst
+    for s, d in path_map.items():
+        txt = txt.replace(s, d)
+    open(main_json, "w").write(txt)
+    print(f"   素材自包含: {len(path_map)} 个复制进草稿（解决沙盒权限）")
+
+    # 关键②：剪映 10.6 草稿主文件名是 draft_info.json，pyJianYingDraft 只写 draft_content.json，
+    # 剪映按索引找 draft_info.json 找不到 → 草稿箱显示损坏/打不开。补一份同名文件。
+    shutil.copy(main_json, os.path.join(ddir, "draft_info.json"))
+    # 补缩略图：剪映草稿箱要 cover 才显示卡片（取工程封面或首场景帧）
+    cover = os.path.join(wd, "final_cover.jpg")
+    if os.path.exists(cover):
+        shutil.copy(cover, os.path.join(ddir, "draft_cover.jpg"))
+        shutil.copy(cover, os.path.join(ddir, "draft_local_cover.jpg"))
+
     # 修复 meta：pyJianYingDraft 保存后 tm_duration=0，剪映可能据此判草稿损坏
-    meta_path = os.path.join(draft_root, name, "draft_meta_info.json")
+    meta_path = os.path.join(ddir, "draft_meta_info.json")
     try:
         meta = json.load(open(meta_path))
         meta["tm_duration"] = cursor
