@@ -455,15 +455,18 @@ def win_ending(s, L):
     q_html = ""
     if question:
         qfs = int(L["cw"] * 0.8 / max(4, len(question)))
-        q_html = (f'<div class="in" style="font-family:\'YSBTH\';font-size:{qfs}px;color:#fff;'
-                  f'letter-spacing:3px;animation-delay:.3s;text-align:center;line-height:1.3">{question}</div>')
+        # 问题文字 + 下方居中绿短横（明确间距，不与文字重合）
+        q_html = (f'<div class="in" style="display:flex;flex-direction:column;align-items:center;'
+                  f'gap:24px;animation-delay:.3s">'
+                  f'<div style="font-family:\'YSBTH\';font-size:{qfs}px;color:#fff;'
+                  f'letter-spacing:3px;text-align:center;line-height:1.3">{question}</div>'
+                  f'<div style="width:76px;height:7px;background:{GREEN};border-radius:4px;'
+                  f'box-shadow:0 0 16px rgba(34,166,103,.5)"></div></div>')
     html = f"""
 <div style="position:absolute;inset:0;background:
   radial-gradient(ellipse 700px 500px at 20% 0%,rgba(34,166,103,.28),transparent 60%),
   radial-gradient(ellipse 600px 500px at 95% 90%,rgba(232,74,109,.20),transparent 55%),
   linear-gradient(170deg,#101412,#0a0d0b)"></div>
-<div style="position:absolute;left:8%;top:32%;width:60px;height:8px;background:{GREEN};border-radius:4px"
-  class="in"></div>
 <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
   justify-content:center;gap:44px;padding:0 6%">
   <div class="in" style="font-size:{int(L['cw']*0.026)}px;letter-spacing:.5em;color:{GREEN_LIGHT};
