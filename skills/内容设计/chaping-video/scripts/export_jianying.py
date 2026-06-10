@@ -47,6 +47,7 @@ def main():
     ap.add_argument("--storyboard", required=True)
     ap.add_argument("--workdir", required=True)
     ap.add_argument("--name", default=None)
+    ap.add_argument("--plain", action="store_true", help="纯净模式：不加剪映转场/文字动画")
     a = ap.parse_args()
 
     try:
@@ -83,8 +84,17 @@ def main():
             print(f"⚠️ 场景 {i} 缺片段（先跑 render.py），跳过")
             continue
         vdur = us(probe_dur(clip))
-        sf.add_segment(draft.VideoSegment(
-            draft.VideoMaterial(clip), Timerange(cursor, vdur)))
+        vseg = draft.VideoSegment(draft.VideoMaterial(clip), Timerange(cursor, vdur))
+        # 剪映内置转场：媒体场景间叠化更顺，冲击/钩子场景用快切闪黑（最后一场不加）
+        if not a.plain and i < len(sb["scenes"]) - 1:
+            from pyJianYingDraft import TransitionType
+            t = TransitionType.闪黑 if scene["type"] in ("impact_text", "concept_card") \
+                else TransitionType.叠化
+            try:
+                vseg.add_transition(t, duration="0.3s")
+            except Exception:
+                pass
+        sf.add_segment(vseg)
 
         # TTS 音频段
         mp3 = os.path.join(wd, "audio", f"scene_{i:03d}.mp3")
@@ -101,9 +111,16 @@ def main():
                 per = adur // len(subs)
                 for j, txt in enumerate(subs):
                     seg_len = per if j < len(subs) - 1 else adur - per * (len(subs) - 1)
-                    sf.add_segment(draft.TextSegment(
+                    tseg = draft.TextSegment(
                         txt, Timerange(cursor + j * per, seg_len),
-                        style=draft.TextStyle(size=8.0, color=(1.0, 1.0, 1.0))))
+                        style=draft.TextStyle(size=8.0, color=(1.0, 1.0, 1.0)))
+                    if not a.plain:
+                        from pyJianYingDraft import TextIntro
+                        try:
+                            tseg.add_animation(TextIntro.渐显, duration="0.2s")
+                        except Exception:
+                            pass
+                    sf.add_segment(tseg)
                     n_sub += 1
         cursor += vdur
 
