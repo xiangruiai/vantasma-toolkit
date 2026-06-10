@@ -409,15 +409,24 @@ def main():
                   "attack=80:release=500:makeup=1[bgm]")
         amix_in.append("[bgm]")
     if len(amix_in) > 1:
-        fc.append(f"{''.join(amix_in)}amix=inputs={len(amix_in)}:normalize=0:duration=first[aout]")
-        amap = "[aout]"
+        fc.append(f"{''.join(amix_in)}amix=inputs={len(amix_in)}:normalize=0:duration=first[amixed]")
+        amap = "[amixed]"
     else:
-        amap = "0:a"
+        amap = "[0:a]"
 
-    # 轻量"爆款滤镜"：饱和度/对比微提
-    cmd = inputs + (["-filter_complex", ";".join(fc)] if fc else []) + \
+    # 结尾渐隐（祥瑞 2026-06-11）：画面淡黑 + 音频淡出，给"结束了"的收尾感。
+    # 可用 sb["fade_out"] 调时长（默认 0.9s），设 0 关闭。
+    fade_d = float(sb.get("fade_out", 0.9))
+    fade_st = max(0.0, total - fade_d)
+    if fade_d > 0:
+        fc.append(f"{amap}afade=t=out:st={fade_st:.3f}:d={fade_d:.3f}[afade]")
+        amap = "[afade]"
+        vf = f"eq=saturation=1.07:contrast=1.02,fade=t=out:st={fade_st:.3f}:d={fade_d:.3f}"
+    else:
+        vf = "eq=saturation=1.07:contrast=1.02"
+    cmd = inputs + ["-filter_complex", ";".join(fc)] + \
         ["-map", "0:v", "-map", amap,
-         "-vf", "eq=saturation=1.07:contrast=1.02",
+         "-vf", vf,
          "-c:v", "libx264", "-preset", "medium", "-crf", "19",
          "-c:a", "aac", "-b:a", "192k",
          "-movflags", "+faststart", "-t", f"{total:.3f}", out_path]
