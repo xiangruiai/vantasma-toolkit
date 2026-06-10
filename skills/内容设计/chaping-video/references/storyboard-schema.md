@@ -97,8 +97,9 @@ text ≤ 8 字；narration 同步说出这句话；text_color 可选覆盖文字
 ### demo 定制演示动画（每片现写，反千篇一律的核心）
 ```json
 {"type": "demo", "narration": "...", "demo_bg": "paper|dark", "sfx": "whoosh",
- "demo_html": "<div>…窗口内 body 片段，绝对定位布局…</div>",
- "demo_css": "@keyframes …（百分比或 delay 计时，纯 CSS 确定性动画）"}
+ "demo_html": "<div>…窗口内 body 片段，元素带 id/class 供 GSAP 选中…</div>",
+ "demo_css": "可选静态样式（GSAP 模式下样式多写 inline，动画交给 demo_js）",
+ "demo_js": "GSAP 动画代码（优先用，比 CSS 强）：gsap.timeline()+from/to，elastic/back 弹性、stagger 错落、strokeDashoffset 描线。录制器自动逐帧 seek globalTimeline。gsap.min.js 自动引入"}
 ```
 - 用途：概念可视化/过程演示/数字动效（如 tokenizer 剁字、扣费账单、计数器对比）
 - **每片按内容从零写**，禁止复用往期 demo；只继承设计语言（见下）

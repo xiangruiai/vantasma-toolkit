@@ -641,6 +641,13 @@ body{{background:transparent !important}}
         sig_block = f'<div class="sig">SIG.{idx:02d} / {brand["sig_tag"]}</div>'
         logo_block = f'<div class="logo">{logo}</div>'
         prog_block = '<div class="prog"></div>'
+    # GSAP 注入：demo 场景写了 demo_js 时，引入本地 gsap + 执行动画代码（录制器逐帧 seek globalTimeline）
+    gsap_block = ""
+    demo_js = scene.get("demo_js")
+    if demo_js:
+        gsap_path = os.path.join(ASSETS, "vendor", "gsap.min.js")
+        gsap_block = (f'<script src="file://{gsap_path}"></script>\n'
+                      f'<script>{demo_js}</script>')
     html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>{_frame_css(W, H, dur, L, len(title_lines))}{extra_css}{bars_css}{hole_css}{prog_css}{memes_css}</style></head>
 <body>
@@ -656,6 +663,7 @@ body{{background:transparent !important}}
 {sig_block}
 {logo_block}
 <div class="{vig_cls}"></div><div class="{grain_cls}"></div>
+{gsap_block}
 </body></html>"""
     temp = os.path.join(workdir, "temp")
     os.makedirs(temp, exist_ok=True)
