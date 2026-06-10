@@ -429,7 +429,7 @@ def win_impact(s, L):
 <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
   justify-content:center;gap:52px;z-index:1;padding:0 5%">
   {kicker_html}
-  <div style="font-family:'YSBTH';font-size:{fs}px;font-weight:900;color:#fff;letter-spacing:4px;
+  <div class="smash" style="font-family:'YSBTH';font-size:{fs}px;font-weight:900;color:#fff;letter-spacing:4px;
     text-shadow:0 0 70px rgba(34,166,103,.85),0 0 24px rgba(255,255,255,.4);opacity:0;
     animation:smash .5s .15s cubic-bezier(.2,.9,.3,1.2) forwards">{text}</div>
   {sub_html}
@@ -528,7 +528,7 @@ def win_media(s, L):
             f'<div style="background:rgba(8,10,9,.58);backdrop-filter:blur(14px);'
             f'border-top:1.5px solid rgba(255,255,255,.22);border-bottom:1.5px solid rgba(255,255,255,.22);'
             f'padding:{int(L["cw"]*0.045)}px 0;display:flex;justify-content:center">'
-            f'<div style="font-family:\'YSBTH\';font-size:{hfs}px;color:#fff;letter-spacing:8px;'
+            f'<div data-anim="smash" style="font-family:\'YSBTH\';font-size:{hfs}px;color:#fff;letter-spacing:8px;'
             f'text-shadow:0 0 60px rgba(34,166,103,.8),0 0 20px rgba(255,255,255,.35);opacity:0;'
             f'animation:hooksmash .5s .35s cubic-bezier(.2,.9,.3,1.2) forwards">{ht}</div></div></div>')
     # 窗内不铺底色：媒体由 ffmpeg 垫在框架下层，这里只留角标/caption/钩子字浮在上面
@@ -641,13 +641,35 @@ body{{background:transparent !important}}
         sig_block = f'<div class="sig">SIG.{idx:02d} / {brand["sig_tag"]}</div>'
         logo_block = f'<div class="logo">{logo}</div>'
         prog_block = '<div class="prog"></div>'
-    # GSAP 注入：demo 场景写了 demo_js 时，引入本地 gsap + 执行动画代码（录制器逐帧 seek globalTimeline）
-    gsap_block = ""
-    demo_js = scene.get("demo_js")
-    if demo_js:
-        gsap_path = os.path.join(ASSETS, "vendor", "gsap.min.js")
-        gsap_block = (f'<script src="file://{gsap_path}"></script>\n'
-                      f'<script>{demo_js}</script>')
+    # GSAP 统一接管：所有场景引入 gsap，自动把框架标准动画类(.in/.pop/.slideL/.slideR/.smash)
+    # 从 CSS 缓动升级为 GSAP 弹性缓动（back/power），保留各元素原有 animation-delay 时序。
+    # 录制器逐帧 seek globalTimeline，确定性。demo 场景的 demo_js 在接管之后追加执行。
+    gsap_path = os.path.join(ASSETS, "vendor", "gsap.min.js")
+    demo_js = scene.get("demo_js") or ""
+    takeover = """
+(function(){
+  if(!window.gsap)return;
+  var M={in:{y:46,opacity:0,ease:'power3.out',d:.62},
+         pop:{scale:.55,opacity:0,ease:'back.out(2)',d:.52},
+         slideL:{x:-80,opacity:0,ease:'power3.out',d:.6},
+         slideR:{x:80,opacity:0,ease:'power3.out',d:.6},
+         smash:{scale:1.7,opacity:0,ease:'back.out(1.6)',d:.5}};
+  document.querySelectorAll('.in,.pop,.slideL,.slideR,.smash,[data-anim]').forEach(function(el){
+    var delay=parseFloat(getComputedStyle(el).animationDelay)||0;
+    el.style.animation='none';
+    el.style.opacity='1';  // 恢复最终态：元素 inline/class 写了 opacity:0（本靠CSS动画到1），禁用动画后要还原，否则 GSAP from 0→0 永不可见
+    var k=el.dataset.anim||(el.classList.contains('pop')?'pop':
+          el.classList.contains('slideL')?'slideL':
+          el.classList.contains('slideR')?'slideR':
+          el.classList.contains('smash')?'smash':'in');
+    var m=M[k]||M.in, v={duration:m.d,ease:m.ease,delay:delay};
+    for(var p in m){if(p!=='ease'&&p!=='d')v[p]=m[p];}
+    gsap.from(el,v);
+  });
+})();
+"""
+    gsap_block = (f'<script src="file://{gsap_path}"></script>\n'
+                  f'<script>{takeover}\n{demo_js}</script>')
     html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>{_frame_css(W, H, dur, L, len(title_lines))}{extra_css}{bars_css}{hole_css}{prog_css}{memes_css}</style></head>
 <body>
