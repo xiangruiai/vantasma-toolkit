@@ -88,6 +88,14 @@ python3 $SKILL/scripts/tts.py --storyboard sb.json --workdir .
 python3 $SKILL/scripts/render.py --storyboard sb.json --workdir . --out final.mp4
 ```
 
+**可选：导出剪映草稿精修**（祥瑞说"导进剪映/用剪映改"时）：
+```bash
+python3 $SKILL/scripts/export_jianying.py --storyboard sb.json --workdir .
+```
+场景片段/TTS/字幕三轨铺进剪映时间线，打开剪映即可精修（加花字/转场/曲库BGM）后导出。
+限制：依赖 render.py 的 temp/ 中间产物（出过片才能导）；剪映保存后草稿转加密，
+CLI 单向生成不能回读；macOS 剪映无自动导出接口，导出手动点。
+
 ### Step 7: 自检（必做，不跳过）
 0. **事实校验（一票否决）**：演示动画和口播里出现的每一个数据必须实测或有来源——
    token 切分用 tiktoken 现场跑（`python3 -c "import tiktoken; ..."`，演示卡标注"实测"），
@@ -145,6 +153,7 @@ bash scripts/setup.sh --install  # 一键安装全部必备依赖
 | `scripts/fetch_broll.py` | B 站素材 search/download（内置绕 412 路径，CDN 拒 ffmpeg 直连所以先整段下载再裁） |
 | `scripts/fetch_bgm.py` | 按调性 mood 自动找免版权 BGM（yt_dlp，`list` 看 mood 表） |
 | `scripts/make_sfx.py` | 重新生成音效库 |
+| `scripts/export_jianying.py` | 工程导出为剪映草稿（场景视频/TTS音频/字幕三轨对齐，剪映里精修+手动导出） |
 
 ## 改进路线（2026-06-10 社区调研，按 ROI 排序，未实现的逐步做）
 

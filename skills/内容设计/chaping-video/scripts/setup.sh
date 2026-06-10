@@ -51,5 +51,6 @@ python3 -c "import sys,os; sys.path.insert(0,'$SKILL_DIR/scripts'); import tts; 
 command -v opencli >/dev/null && opt "opencli 已装（链接转视频抓公众号最稳）" "已就绪" || opt "opencli（链接转视频抓公众号）" "npm install -g @jackwener/opencli 并装浏览器扩展；缺省用 WebFetch/defuddle 兜底"
 opt "seedream 生图（插画/底图）" "需火山方舟 API key；缺省用纯 CSS 设计，不影响出片"
 python3 -c "import yt_dlp" 2>/dev/null && opt "yt-dlp（BGM 自动匹配 fetch_bgm.py）" "已就绪" || opt "yt-dlp（BGM 自动匹配）" "python3 -m pip install --user --break-system-packages yt-dlp；缺省无 BGM，不影响出片"
+python3 -c "import pyJianYingDraft" 2>/dev/null && opt "pyjianyingdraft（导出剪映草稿精修）" "已就绪" || opt "pyjianyingdraft（导出剪映草稿）" "pip install pyjianyingdraft + 剪映专业版；缺省直接用成片，不影响出片"
 echo ""
 echo "体检完成。必备项全 ✅ 即可出片：python3 scripts/tts.py --storyboard sb.json --workdir . && python3 scripts/render.py --storyboard sb.json --workdir ."
