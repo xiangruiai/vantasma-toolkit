@@ -44,9 +44,15 @@ ffmpeg 拼装 + 音效 + 自动封面（钩子帧）──► final.mp4
 
 ## ✦ 安装
 
+最省事的方式，把下面这句话直接发给你的 AI（Claude Code / Codex / 任意能跑命令的 agent）：
+
+> 帮我安装 chaping-video skill：clone https://github.com/xiangruiai/vantasma-toolkit ，把里面的 `skills/内容设计/chaping-video` 复制到 `~/.claude/skills/chaping-video`，然后运行 `bash ~/.claude/skills/chaping-video/scripts/setup.sh --install` 把缺失的依赖装好，最后把体检结果给我看。
+
+手动安装也行：
+
 ```bash
-# 放进 skills 目录（以 Claude Code 为例）
-cp -r chaping-video ~/.claude/skills/
+git clone --depth 1 https://github.com/xiangruiai/vantasma-toolkit.git /tmp/vt
+cp -r "/tmp/vt/skills/内容设计/chaping-video" ~/.claude/skills/
 
 # 体检 + 一键装依赖
 bash ~/.claude/skills/chaping-video/scripts/setup.sh --install
@@ -105,3 +111,7 @@ bash ~/.claude/skills/chaping-video/scripts/setup.sh --install
 仅供个人学习与研究。视频中引用的外部素材请遵守对应平台规则并标注来源；TTS、生图等云服务凭证自行申请、自行保管（skill 不落盘任何明文凭证）。详见仓库根目录免责声明。
 
 MIT License.
+
+---
+
+**万涂幻象出品** · 作者 **祥瑞** · 个人网站 [www.xiangruiai.com](https://www.xiangruiai.com) · 公众号「李祥瑞」
