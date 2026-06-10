@@ -211,7 +211,8 @@ def render_media_scene(scene, meta, chunks, dur, W, H, workdir, idx):
                   f"crop={cw}:{ch},fps={FPS}")
             if avail < seg:
                 fc += f",tpad=stop_mode=clone:stop_duration={seg - avail + 0.5:.3f}"
-            fc += ",fade=t=in:d=0.22,format=yuv420p[out]"
+            # 视频 shot 直切不加 fade（黑闪转场观感差，切换节奏感由 tick 音效给）
+            fc += ",format=yuv420p[out]"
             run([FFMPEG, "-y", "-v", "error", "-ss", str(ss), "-i", sh["src"],
                  "-filter_complex", fc, "-map", "[out]", "-t", f"{seg:.3f}",
                  "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "19", part])
@@ -230,7 +231,7 @@ def render_media_scene(scene, meta, chunks, dur, W, H, workdir, idx):
          "-i", shots_clip,
          "-framerate", str(FPS), "-i", os.path.join(fdir, "f_%05d.png"),
          "-filter_complex",
-         f"[0:v][1:v]overlay={cx}:{cy}[base];"
+         f"[0:v][1:v]overlay={cx}:{cy}:eof_action=repeat[base];"
          f"[base][2:v]overlay=0:0,format=yuv420p[out]",
          "-map", "[out]", "-t", f"{dur:.3f}",
          "-c:v", "libx264", "-preset", "veryfast", "-crf", "19", out])
