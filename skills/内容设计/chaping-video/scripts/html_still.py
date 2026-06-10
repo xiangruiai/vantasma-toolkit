@@ -118,8 +118,8 @@ def _frame_css(W, H, dur, L):
     tfs = int(W * (0.10 if portrait else 0.055))
     bars_top = L["wy"] + L["wh"] + 18
     show_top = bars_top + int(H * (0.065 if portrait else 0.072))
-    prog_top = L["safe_top"] + 2 if portrait else 0
-    toprow_top = L["safe_top"] + 30 if portrait else int(L["wy"] * 0.22)
+    prog_top = 0  # 进度条贴最顶（祥瑞定：可出安全区）
+    toprow_top = L["safe_top"] - 10 if portrait else int(L["wy"] * 0.22)
     return f"""
 @font-face{{font-family:'YSBTH';src:url('file://{FONT_TITLE_PATH}')}}
 *{{margin:0;padding:0;box-sizing:border-box}}
