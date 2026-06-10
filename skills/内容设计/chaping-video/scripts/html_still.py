@@ -196,7 +196,7 @@ body{{font-family:'PingFang SC','Hiragino Sans GB',sans-serif;position:relative;
 .baseline{{position:absolute;left:{L['wx']}px;right:{L['wx']}px;bottom:62px;height:3px;border-radius:2px;
   background:linear-gradient(90deg,rgba(34,166,103,.65),rgba(255,255,255,.10) 70%,transparent)}}
 /* 右下水印：幽灵字（实心超低透明度，贴底出血，不抢画面） */
-.logo{{position:absolute;right:-14px;bottom:-26px;font-size:{int(W*0.175)}px;font-family:'YSBTH';
+.logo{{position:absolute;right:20px;bottom:96px;font-size:{int(W*0.175)}px;font-family:'YSBTH';
   color:rgba(165,214,167,.075);letter-spacing:6px;z-index:3;white-space:nowrap}}
 /* 通用动画 */
 .in{{opacity:0;animation:rise .65s cubic-bezier(.2,.8,.2,1) forwards}}
