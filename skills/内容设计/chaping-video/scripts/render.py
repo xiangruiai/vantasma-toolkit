@@ -252,6 +252,10 @@ def main():
     sb = json.load(open(args.storyboard))
     workdir = os.path.abspath(args.workdir)
     os.makedirs(os.path.join(workdir, "temp"), exist_ok=True)
+    global FPS
+    # 帧率跟素材对齐：主力素材 25fps（如飞书/B站录屏）时写 "fps": 25，
+    # 避免 25→30 重复帧造成的卡顿感；默认 30
+    FPS = int(sb.get("fps", FPS))
     aspect = sb.get("aspect", "portrait")
     W, H = (1080, 1920) if aspect == "portrait" else (1920, 1080)
     out_path = args.out or os.path.join(workdir, "final.mp4")

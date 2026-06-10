@@ -113,13 +113,24 @@ def _accent(text):
     return out
 
 
-def _frame_css(W, H, dur, L):
+def _frame_css(W, H, dur, L, n_title_lines=1):
     portrait = H > W
     tfs = int(W * (0.10 if portrait else 0.055))
     bars_top = L["wy"] + L["wh"] + 18
-    show_top = bars_top + int(H * (0.065 if portrait else 0.072))
     prog_top = 0  # 进度条贴最顶（祥瑞定：可出安全区）
     toprow_top = L["safe_top"] - 10 if portrait else int(L["wy"] * 0.22)
+    # 标题/tags 自适应：按标题行数算块高，在「字幕底 ~ 安全区底」内垂直居中
+    n = max(1, n_title_lines)
+    title_h = int(tfs * 1.3 * (1 + 0.8 * (n - 1)))   # 首行全尺寸，l1 行 0.8 倍
+    if portrait:
+        bars_bottom = bars_top + 104
+        zone = (H - L["safe_bottom"]) - bars_bottom
+        block = title_h + 36 + 52                     # 标题 + 间隙 + tags 行
+        show_top = bars_bottom + max(24, (zone - block) // 2)
+        tags_top = show_top + title_h + 36
+    else:
+        show_top = bars_top + int(H * 0.072)
+        tags_top = show_top + int(tfs * 2.95)
     return f"""
 @font-face{{font-family:'YSBTH';src:url('file://{FONT_TITLE_PATH}')}}
 *{{margin:0;padding:0;box-sizing:border-box}}
@@ -187,7 +198,7 @@ body{{font-family:'PingFang SC','Hiragino Sans GB',sans-serif;position:relative;
 .show .acc{{color:{GREEN_LIGHT};background:linear-gradient(transparent 76%,{BERRY} 76%,{BERRY} 97%,transparent 97%);
   padding:0 10px}}
 /* 标签胶囊行（主题大字下方，#AI #科普 这类领域标签） */
-.tags{{position:absolute;left:{L['wx'] + 50}px;right:{L['wx']}px;top:{show_top + int(tfs * 2.95)}px;
+.tags{{position:absolute;left:{L['wx'] + 50}px;right:{L['wx']}px;top:{tags_top}px;
   display:flex;gap:18px;z-index:10}}
 .tag{{font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:31px;letter-spacing:.06em;
   color:{GREEN_LIGHT};border:2px solid rgba(34,166,103,.55);border-radius:999px;
@@ -612,7 +623,7 @@ body{{background:transparent !important}}
     vig_cls = "vig holed" if hole else "vig"
     grain_cls = "grain holed" if hole else "grain"
     html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
-<style>{_frame_css(W, H, dur, L)}{extra_css}{bars_css}{hole_css}{prog_css}{memes_css}</style></head>
+<style>{_frame_css(W, H, dur, L, len(title_lines))}{extra_css}{bars_css}{hole_css}{prog_css}{memes_css}</style></head>
 <body>
 {bg_div}<div class="scan"></div><div class="ticks"></div><div class="prog"></div>
 <div class="top"><div class="name">{brand["name"]}</div><div class="r"><span class="live"></span>{vol}</div></div>
