@@ -90,9 +90,15 @@ python3 $SKILL/scripts/render.py --storyboard sb.json --workdir . --out final.mp
 
 **可选：导出剪映草稿精修**（祥瑞说"导进剪映/用剪映改"时）：
 ```bash
+# 三轨成品版（场景成片段+配音+字幕，快速）
 python3 $SKILL/scripts/export_jianying.py --storyboard sb.json --workdir .
+# 全分层可编辑版（推荐，祥瑞 2026-06-11 定）：背景/素材/字幕/logo/期数/标题各独立成轨
+python3 $SKILL/scripts/export_jianying.py --storyboard sb.json --workdir . --layered
 ```
-场景片段/TTS/字幕三轨铺进剪映时间线，打开剪映即可精修（加花字/转场/曲库BGM）后导出。
+**分层模式 6 轨**：HTML 设计场景渲染成「无文字纯背景」(bare 模式)，媒体场景用真实素材逐 shot 拆开，
+字幕/logo/期数/标题全部剪映原生文字轨可直接改。取舍：剪映原生文字做不出 HTML 的玻璃发光/
+accent 高亮/普惠 Heavy 正体，换来彻底可编辑 + 充分用剪映素材特效。设计哲学：HTML 出剪映做不出的
+设计资产，剪映做素材组装+精修，不是互相取代。三轨成品版保真但不可改文字，按需选。
 限制：依赖 render.py 的 temp/ 中间产物（出过片才能导）；剪映保存后草稿转加密，
 CLI 单向生成不能回读；macOS 剪映无自动导出接口，导出手动点。
 **铁律**（都是踩坑换来的，导出器已全部内化）：

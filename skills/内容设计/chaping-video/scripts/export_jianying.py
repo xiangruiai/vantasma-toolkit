@@ -42,6 +42,33 @@ def split_subs(text):
     return [p.strip() for p in parts if p.strip()]
 
 
+def render_bare_layers(sb, wd, W, H):
+    """为剪映分层导出渲染各层素材：
+    - HTML 设计场景 → bare 背景段（无文字，文字交给剪映轨道）bare_NNN.mp4
+    - 媒体场景 → 每个 shot 的原始素材段（真实素材，可在剪映单独换/调）
+    返回 [{type, clips:[路径], scene}] 按场景。"""
+    import render
+    from html_still import MEDIA_TYPES
+    render.FPS = int(sb.get("fps", 30))
+    layers = []
+    for i, scene in enumerate(sb["scenes"]):
+        mp3 = os.path.join(wd, "audio", f"scene_{i:03d}.mp3")
+        dur = probe_dur(mp3) if os.path.exists(mp3) else 3.0
+        if scene["type"] in MEDIA_TYPES and scene.get("shots"):
+            # 媒体场景：原始素材逐 shot 独立成段（用户要的"拆开"）
+            clips = [sh["src"] for sh in scene["shots"] if os.path.exists(sh.get("src", ""))]
+            layers.append({"type": "media", "clips": clips, "scene": scene, "dur": dur})
+        else:
+            # HTML 设计场景：渲染 bare 背景（无文字全局元素）
+            bare_meta = {"show_title": sb.get("show_title"), "vol": sb.get("vol"),
+                         "tags": sb.get("tags", []), "brand": sb.get("brand") or {}, "bare": True}
+            out = render.record_html_scene(scene, bare_meta, [], dur, W, H, wd, 900 + i)
+            bare = os.path.join(wd, "temp", f"bare_{i:03d}.mp4")
+            os.replace(out, bare)
+            layers.append({"type": "html", "clips": [bare], "scene": scene, "dur": dur})
+    return layers
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--storyboard", required=True)
@@ -49,6 +76,8 @@ def main():
     ap.add_argument("--name", default=None)
     ap.add_argument("--effects", action="store_true",
                     help="实验性：加剪映内置转场/文字动画（先确认基础草稿能开再用）")
+    ap.add_argument("--layered", action="store_true",
+                    help="全分层可编辑：背景/素材/字幕/logo/期数/标题各自独立成轨")
     a = ap.parse_args()
     a.plain = not a.effects  # 默认纯净三轨，优先保证草稿一定能打开
 
@@ -79,62 +108,119 @@ def main():
 
     folder = draft.DraftFolder(draft_root)
     sf = folder.create_draft(name, W, H, allow_replace=True)
-    sf.add_track(TrackType.video).add_track(TrackType.audio).add_track(TrackType.text)
-
     us = lambda s: int(s * 1_000_000)  # 剪映时间单位：微秒（全程整数防累计误差重叠）
     cursor = 0
     n_sub = 0
-    for i, scene in enumerate(sb["scenes"]):
-        # 场景视频片段：HTML 场景=vis_NNN.mp4，媒体场景=vis_NNNb.mp4
-        clip = None
-        for cand in (f"vis_{i:03d}b.mp4", f"vis_{i:03d}.mp4"):
-            p = os.path.join(wd, "temp", cand)
-            if os.path.exists(p):
-                clip = p
-                break
-        if not clip:
-            print(f"⚠️ 场景 {i} 缺片段（先跑 render.py），跳过")
-            continue
-        vdur = us(probe_dur(clip))
-        vseg = draft.VideoSegment(draft.VideoMaterial(clip), Timerange(cursor, vdur))
-        # 剪映内置转场：媒体场景间叠化更顺，冲击/钩子场景用快切闪黑（最后一场不加）
-        if not a.plain and i < len(sb["scenes"]) - 1:
-            from pyJianYingDraft import TransitionType
-            t = TransitionType.闪黑 if scene["type"] in ("impact_text", "concept_card") \
-                else TransitionType.叠化
-            try:
-                vseg.add_transition(t, duration="0.3s")
-            except Exception:
-                pass
-        sf.add_segment(vseg)
 
-        # TTS 音频段
-        mp3 = os.path.join(wd, "audio", f"scene_{i:03d}.mp3")
-        if os.path.exists(mp3) and scene.get("narration"):
-            adur = min(us(probe_dur(mp3)), vdur)
-            sf.add_segment(draft.AudioSegment(
-                draft.AudioMaterial(mp3),
-                Timerange(cursor, adur),
-                source_timerange=Timerange(0, adur)))
-
-            # 字幕段：按句读切条均分音频时长（剪映里可再微调）
-            subs = split_subs(scene["narration"])
-            if subs:
-                per = adur // len(subs)
-                for j, txt in enumerate(subs):
-                    seg_len = per if j < len(subs) - 1 else adur - per * (len(subs) - 1)
-                    tseg = draft.TextSegment(
-                        txt, Timerange(cursor + j * per, seg_len),
-                        style=draft.TextStyle(size=8.0, color=(1.0, 1.0, 1.0)))
-                    if not a.plain:
-                        from pyJianYingDraft import TextIntro
-                        try:
-                            tseg.add_animation(TextIntro.渐显, duration="0.2s")
-                        except Exception:
-                            pass
-                    sf.add_segment(tseg)
-                    n_sub += 1
-        cursor += vdur
+    if a.layered:
+        from pyJianYingDraft import ClipSettings
+        print("分层渲染各场景背景/素材（HTML 场景出无文字底，媒体场景用真实素材）...")
+        layers = render_bare_layers(sb, wd, W, H)
+        # 轨道：底→顶。视频(背景/素材) / 音频(配音) / 文字四层(字幕/标题/logo/期数)
+        sf.add_track(TrackType.video).add_track(TrackType.audio)
+        sf.add_track(TrackType.text, track_name="字幕")
+        sf.add_track(TrackType.text, track_name="标题")
+        sf.add_track(TrackType.text, track_name="logo")
+        sf.add_track(TrackType.text, track_name="期数")
+        GREEN = (0.133, 0.651, 0.404)
+        for i, (Ly, scene) in enumerate(zip(layers, sb["scenes"])):
+            sdur = us(Ly["dur"])
+            clips = Ly["clips"]
+            if not clips:
+                cursor += sdur
+                continue
+            # 视频轨：媒体场景每个 shot 独立成段（可单独换/调）；HTML 场景单段背景
+            per = sdur // len(clips)
+            for k, cp in enumerate(clips):
+                seg_len = per if k < len(clips) - 1 else sdur - per * (len(clips) - 1)
+                # 统一截取：留一帧余量防整帧取整越界（HTML/媒体段都适用）
+                src_end = max(40000, min(seg_len, us(probe_dur(cp)) - 40000))
+                sf.add_segment(draft.VideoSegment(draft.VideoMaterial(cp),
+                               Timerange(cursor + k * per, seg_len),
+                               source_timerange=Timerange(0, src_end)))
+            # 音频 + 字幕
+            mp3 = os.path.join(wd, "audio", f"scene_{i:03d}.mp3")
+            if os.path.exists(mp3) and scene.get("narration"):
+                adur = min(us(probe_dur(mp3)), sdur)
+                sf.add_segment(draft.AudioSegment(draft.AudioMaterial(mp3),
+                               Timerange(cursor, adur), source_timerange=Timerange(0, adur)))
+                subs = split_subs(scene["narration"])
+                if subs:
+                    sp = adur // len(subs)
+                    for j, txt in enumerate(subs):
+                        sl = sp if j < len(subs) - 1 else adur - sp * (len(subs) - 1)
+                        sf.add_segment(draft.TextSegment(txt, Timerange(cursor + j * sp, sl),
+                            style=draft.TextStyle(size=8.0, color=(1, 1, 1)),
+                            clip_settings=ClipSettings(transform_y=-0.62)),
+                            track_name="字幕")
+                        n_sub += 1
+            cursor += sdur
+        total = cursor
+        brand = sb.get("brand") or {}
+        # 常驻文字层：标题/logo/期数 全片一段，剪映里可直接改文字
+        title_txt = "".join(re.sub(r'\(\(|\)\)', '', t) for t in (sb.get("show_title") or []))
+        if title_txt:
+            sf.add_segment(draft.TextSegment(title_txt, Timerange(0, total),
+                style=draft.TextStyle(size=15.0, color=(1, 1, 1)),
+                clip_settings=ClipSettings(transform_x=-0.05, transform_y=-0.30)),
+                track_name="标题")
+        sf.add_segment(draft.TextSegment(brand.get("name", "万涂幻象"), Timerange(0, total),
+            style=draft.TextStyle(size=7.0, color=GREEN),
+            clip_settings=ClipSettings(transform_x=-0.72, transform_y=0.82)),
+            track_name="logo")
+        sf.add_segment(draft.TextSegment(sb.get("vol", "VOL.01"), Timerange(0, total),
+            style=draft.TextStyle(size=5.5, color=(1, 1, 1)),
+            clip_settings=ClipSettings(transform_x=0.60, transform_y=0.82)),
+            track_name="期数")
+        print(f"分层完成: 视频/配音/字幕/标题/logo/期数 6 轨")
+    else:
+        sf.add_track(TrackType.video).add_track(TrackType.audio).add_track(TrackType.text)
+        for i, scene in enumerate(sb["scenes"]):
+            # 场景视频片段：HTML 场景=vis_NNN.mp4，媒体场景=vis_NNNb.mp4
+            clip = None
+            for cand in (f"vis_{i:03d}b.mp4", f"vis_{i:03d}.mp4"):
+                p = os.path.join(wd, "temp", cand)
+                if os.path.exists(p):
+                    clip = p
+                    break
+            if not clip:
+                print(f"⚠️ 场景 {i} 缺片段（先跑 render.py），跳过")
+                continue
+            vdur = us(probe_dur(clip))
+            vseg = draft.VideoSegment(draft.VideoMaterial(clip), Timerange(cursor, vdur))
+            if not a.plain and i < len(sb["scenes"]) - 1:
+                from pyJianYingDraft import TransitionType
+                t = TransitionType.闪黑 if scene["type"] in ("impact_text", "concept_card") \
+                    else TransitionType.叠化
+                try:
+                    vseg.add_transition(t, duration="0.3s")
+                except Exception:
+                    pass
+            sf.add_segment(vseg)
+            mp3 = os.path.join(wd, "audio", f"scene_{i:03d}.mp3")
+            if os.path.exists(mp3) and scene.get("narration"):
+                adur = min(us(probe_dur(mp3)), vdur)
+                sf.add_segment(draft.AudioSegment(
+                    draft.AudioMaterial(mp3),
+                    Timerange(cursor, adur),
+                    source_timerange=Timerange(0, adur)))
+                subs = split_subs(scene["narration"])
+                if subs:
+                    per = adur // len(subs)
+                    for j, txt in enumerate(subs):
+                        seg_len = per if j < len(subs) - 1 else adur - per * (len(subs) - 1)
+                        tseg = draft.TextSegment(
+                            txt, Timerange(cursor + j * per, seg_len),
+                            style=draft.TextStyle(size=8.0, color=(1.0, 1.0, 1.0)))
+                        if not a.plain:
+                            from pyJianYingDraft import TextIntro
+                            try:
+                                tseg.add_animation(TextIntro.渐显, duration="0.2s")
+                            except Exception:
+                                pass
+                        sf.add_segment(tseg)
+                        n_sub += 1
+            cursor += vdur
 
     sf.save()
 
@@ -147,7 +233,6 @@ def main():
     os.makedirs(matdir, exist_ok=True)
     main_json = os.path.join(ddir, "draft_content.json")
     txt = open(main_json).read()
-    import re
     path_map = {}
     for p in set(re.findall(r'/[^"]*?\.(?:mp4|mp3|jpg|png|wav)', txt)):
         if os.path.exists(p) and matdir not in p:

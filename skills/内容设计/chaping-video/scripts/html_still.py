@@ -622,20 +622,36 @@ body{{background:transparent !important}}
         bg_div = '<div class="bgimg holed"></div>'
     vig_cls = "vig holed" if hole else "vig"
     grain_cls = "grain holed" if hole else "grain"
+    # bare 模式（剪映分层导出用）：只渲染背景+窗口内容+HUD框+扫光刻度，
+    # 关闭所有文字全局元素（logo/期数/字幕/标题/标签/水印/进度条），它们交给剪映可编辑轨道
+    bare = meta.get("bare", False)
+    if bare:
+        top_block = bars_block = show_block = tags_block = ""
+        baseline_block = sig_block = logo_block = prog_block = ""
+    else:
+        top_block = (f'<div class="top"><div class="name">{brand["name"]}</div>'
+                     f'<div class="r"><span class="live"></span>{vol}</div></div>')
+        bars_block = f'<div class="bars">{bars_html}</div>'
+        show_block = f'<div class="showwrap"><div class="vbar"></div><div class="show">{show}</div></div>'
+        tags_block = tags_html
+        baseline_block = '<div class="baseline"></div>'
+        sig_block = f'<div class="sig">SIG.{idx:02d} / {brand["sig_tag"]}</div>'
+        logo_block = f'<div class="logo">{logo}</div>'
+        prog_block = '<div class="prog"></div>'
     html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>{_frame_css(W, H, dur, L, len(title_lines))}{extra_css}{bars_css}{hole_css}{prog_css}{memes_css}</style></head>
 <body>
-{bg_div}<div class="scan"></div><div class="ticks"></div><div class="prog"></div>
-<div class="top"><div class="name">{brand["name"]}</div><div class="r"><span class="live"></span>{vol}</div></div>
+{bg_div}<div class="scan"></div><div class="ticks"></div>{prog_block}
+{top_block}
 <div class="win"><div class="inner">{inner}</div></div>
 <div class="cnr c1"></div><div class="cnr c2"></div><div class="cnr c3"></div><div class="cnr c4"></div>
 {memes_html}
-<div class="bars">{bars_html}</div>
-<div class="showwrap"><div class="vbar"></div><div class="show">{show}</div></div>
-{tags_html}
-<div class="baseline"></div>
-<div class="sig">SIG.{idx:02d} / {brand["sig_tag"]}</div>
-<div class="logo">{logo}</div>
+{bars_block}
+{show_block}
+{tags_block}
+{baseline_block}
+{sig_block}
+{logo_block}
 <div class="{vig_cls}"></div><div class="{grain_cls}"></div>
 </body></html>"""
     temp = os.path.join(workdir, "temp")
