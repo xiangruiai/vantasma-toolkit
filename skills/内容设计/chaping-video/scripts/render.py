@@ -361,14 +361,18 @@ def main():
         bgm_idx = n_in
         n_in += 1
 
-    fc, amix_in = [], ["[0:a]"]
+    fc, amix_in = [], ["[voice]"] if bgm_idx is not None else ["[0:a]"]
     for j, (idx, delay) in enumerate(sfx_specs):
         fc.append(f"[{idx}:a]adelay={delay}|{delay},volume=0.9[sfx{j}]")
         amix_in.append(f"[sfx{j}]")
     if bgm_idx is not None:
-        vol = sb.get("bgm_volume", 0.13)
+        # 人声 sidechain 压 BGM（ducking）：说话时 BGM 自动让位，停顿时浮上来
+        vol = sb.get("bgm_volume", 0.16)
+        fc.append("[0:a]asplit=2[voice][sc]")
         fc.append(f"[{bgm_idx}:a]atrim=0:{total:.3f},volume={vol},"
-                  f"afade=t=out:st={max(0, total - 1.8):.3f}:d=1.8[bgm]")
+                  f"afade=t=in:d=1.2,afade=t=out:st={max(0, total - 1.8):.3f}:d=1.8[bgmpre]")
+        fc.append("[bgmpre][sc]sidechaincompress=threshold=0.02:ratio=6:"
+                  "attack=80:release=500:makeup=1[bgm]")
         amix_in.append("[bgm]")
     if len(amix_in) > 1:
         fc.append(f"{''.join(amix_in)}amix=inputs={len(amix_in)}:normalize=0:duration=first[aout]")

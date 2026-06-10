@@ -71,18 +71,24 @@ def brand_config():
 
 
 def layout(W, H):
-    """框架几何（窗口内容区给 ffmpeg 叠 broll 用）。"""
-    if H > W:  # portrait：窗口大、几乎满宽，下方紧排字幕条+主题字，零死区
-        wx, wy = 26, int(H * 0.073)
-        ww, wh = W - 2 * wx, int(H * 0.578)
+    """框架几何（窗口内容区给 ffmpeg 叠 broll 用）。
+    竖屏按手机平台安全区收纳：顶部 ~150px 被状态栏/顶栏挡、底部 ~330px 被文案/操作区挡，
+    信息元素（logo/进度条/窗口/字幕/主题字/tags）全部压进安全区，
+    纯装饰（baseline/SIG/幽灵水印）留在底部遮挡区填构图。"""
+    if H > W:  # portrait
+        safe_top, safe_bottom = int(H * 0.078), int(H * 0.172)
+        wx, wy = 32, safe_top + int(H * 0.0595)
+        ww, wh = W - 2 * wx, int(H * 0.425)
     else:      # landscape
+        safe_top, safe_bottom = 0, 0
         wx, wy = 40, int(H * 0.12)
         ww, wh = int(W * 0.54), int(H * 0.70)
     bw = 5  # 窗口白描边
     cw = (ww - 2 * bw) // 2 * 2   # 偶数对齐，libx264 不收奇数尺寸
     ch = (wh - 2 * bw) // 2 * 2
     return {"wx": wx, "wy": wy, "ww": ww, "wh": wh, "border": bw,
-            "cx": wx + bw, "cy": wy + bw, "cw": cw, "ch": ch}
+            "cx": wx + bw, "cy": wy + bw, "cw": cw, "ch": ch,
+            "safe_top": safe_top, "safe_bottom": safe_bottom}
 
 
 def content_rect(W, H):
@@ -109,9 +115,11 @@ def _accent(text):
 
 def _frame_css(W, H, dur, L):
     portrait = H > W
-    tfs = int(W * (0.105 if portrait else 0.055))
+    tfs = int(W * (0.10 if portrait else 0.055))
     bars_top = L["wy"] + L["wh"] + 18
-    show_top = bars_top + int(H * 0.072)
+    show_top = bars_top + int(H * (0.065 if portrait else 0.072))
+    prog_top = L["safe_top"] + 2 if portrait else 0
+    toprow_top = L["safe_top"] + 30 if portrait else int(L["wy"] * 0.22)
     return f"""
 @font-face{{font-family:'YSBTH';src:url('file://{FONT_TITLE_PATH}')}}
 *{{margin:0;padding:0;box-sizing:border-box}}
@@ -127,10 +135,10 @@ body{{font-family:'PingFang SC','Hiragino Sans GB',sans-serif;position:relative;
 .vig{{position:absolute;inset:0;background:radial-gradient(ellipse 130% 115% at 50% 42%,transparent 62%,rgba(0,0,0,.4));
   pointer-events:none;z-index:80}}
 /* 顶部全片进度条（爆款留存标配） */
-.prog{{position:absolute;left:0;top:0;height:10px;background:linear-gradient(90deg,{GREEN},{GREEN_LIGHT} 70%,{BERRY});
+.prog{{position:absolute;left:0;top:{prog_top}px;height:10px;background:linear-gradient(90deg,{GREEN},{GREEN_LIGHT} 70%,{BERRY});
   border-radius:0 6px 6px 0;z-index:30;box-shadow:0 0 14px rgba(34,166,103,.6)}}
 /* 顶部 logo 条：绿块贴纸 + 右侧小字 */
-.top{{position:absolute;left:{L['wx']}px;right:{L['wx']}px;top:{int(L['wy']*0.22)}px;
+.top{{position:absolute;left:{L['wx']}px;right:{L['wx']}px;top:{toprow_top}px;
   display:flex;align-items:center;justify-content:space-between;z-index:10}}
 .top .name{{background:{GREEN};color:#fff;font-family:'YSBTH';font-size:48px;letter-spacing:5px;
   padding:8px 30px 10px;border-radius:12px;box-shadow:0 10px 30px rgba(34,166,103,.35)}}
