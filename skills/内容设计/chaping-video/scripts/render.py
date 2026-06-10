@@ -328,16 +328,25 @@ def main():
     durs = [t["end"] - t["start"] for t in timeline]
     use_trans = sb.get("transitions", True) and len(units) > 1
     if use_trans:
-        # 智能匹配（不为配而配，克制）：冲击句=闪白，概念卡/章节=黑场叠，其余=自然叠化
-        TRANS = {"impact_text": "fadewhite", "concept_card": "fadeblack"}
+        # 转场是镜头语言，按相邻镜头叙事关系选，不机械统一（祥瑞 2026-06-11）：
+        # 每个 scene 可指定 transition（cut硬切/dissolve叠化/fadeblack黑场/fadewhite闪白/
+        # slideup滑动/wipeleft划像/circleopen圈开/zoomin推进 等 ffmpeg xfade 类型）+ transition_dur。
+        # AI 写 storyboard 时按关系选：并列递进→cut、时间流逝/关联→dissolve、转折冲击→fadewhite、
+        # 段落结束/沉淀→fadeblack、空间转换→slide/wipe。不指定时按类型给克制默认（多数硬切）。
+        DEFAULT = {"impact_text": "fadewhite", "concept_card": "fadeblack", "ending": "fadeblack"}
         inp = []
         for u in units:
             inp += ["-i", u]
         vf, af, pv, pa, off = [], [], "0:v", "0:a", 0.0
         new_starts = [0.0]
         for i in range(1, len(units)):
-            T = min(0.3, durs[i - 1] * 0.4, durs[i] * 0.4)  # 短场景自动收窄转场
-            tr = TRANS.get(timeline[i]["scene"]["type"], "fade")
+            sc = timeline[i]["scene"]
+            tr = sc.get("transition") or DEFAULT.get(sc["type"], "fade")
+            if tr == "cut":          # 硬切：极短叠化近似干净切，保持节奏
+                tr, want_T = "fade", 0.06
+            else:
+                want_T = float(sc.get("transition_dur", 0.3))
+            T = min(want_T, durs[i - 1] * 0.4, durs[i] * 0.4)  # 短场景自动收窄
             off += durs[i - 1] - T
             vf.append(f"[{pv}][{i}:v]xfade=transition={tr}:duration={T:.3f}:offset={off:.3f}[v{i}]")
             af.append(f"[{pa}][{i}:a]acrossfade=d={T:.3f}:c1=tri:c2=tri[a{i}]")
