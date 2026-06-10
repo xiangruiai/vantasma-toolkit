@@ -41,3 +41,6 @@ cli/vchat/__pycache__/
 out/
 tmp/
 .v2_recovery/
+
+# Node
+node_modules/

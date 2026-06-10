@@ -2,7 +2,7 @@
 
 > 万涂幻象出品的个人工具合集 · **仅供个人学习与研究用途**
 >
-> 含 1 个 CLI（vchat）+ 10 个 Skill（按领域分 4 类）。
+> 含 1 个 CLI（vchat）+ 11 个 Skill（按领域分 4 类）。
 
 ---
 
@@ -41,13 +41,14 @@ vantasma-toolkit/
 │       ├── install.sh
 │       ├── README.md
 │       └── CHANGELOG.md
-└── skills/                              ← 10 个 Skill，按领域分 4 类
+└── skills/                              ← 11 个 Skill，按领域分 4 类
     ├── 飞书办公/
     │   ├── feishu-bitable-skill/        飞书多维表格搭建
     │   ├── feishu-bitable-system-prompt/ 多维表格 AI 系统提示词设计
     │   ├── feishu-proposal/             飞书客户方案自动生成
     │   └── daily-log/                   收工日志 · 飞书全链路足迹聚合
     ├── 内容设计/
+    │   ├── chaping-video/               知识科普视频全自动产线（主题/链接 → 成片）
     │   ├── gongzhonghao-typeset/        公众号排版 · md 一键转公众号 HTML
     │   ├── group-daily/                 微信群杂志风日报
     │   ├── group-daily-newspaper/       微信群 A3 报纸版日报（可印刷彩打）
@@ -104,7 +105,7 @@ vchat --help                                    # 看全部 63 命令
 
 ## 2. Skills
 
-10 个 Skill 按领域分 4 类，分别归在 `skills/<领域>/` 下，可单独取用。
+11 个 Skill 按领域分 4 类，分别归在 `skills/<领域>/` 下，可单独取用。
 
 ### 🗂 飞书办公
 
@@ -119,6 +120,7 @@ vchat --help                                    # 看全部 63 命令
 
 | Skill | 用途 | 详情 |
 |---|---|---|
+| `chaping-video` | **知识视频产线**：丢一个主题或公众号链接 → 60-90s 竖屏知识科普成片（配音/字幕/CSS动画逐帧录制/封面全自动），品牌框架可换皮 | [README](skills/内容设计/chaping-video/README.md) |
 | `gongzhonghao-typeset` | **公众号排版**：写完 md 一键排成可粘贴的公众号 HTML，带实时控制面板（品牌/配色/排版/图片）+ 三种吸色 | [README](skills/内容设计/gongzhonghao-typeset/README.md) |
 | `group-daily` | **群日报**：微信群一天聊天 → 杂志风 HTML + PNG（依赖 vchat CLI） | [README](skills/内容设计/group-daily/README.md) |
 | `group-daily-newspaper` | **群报**：微信群一天聊天 → 人民日报式 A3 报纸版，AI 自适应 2/4/6 版、每版精确等高、可印刷彩打（依赖 vchat CLI） | [README](skills/内容设计/group-daily-newspaper/README.md) |
