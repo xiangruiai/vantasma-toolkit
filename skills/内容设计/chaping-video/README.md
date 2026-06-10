@@ -3,7 +3,7 @@
 > 丢一个主题、或者一个公众号链接进去，约 25 分钟出一条 60-90 秒的竖屏知识科普视频。
 > 配音、字幕、动画、音效、封面，全自动。
 
-一个 Claude Code Skill。信息密度和节奏对齐差评君，文案学脱口秀（铺垫-包袱-干货-callback），视觉是一套苹果 Keynote 玻璃风的固定品牌框架。默认品牌是「万涂幻象」，所有品牌元素可一个配置文件换皮。
+一个 Skill。信息密度和节奏对齐差评君，文案学脱口秀（铺垫-包袱-干货-callback），视觉是一套苹果 Keynote 玻璃风的固定品牌框架。默认品牌是「万涂幻象」，所有品牌元素可一个配置文件换皮。
 
 ---
 
@@ -45,7 +45,7 @@ ffmpeg 拼装 + 音效 + 自动封面（钩子帧）──► final.mp4
 ## ✦ 安装
 
 ```bash
-# 放进 Claude Code 的 skills 目录
+# 放进 skills 目录（以 Claude Code 为例）
 cp -r chaping-video ~/.claude/skills/
 
 # 体检 + 一键装依赖
@@ -54,7 +54,7 @@ bash ~/.claude/skills/chaping-video/scripts/setup.sh --install
 
 必备依赖：ffmpeg（含 libass 的完整版）、Node + puppeteer-core/ws、Chrome、edge-tts、openai-whisper、tiktoken。音效和标题字体已随 skill 附带。
 
-然后在 Claude Code 里说「做个视频，讲讲 XX」或者丢一个文章链接即可。
+然后对 agent 说「做个视频，讲讲 XX」或者丢一个文章链接即可。
 
 ---
 
