@@ -47,8 +47,10 @@ def main():
     ap.add_argument("--storyboard", required=True)
     ap.add_argument("--workdir", required=True)
     ap.add_argument("--name", default=None)
-    ap.add_argument("--plain", action="store_true", help="纯净模式：不加剪映转场/文字动画")
+    ap.add_argument("--effects", action="store_true",
+                    help="实验性：加剪映内置转场/文字动画（先确认基础草稿能开再用）")
     a = ap.parse_args()
+    a.plain = not a.effects  # 默认纯净三轨，优先保证草稿一定能打开
 
     try:
         import pyJianYingDraft as draft
@@ -59,6 +61,16 @@ def main():
     draft_root = next((d for d in DRAFT_DIRS if os.path.isdir(d)), None)
     if not draft_root:
         raise SystemExit(f"找不到剪映草稿目录（剪映专业版没装？），找过: {DRAFT_DIRS}")
+
+    # 剪映运行时操作草稿目录会损坏草稿（内存态覆盖冲突）——先退出剪映
+    jy_running = subprocess.run(["pgrep", "-f", "VideoFusion-macOS"],
+                                capture_output=True, text=True).stdout.strip()
+    if jy_running:
+        print("检测到剪映在运行，先退出（避免草稿被运行态覆盖损坏）...")
+        subprocess.run(["osascript", "-e", 'quit app "VideoFusion-macOS"'],
+                       capture_output=True)
+        import time
+        time.sleep(3)
 
     wd = os.path.abspath(a.workdir)
     sb = json.load(open(a.storyboard))
@@ -125,10 +137,21 @@ def main():
         cursor += vdur
 
     sf.save()
+
+    # 修复 meta：pyJianYingDraft 保存后 tm_duration=0，剪映可能据此判草稿损坏
+    meta_path = os.path.join(draft_root, name, "draft_meta_info.json")
+    try:
+        meta = json.load(open(meta_path))
+        meta["tm_duration"] = cursor
+        meta["tm_draft_modified"] = cursor
+        json.dump(meta, open(meta_path, "w"), ensure_ascii=False)
+    except Exception as e:
+        print(f"   (meta 修复跳过: {e})")
+
     print(f"✅ 剪映草稿已生成: {name}")
     print(f"   {len(sb['scenes'])} 场景 | {n_sub} 条字幕 | 总时长 {cursor / 1_000_000:.1f}s")
     print(f"   位置: {os.path.join(draft_root, name)}")
-    print("   打开剪映即可见（已开着就重启）；精修后在剪映里导出。")
+    print("   现在手动打开剪映 → 草稿列表能看到它（脚本不自动开，避免运行态冲突）。")
     print("   ⚠️ 剪映保存后草稿转加密，CLI 不能再读回，以剪映内为准。")
 
 
