@@ -96,6 +96,10 @@ python3 $SKILL/scripts/render.py --storyboard sb.json --workdir . --out final.mp
 1. `ffprobe` 看总时长、视频音频双流存在
 2. **抽每个场景中点帧 Read 看效果**：文字有没有溢出、图有没有糊/裁坏、高亮位置对不对
 3. `volumedetect` 看 max_volume 在 -1~-6dB 区间
+3.5 **静默检查（祥瑞 2026-06-10 定）**：`silencedetect=n=-45dB:d=1.0` 必须 0 命中——
+   任何 >1s 的无声段=返工。病根通常是 min_dur 硬拉时长但口播没跟上：
+   要么补口播填满（首选，信息密度↑），要么收短 min_dur；
+   钩子停留等设计性静默也压在 1s 以内
 4. 有问题改 sb.json 对应 scene 重跑 render.py（TTS 没改就不用重跑）
 5. 全部通过才报告"完成"，附成片路径 + 时长 + 场景数
 
