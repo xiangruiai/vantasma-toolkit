@@ -83,6 +83,16 @@ python3 $SKILL/scripts/tts.py --storyboard sb.json --workdir .
 - 后端自动选择：火山豆包（配置了 appid/token 时）→ edge-tts（免费兜底，自动走 127.0.0.1:7897 代理）
 - 看 manifest 时长合理即可（一句 20 字 ≈ 4-6s）
 
+### 自实现效果库（剪映式效果用 ffmpeg/CSS 自造，全自动出片，祥瑞 2026-06-11 定）
+
+剪映的特效画面是剪映引擎专属渲染的，CLI 化只能写特效名进草稿、画面搬不进 ffmpeg。
+所以方向是**用我们自己的 ffmpeg/CSS 实现剪映式效果**，剪映只当"参考图鉴"。
+排版保真（HTML 品牌画面不动），效果是叠加的增强。已实现/规划：
+- ✅ **场景智能转场**（render.py，`sb["transitions"]` 默认开）：xfade 自实现叠化/闪白/黑场，
+  按场景语义匹配（impact_text=闪白、concept_card=黑场叠、其余=自然叠化），不为配而配；
+  转场缩短时间轴后自动重算 SFX 对齐
+- 规划：画面特效（震动/缩放/故障/聚焦，CSS 或 ffmpeg）、钩子大字砸场、数字滚动
+
 ### Step 6: 渲染成片
 ```bash
 python3 $SKILL/scripts/render.py --storyboard sb.json --workdir . --out final.mp4

@@ -323,14 +323,43 @@ def main():
         cursor += dur
     total = cursor
 
-    # 3. 拼接
-    concat_list = os.path.join(workdir, "temp", "concat.txt")
-    with open(concat_list, "w") as f:
-        for u in units:
-            f.write(f"file '{u}'\n")
+    # 3. 拼接（场景间智能转场，自实现的剪映式效果，不依赖剪映引擎）
     joined = os.path.join(workdir, "temp", "joined.mp4")
-    run([FFMPEG, "-y", "-v", "error", "-f", "concat", "-safe", "0",
-         "-i", concat_list, "-c", "copy", joined])
+    durs = [t["end"] - t["start"] for t in timeline]
+    use_trans = sb.get("transitions", True) and len(units) > 1
+    if use_trans:
+        # 智能匹配（不为配而配，克制）：冲击句=闪白，概念卡/章节=黑场叠，其余=自然叠化
+        TRANS = {"impact_text": "fadewhite", "concept_card": "fadeblack"}
+        inp = []
+        for u in units:
+            inp += ["-i", u]
+        vf, af, pv, pa, off = [], [], "0:v", "0:a", 0.0
+        new_starts = [0.0]
+        for i in range(1, len(units)):
+            T = min(0.3, durs[i - 1] * 0.4, durs[i] * 0.4)  # 短场景自动收窄转场
+            tr = TRANS.get(timeline[i]["scene"]["type"], "fade")
+            off += durs[i - 1] - T
+            vf.append(f"[{pv}][{i}:v]xfade=transition={tr}:duration={T:.3f}:offset={off:.3f}[v{i}]")
+            af.append(f"[{pa}][{i}:a]acrossfade=d={T:.3f}:c1=tri:c2=tri[a{i}]")
+            pv, pa = f"v{i}", f"a{i}"
+            new_starts.append(off)
+        run([FFMPEG, "-y", "-v", "error"] + inp +
+            ["-filter_complex", ";".join(vf + af),
+             "-map", f"[{pv}]", "-map", f"[{pa}]",
+             "-c:v", "libx264", "-preset", "medium", "-crf", "19",
+             "-c:a", "aac", "-b:a", "192k", joined])
+        # 转场缩短了时间轴：重算每个场景 start，SFX 跟着对
+        for i, t in enumerate(timeline):
+            t["start"] = new_starts[i]
+            t["end"] = new_starts[i] + durs[i]
+        total = new_starts[-1] + durs[-1]
+    else:
+        concat_list = os.path.join(workdir, "temp", "concat.txt")
+        with open(concat_list, "w") as f:
+            for u in units:
+                f.write(f"file '{u}'\n")
+        run([FFMPEG, "-y", "-v", "error", "-f", "concat", "-safe", "0",
+             "-i", concat_list, "-c", "copy", joined])
 
     # 4. 终混：SFX + BGM（字幕已在 HTML 框架的贴纸条里）
     inputs = [FFMPEG, "-y", "-v", "error", "-i", joined]
