@@ -24,7 +24,8 @@
 
 ### 2. WaytoAGI — 开源知识库（深度信源）
 - **来源**：https://waytoagi.feishu.cn/wiki/ （飞书 wiki 开源知识库）
-- **用法**：用 `lark-wiki` / `lark-doc` skill 读取节点内容
+- **用法（飞书 CLI，祥瑞 2026-06-11 指）**：space token `7226178700923011075`，用 `lark-wiki` skill
+  列节点 + `lark-doc` skill 读文档内容（`lark-cli` 原子命令）。先列 space 节点找相关主题，再读对应节点。
 - **适用**：AI 工具/概念的体系化知识、教程、深度梳理。aihot 给"最新动态"，WaytoAGI 给"系统认知"。
 
 ### 3. deep-research / WebSearch（补充）
