@@ -7,7 +7,7 @@
           (对每个 scene.narration 合成 audio/scene_NNN.mp3，写 audio/manifest.json)
   查后端: python3 tts.py --check
 
-配置（可选）: ~/.config/chaping-video/config.json
+配置（可选）: ~/.config/xiangrui-video/config.json
 {
   "tts": {
     "backend": "auto",            // auto | volc | edge | say
@@ -32,7 +32,7 @@ FFPROBE = "/opt/homebrew/opt/ffmpeg-full/bin/ffprobe"
 if not os.path.exists(FFPROBE):
     FFPROBE = "ffprobe"
 
-CONFIG_PATH = os.path.expanduser("~/.config/chaping-video/config.json")
+CONFIG_PATH = os.path.expanduser("~/.config/xiangrui-video/config.json")
 DEFAULTS = {
     "backend": "auto",
     # 播客 TTS（群日报播客同款，音色=大义先生）：凭证 env/钥匙串，不明文落盘
@@ -45,17 +45,17 @@ DEFAULTS = {
 
 
 def podcast_creds():
-    """播客 TTS 凭证：env 优先，其次 macOS 钥匙串（service=chaping-video-volc）。"""
+    """播客 TTS 凭证：env 优先，其次 macOS 钥匙串（service=xiangrui-video-volc）。"""
     appid = os.environ.get("VOLC_PODCAST_APPID", "")
     token = os.environ.get("VOLC_PODCAST_TOKEN", "")
     if appid and token:
         return appid, token
     try:
         appid = subprocess.run(
-            ["security", "find-generic-password", "-s", "chaping-video-volc",
+            ["security", "find-generic-password", "-s", "xiangrui-video-volc",
              "-a", "appid", "-w"], capture_output=True, text=True).stdout.strip()
         token = subprocess.run(
-            ["security", "find-generic-password", "-s", "chaping-video-volc",
+            ["security", "find-generic-password", "-s", "xiangrui-video-volc",
              "-a", "token", "-w"], capture_output=True, text=True).stdout.strip()
     except Exception:
         return "", ""
@@ -116,7 +116,7 @@ def tts_volc(text, out_path, cfg):
         raise RuntimeError("volc 未配置 appid/token")
     body = {
         "app": {"appid": v["appid"], "token": v["token"], "cluster": v.get("cluster", "volcano_tts")},
-        "user": {"uid": "chaping-video"},
+        "user": {"uid": "xiangrui-video"},
         "audio": {"voice_type": v["voice"], "encoding": "mp3",
                   "speed_ratio": v.get("speed_ratio", 1.1)},
         "request": {"reqid": str(uuid.uuid4()), "text": text, "operation": "query"},

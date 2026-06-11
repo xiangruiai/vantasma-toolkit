@@ -33,7 +33,7 @@ const lines = JSON.parse(fs.readFileSync(inFile, 'utf8')).lines;
 fs.mkdirSync(outDir, { recursive: true });
 
 const reqParams = {
-  input_id: `chaping_${Date.now()}`,
+  input_id: `xiangrui_${Date.now()}`,
   action: 3,
   use_head_music: false,
   use_tail_music: false,

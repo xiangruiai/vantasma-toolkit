@@ -25,7 +25,7 @@
 ## 1. 全网图片（人物/事件/新闻/产品图）→ fetch_image.py
 
 ```bash
-SKILL=~/.claude/skills/chaping-video
+SKILL=~/.claude/skills/xiangrui-video
 python3 $SKILL/scripts/fetch_image.py search "关键词" --limit 8     # 看候选（尺寸/标题/URL）
 python3 $SKILL/scripts/fetch_image.py grab "关键词" --out WORK/assets/x.jpg --index 2
 ```

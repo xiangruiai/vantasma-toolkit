@@ -1,4 +1,4 @@
-# chaping-video
+# xiangrui-video
 
 > 丢一个主题、或者一个公众号链接进去，约 25 分钟出一条 60-90 秒的竖屏知识科普视频。
 > 配音、字幕、动画、音效、封面，全自动。
@@ -46,16 +46,16 @@ ffmpeg 拼装 + 音效 + 自动封面（钩子帧）──► final.mp4
 
 最省事的方式，把下面这句话直接发给你的 AI（Claude Code / Codex / 任意能跑命令的 agent）：
 
-> 帮我安装 chaping-video skill：clone https://github.com/xiangruiai/vantasma-toolkit ，把里面的 `skills/内容设计/chaping-video` 复制到 `~/.claude/skills/chaping-video`，然后运行 `bash ~/.claude/skills/chaping-video/scripts/setup.sh --install` 把缺失的依赖装好，最后把体检结果给我看。
+> 帮我安装 xiangrui-video skill：clone https://github.com/xiangruiai/vantasma-toolkit ，把里面的 `skills/内容设计/xiangrui-video` 复制到 `~/.claude/skills/xiangrui-video`，然后运行 `bash ~/.claude/skills/xiangrui-video/scripts/setup.sh --install` 把缺失的依赖装好，最后把体检结果给我看。
 
 手动安装也行：
 
 ```bash
 git clone --depth 1 https://github.com/xiangruiai/vantasma-toolkit.git /tmp/vt
-cp -r "/tmp/vt/skills/内容设计/chaping-video" ~/.claude/skills/
+cp -r "/tmp/vt/skills/内容设计/xiangrui-video" ~/.claude/skills/
 
 # 体检 + 一键装依赖
-bash ~/.claude/skills/chaping-video/scripts/setup.sh --install
+bash ~/.claude/skills/xiangrui-video/scripts/setup.sh --install
 ```
 
 必备依赖：ffmpeg（含 libass 的完整版）、Node + puppeteer-core/ws、Chrome、edge-tts、openai-whisper、tiktoken。音效和标题字体已随 skill 附带。
@@ -66,7 +66,7 @@ bash ~/.claude/skills/chaping-video/scripts/setup.sh --install
 
 ## ✦ 品牌换皮
 
-默认出片是万涂幻象的牌子。想换成你自己的，建一个 `~/.config/chaping-video/config.json`：
+默认出片是万涂幻象的牌子。想换成你自己的，建一个 `~/.config/xiangrui-video/config.json`：
 
 ```json
 {

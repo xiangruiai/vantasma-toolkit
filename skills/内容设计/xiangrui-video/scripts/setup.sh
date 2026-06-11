@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# chaping-video 一键体检 + 安装（开源用户首次使用入口）
+# xiangrui-video 一键体检 + 安装（开源用户首次使用入口）
 # 用法: bash setup.sh          只体检
 #       bash setup.sh --install 体检并自动安装缺失的必备依赖
 set -uo pipefail
@@ -46,7 +46,7 @@ done
 
 echo ""
 echo "== 可选增强（缺了有兜底，配了更强） =="
-opt "品牌换皮" "编辑 ~/.config/chaping-video/config.json 的 brand 段（logo/水印/结尾搜索框文案）"
+opt "品牌换皮" "编辑 ~/.config/xiangrui-video/config.json 的 brand 段（logo/水印/结尾搜索框文案）"
 python3 -c "import sys,os; sys.path.insert(0,'$SKILL_DIR/scripts'); import tts; a,t=tts.podcast_creds(); print('  ✅ 火山播客TTS（最佳音质）' if a and t else '  ⓘ  火山播客TTS未配置\n     ↳ console.volcengine.com/speech 开通后存 env 或钥匙串（见 SKILL.md）；缺省走 edge-tts')"
 command -v opencli >/dev/null && opt "opencli 已装（链接转视频抓公众号最稳）" "已就绪" || opt "opencli（链接转视频抓公众号）" "npm install -g @jackwener/opencli 并装浏览器扩展；缺省用 WebFetch/defuddle 兜底"
 opt "seedream 生图（插画/底图）" "需火山方舟 API key；缺省用纯 CSS 设计，不影响出片"

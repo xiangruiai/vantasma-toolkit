@@ -49,7 +49,7 @@ FONT_TITLE_PATH = os.path.join(ASSETS, "fonts", "AlibabaPuHuiTi-Heavy.ttf")
 
 import json as _json
 
-# 品牌配置：~/.config/chaping-video/config.json 的 "brand" 段（开源换皮入口）
+# 品牌配置：~/.config/xiangrui-video/config.json 的 "brand" 段（开源换皮入口）
 _BRAND_DEFAULTS = {
     "name": "万涂幻象",            # 左上角 logo 块
     "name_en": "VANTASMA",        # 备用英文名
@@ -63,7 +63,7 @@ _BRAND_DEFAULTS = {
 def brand_config():
     cfg = dict(_BRAND_DEFAULTS)
     try:
-        user = _json.load(open(os.path.expanduser("~/.config/chaping-video/config.json")))
+        user = _json.load(open(os.path.expanduser("~/.config/xiangrui-video/config.json")))
         cfg.update(user.get("brand", {}))
     except Exception:
         pass
@@ -758,7 +758,7 @@ body{{background:transparent !important}}
 
 
 if __name__ == "__main__":
-    out = os.path.expanduser("~/Projects/chaping-style-study/htmltest")
+    out = os.path.expanduser("~/Projects/xiangrui-videos/_htmltest")
     meta = {"show_title": ["1分钟看懂", "记忆的((Bug))"]}
     demo = [
         ({"type": "concept_card", "title": "曼德拉效应", "subtitle": "THE MANDELA EFFECT"},
