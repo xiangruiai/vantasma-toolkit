@@ -98,6 +98,16 @@ highlight=[x0,y0,x1,y1] 相对坐标(0-1)。
 ```
 text ≤ 8 字；narration 同步说出这句话；text_color 可选覆盖文字色。
 
+### editorial 编辑杂志式版面（去 AI 味主场景，见 design-system.md）
+```json
+{"type":"editorial","narration":"...","kicker":"WHAT MAKES AN AGENT",
+ "title":"会((自己干活))的那种 AI","idx_label":"AGENT / 4 CORE",
+ "items":[{"no":"01","cap":"会拆活","tag":"PLANNING","desc":"把大任务拆成小步骤"},
+          {"no":"02","cap":"有记性","tag":"MEMORY","desc":"记得住上下文"},
+          {"no":"03","cap":"会用工具","tag":"TOOLS","desc":"自己调搜索写代码"}]}
+```
+左对齐大标题+超大编号列表+细线分隔+竖网格，无 emoji 无玻璃卡。items 建议 3 条。GSAP 接管错落入场。
+
 ### demo 定制演示动画（每片现写，反千篇一律的核心）
 ```json
 {"type": "demo", "narration": "...", "demo_bg": "paper|dark", "sfx": "whoosh",

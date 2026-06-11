@@ -545,13 +545,62 @@ def win_media(s, L):
 
 def win_demo(s, L):
     """定制演示动画场景：AI 按本片内容现写的 HTML 动画（打破千篇一律的核心武器）。
-    字段：demo_html（窗口内 body 片段）、demo_css（keyframes 等）、demo_bg=paper|dark。"""
+    字段：demo_html（窗口内 body 片段）、demo_css（keyframes 等）、demo_bg=paper|dark。
+    可在 demo_js 里用 rough.js（手绘草图，去AI味）/ echarts（数据图）—— 已本地引入。"""
     # 统一苹果风深底（demo_bg 参数保留但 paper 也走深色光晕）
     return f'{BGGLOW}{s.get("demo_html", "")}', s.get("demo_css", "")
 
 
+def win_editorial(s, L):
+    """编辑杂志式版面（去 AI 味核心，祥瑞 2026-06-11 定）：左对齐大标题 + 超大编号列表
+    + 细线分隔 + 竖网格 + 英文眉头，无玻璃卡无 emoji，像专业杂志版面不像 AI 铺的卡。
+    字段：kicker(英文眉头) / title(大标题,含((accent))) / idx_label(右上标注) /
+    items=[{no,cap,tag,desc}]（编号列表，3-4 条）。元素带 .in 由 GSAP 接管错落入场。"""
+    cw, ch = L["cw"], L["ch"]
+    kicker = s.get("kicker", "")
+    title = _accent(s.get("title", ""))
+    idx_label = s.get("idx_label", "")
+    items = s.get("items", [])
+    rows = ""
+    for i, it in enumerate(items):
+        on = " on" if i == 0 else ""
+        tag = f'<span class="etag">{it["tag"]}</span>' if it.get("tag") else ""
+        desc = f'<div class="edesc">{it.get("desc", "")}</div>' if it.get("desc") else ""
+        rows += (f'<div class="erow{on} in" style="animation-delay:{0.3 + i * 0.12:.2f}s">'
+                 f'<div class="eno">{it.get("no", "")}</div>'
+                 f'<div><span class="ecap">{_accent(it.get("cap", ""))}</span>{tag}{desc}</div></div>')
+    css = (
+        f".egrid{{position:absolute;inset:0;background:repeating-linear-gradient(90deg,"
+        f"rgba(255,255,255,.04) 0 1px,transparent 1px {int(cw * 0.083)}px);opacity:.55}}"
+        f".ekick{{position:absolute;left:{int(cw * 0.05)}px;top:{int(ch * 0.055)}px;"
+        f"font:600 {int(cw * 0.019)}px ui-monospace,Menlo;letter-spacing:.3em;color:{GREEN_LIGHT}}}"
+        f".eh1{{position:absolute;left:{int(cw * 0.046)}px;top:{int(ch * 0.088)}px;"
+        f"font-family:'YSBTH';font-size:{int(cw * 0.082)}px;line-height:.98}}"
+        f".eidx{{position:absolute;right:{int(cw * 0.055)}px;top:{int(ch * 0.072)}px;"
+        f"font-family:'YSBTH';font-size:{int(cw * 0.028)}px;color:rgba(255,255,255,.22);letter-spacing:.1em}}"
+        f".erows{{position:absolute;left:{int(cw * 0.046)}px;right:{int(cw * 0.046)}px;top:{int(ch * 0.37)}px}}"
+        f".erow{{display:grid;grid-template-columns:{int(cw * 0.13)}px 1fr;align-items:baseline;"
+        f"gap:{int(cw * 0.024)}px;padding:{int(ch * 0.03)}px 0;border-top:1.5px solid rgba(255,255,255,.12)}}"
+        f".erow:last-child{{border-bottom:1.5px solid rgba(255,255,255,.12)}}"
+        f".eno{{font-family:'YSBTH';font-size:{int(cw * 0.072)}px;line-height:.8;color:rgba(255,255,255,.16)}}"
+        f".erow.on .eno{{color:{GREEN}}}"
+        f".ecap{{font-family:'YSBTH';font-size:{int(cw * 0.045)}px;letter-spacing:1px}}"
+        f".edesc{{font-size:{int(cw * 0.024)}px;color:rgba(255,255,255,.5);margin-top:8px}}"
+        f".etag{{display:inline-block;font:600 {int(cw * 0.017)}px ui-monospace,Menlo;letter-spacing:.15em;"
+        f"color:{GREEN_LIGHT};border:1.5px solid rgba(34,166,103,.5);border-radius:6px;"
+        f"padding:3px 12px;margin-left:14px;vertical-align:middle}}"
+    )
+    html = (f'{BGGLOW}<div class="egrid"></div>'
+            f'<div class="ekick">{kicker}</div>'
+            f'<div class="eh1">{title}</div>'
+            f'<div class="eidx">{idx_label}</div>'
+            f'<div class="erows">{rows}</div>')
+    return html, css
+
+
 WIN_BUILDERS = {
     "demo": win_demo,
+    "editorial": win_editorial,
     "concept_card": win_word_card,
     "whiteboard": win_image,
     "diagram": win_diagram,

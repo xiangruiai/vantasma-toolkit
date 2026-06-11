@@ -25,7 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import html_still  # noqa: E402  万涂幻象动画场景（HTML+CSS 动画）
 
 HTML_TYPES = {"concept_card", "whiteboard", "diagram", "screenshot",
-              "impact_text", "ending", "demo"}
+              "impact_text", "ending", "demo", "editorial"}
 MEDIA_TYPES = {"media", "image_full", "broll"}
 RECORD_JS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "record_scene.js")
 
