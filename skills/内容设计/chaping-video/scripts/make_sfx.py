@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""用 ffmpeg 合成差评君风格音效库（无版权，纯合成）。
+"""用 ffmpeg 合成知识视频音效库（无版权，纯合成）。
 
 用法: python3 make_sfx.py [输出目录]
 默认输出到 skill 的 assets/sfx/。已存在的文件跳过，--force 重新生成。

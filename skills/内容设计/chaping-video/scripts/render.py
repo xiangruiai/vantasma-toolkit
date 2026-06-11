@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""差评君风格视频渲染器：storyboard JSON -> 成片 MP4。
+"""万涂幻象知识视频渲染器：storyboard JSON -> 成片 MP4。
 
 用法:
   python3 render.py --storyboard sb.json --workdir WORK [--out final.mp4] [--keep-temp]

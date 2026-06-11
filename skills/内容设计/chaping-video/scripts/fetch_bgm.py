@@ -18,7 +18,7 @@ import sys
 
 PROXY = os.environ.get("CHAPING_PROXY", "http://127.0.0.1:7897")
 
-# mood -> 免版权曲搜索词（NCS / no copyright 系，按差评君式知识视频调性精选）
+# mood -> 免版权曲搜索词（NCS / no copyright 系，按吐槽式知识视频调性精选）
 MOODS = {
     "tech":     {"desc": "科技感/未来感，AI·硬核科普默认",
                  "queries": ["NCS no copyright electronic future bass instrumental",

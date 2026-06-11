@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""差评君视频 TTS：火山豆包语音合成优先，edge-tts 兜底，macOS say 保底。
+"""万涂幻象知识视频 TTS：火山豆包语音合成优先，edge-tts 兜底，macOS say 保底。
 
 用法:
   单句:   python3 tts.py --text "你好" --out /path/out.mp3
