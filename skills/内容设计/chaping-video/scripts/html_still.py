@@ -725,8 +725,13 @@ body{{background:transparent !important}}
   });
 })();
 """
-    gsap_block = (f'<script src="file://{gsap_path}"></script>\n'
-                  f'<script>{takeover}\n{demo_js}</script>')
+    # 按需引入开源库（demo_js 用到才引）：rough.js 手绘 / echarts 数据图（设计语言三支柱）
+    libs = f'<script src="file://{gsap_path}"></script>\n'
+    if "rough" in demo_js:
+        libs += f'<script src="file://{os.path.join(ASSETS, "vendor", "rough.min.js")}"></script>\n'
+    if "echarts" in demo_js:
+        libs += f'<script src="file://{os.path.join(ASSETS, "vendor", "echarts.min.js")}"></script>\n'
+    gsap_block = libs + f'<script>{takeover}\n{demo_js}</script>'
     html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>{_frame_css(W, H, dur, L, title_lines)}{extra_css}{bars_css}{hole_css}{prog_css}{memes_css}</style></head>
 <body>
