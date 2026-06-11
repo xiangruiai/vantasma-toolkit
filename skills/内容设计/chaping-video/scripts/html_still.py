@@ -113,24 +113,32 @@ def _accent(text):
     return out
 
 
-def _frame_css(W, H, dur, L, n_title_lines=1):
+def _frame_css(W, H, dur, L, title_lines=None):
+    import re as _re, math as _math
     portrait = H > W
-    tfs = int(W * (0.10 if portrait else 0.055))
+    title_lines = title_lines if isinstance(title_lines, list) else []
+    plain = lambda t: _re.sub(r"\(\(|\)\)", "", t)
+    maxchars = max((len(plain(t)) for t in title_lines), default=4)
+    base_tfs = int(W * (0.10 if portrait else 0.055))
+    avail_w = (W - 2 * L["wx"] - 56) if portrait else int(W * 0.5)  # 容器可用宽（留竖条+gap）
+    # 标题字号自适应：长标题自动缩小，确保最长行不溢出容器宽（中文字宽≈tfs*1.06 含字距）
+    tfs = min(base_tfs, int(avail_w / max(maxchars, 1) / 1.06))
+    tfs = max(tfs, int(W * 0.052))  # 字号下限
+    cpl = max(1, int(avail_w / (tfs * 1.06)))  # 每行能放的字数
+    est_lines = sum(max(1, _math.ceil(len(plain(t)) / cpl)) for t in title_lines) or 1
     bars_top = L["wy"] + L["wh"] + 18
     prog_top = 0  # 进度条贴最顶（祥瑞定：可出安全区）
     toprow_top = L["safe_top"] - 10 if portrait else int(L["wy"] * 0.22)
-    # 标题/tags 自适应：按标题行数算块高，在「字幕底 ~ 安全区底」内垂直居中
-    n = max(1, n_title_lines)
-    title_h = int(tfs * 1.3 * (1 + 0.8 * (n - 1)))   # 首行全尺寸，l1 行 0.8 倍
+    title_h = int(tfs * 1.34 * est_lines)  # 按实际渲染行数算高，标签据此避让
     if portrait:
         bars_bottom = bars_top + 104
         zone = (H - L["safe_bottom"]) - bars_bottom
-        block = title_h + 36 + 52                     # 标题 + 间隙 + tags 行
+        block = title_h + 40 + 52                     # 标题 + 间隙 + tags 行
         show_top = bars_bottom + max(24, (zone - block) // 2)
-        tags_top = show_top + title_h + 36
+        tags_top = show_top + title_h + 40
     else:
         show_top = bars_top + int(H * 0.072)
-        tags_top = show_top + int(tfs * 2.95)
+        tags_top = show_top + title_h + 24
     return f"""
 @font-face{{font-family:'YSBTH';src:url('file://{FONT_TITLE_PATH}')}}
 *{{margin:0;padding:0;box-sizing:border-box}}
@@ -671,7 +679,7 @@ body{{background:transparent !important}}
     gsap_block = (f'<script src="file://{gsap_path}"></script>\n'
                   f'<script>{takeover}\n{demo_js}</script>')
     html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
-<style>{_frame_css(W, H, dur, L, len(title_lines))}{extra_css}{bars_css}{hole_css}{prog_css}{memes_css}</style></head>
+<style>{_frame_css(W, H, dur, L, title_lines)}{extra_css}{bars_css}{hole_css}{prog_css}{memes_css}</style></head>
 <body>
 {bg_div}<div class="scan"></div><div class="ticks"></div>{prog_block}
 {top_block}
