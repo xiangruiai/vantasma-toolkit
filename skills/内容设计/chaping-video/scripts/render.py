@@ -196,10 +196,21 @@ def render_media_scene(scene, meta, chunks, dur, W, H, workdir, idx):
     for j, (sh, t0, t1) in enumerate(timed):
         seg = t1 - t0
         part = os.path.join(workdir, "temp", f"shot_{idx:03d}_{j}.mp4")
+        # 画面适配窗口（祥瑞 2026-06-11）：默认 contain 完整展示——画面整个放进窗口不裁不溢出，
+        # 比例不符用放大模糊的同画面铺底（避免黑边突兀，竖屏放横屏的专业手法）。
+        # 氛围背景类（粒子/数据流）可在 shot 标 "fit":"cover" 填满裁切。
+        if sh.get("fit", "contain") == "cover":
+            contain = (f"scale={cw}:{ch}:force_original_aspect_ratio=increase,"
+                       f"crop={cw}:{ch},fps={FPS}")
+        else:
+            contain = (f"split=2[bg][fg];"
+                       f"[bg]scale={cw}:{ch}:force_original_aspect_ratio=increase,crop={cw}:{ch},"
+                       f"gblur=sigma=24,eq=brightness=-0.12[bgb];"
+                       f"[fg]scale={cw}:{ch}:force_original_aspect_ratio=decrease[fgs];"
+                       f"[bgb][fgs]overlay=(W-w)/2:(H-h)/2,fps={FPS}")
         if sh["media"] == "image":
             # 图片静置+淡入：不加 zoompan（像素抖动，祥瑞 2026-06-10 否决"晃动放大"效果）
-            fc = (f"[0:v]scale={cw}:{ch}:force_original_aspect_ratio=increase,"
-                  f"crop={cw}:{ch},fps={FPS},fade=t=in:d=0.22,format=yuv420p[out]")
+            fc = f"[0:v]{contain},fade=t=in:d=0.22,format=yuv420p[out]"
             run([FFMPEG, "-y", "-v", "error", "-loop", "1", "-t", f"{seg:.3f}",
                  "-i", sh["src"],
                  "-filter_complex", fc, "-map", "[out]", "-t", f"{seg:.3f}",
@@ -207,8 +218,7 @@ def render_media_scene(scene, meta, chunks, dur, W, H, workdir, idx):
         else:
             ss = sh.get("video_start", 0)
             avail = max(0.1, probe_duration(sh["src"]) - ss)
-            fc = (f"[0:v]scale={cw}:{ch}:force_original_aspect_ratio=increase,"
-                  f"crop={cw}:{ch},fps={FPS}")
+            fc = f"[0:v]{contain}"
             if avail < seg:
                 fc += f",tpad=stop_mode=clone:stop_duration={seg - avail + 0.5:.3f}"
             # 视频 shot 直切不加 fade（黑闪转场观感差，切换节奏感由 tick 音效给）
