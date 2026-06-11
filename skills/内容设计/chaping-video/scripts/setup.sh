@@ -50,6 +50,8 @@ opt "品牌换皮" "编辑 ~/.config/chaping-video/config.json 的 brand 段（l
 python3 -c "import sys,os; sys.path.insert(0,'$SKILL_DIR/scripts'); import tts; a,t=tts.podcast_creds(); print('  ✅ 火山播客TTS（最佳音质）' if a and t else '  ⓘ  火山播客TTS未配置\n     ↳ console.volcengine.com/speech 开通后存 env 或钥匙串（见 SKILL.md）；缺省走 edge-tts')"
 command -v opencli >/dev/null && opt "opencli 已装（链接转视频抓公众号最稳）" "已就绪" || opt "opencli（链接转视频抓公众号）" "npm install -g @jackwener/opencli 并装浏览器扩展；缺省用 WebFetch/defuddle 兜底"
 opt "seedream 生图（插画/底图）" "需火山方舟 API key；缺省用纯 CSS 设计，不影响出片"
+opt "aihot 信源（AI资讯实时核实）" "安装与用法见 references/sources.md"
+opt "WaytoAGI 知识库信源" "公开飞书 wiki，用 lark-wiki 读，见 references/sources.md"
 python3 -c "import yt_dlp" 2>/dev/null && opt "yt-dlp（BGM 自动匹配 fetch_bgm.py）" "已就绪" || opt "yt-dlp（BGM 自动匹配）" "python3 -m pip install --user --break-system-packages yt-dlp；缺省无 BGM，不影响出片"
 python3 -c "import pyJianYingDraft" 2>/dev/null && opt "pyjianyingdraft（导出剪映草稿精修）" "已就绪" || opt "pyjianyingdraft（导出剪映草稿）" "pip install pyjianyingdraft + 剪映专业版；缺省直接用成片，不影响出片"
 [ -f "$SKILL_DIR/assets/vendor/gsap.min.js" ] && opt "GSAP 动画引擎（demo 高级动效）" "已附带" || opt "GSAP 动画引擎" "curl -sL https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js -o assets/vendor/gsap.min.js；缺省 demo 用 CSS 动画"
