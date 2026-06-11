@@ -82,7 +82,7 @@ kind 三选一：
 {"type": "broll", "narration": "...", "video": "/abs/clip.mp4",
  "video_start": 0, "punch_in": true, "source": "素材来源：XX官方", "sfx": "tick"}
 ```
-**fit**: contain(默认,画面完整展示进窗口不裁,模糊同画面铺底) | cover(填满裁切,氛围背景用)；video_start=从源片第几秒开始；片段比场景短会自动定格末帧；源音轨自动静音；右上角自动补品牌戳。
+**fit**: cover(默认,填满窗口裁切,干净不突兀) | contain(完整缩放+模糊铺底,极少数必须看清整张内容才用)；video_start=从源片第几秒开始；片段比场景短会自动定格末帧；源音轨自动静音；右上角自动补品牌戳。
 
 ### screenshot 截图证据卡（白卡倾斜 + 粉莓荧光高亮，只用自己截的图）
 ```json
