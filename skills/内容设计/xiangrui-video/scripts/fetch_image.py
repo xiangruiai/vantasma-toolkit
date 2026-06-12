@@ -18,13 +18,26 @@ import urllib.request
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
-PROXY = "http://127.0.0.1:7897"
+def _user_proxy():
+    """代理三级解析(开源开箱:无代理用户直连):config.json proxy 字段 → XIANGRUI_PROXY 环境变量 → 空(直连)。"""
+    import json as _j, os as _o
+    cfg = _o.path.expanduser("~/.config/xiangrui-video/config.json")
+    try:
+        p = _j.load(open(cfg)).get("proxy", "")
+        if p:
+            return p
+    except Exception:
+        pass
+    return _o.environ.get("XIANGRUI_PROXY", "")
+
+PROXY = _user_proxy()
 
 
 def opener(use_proxy):
     handlers = []
     if use_proxy:
-        handlers.append(urllib.request.ProxyHandler({"http": PROXY, "https": PROXY}))
+        if PROXY:
+            handlers.append(urllib.request.ProxyHandler({"http": PROXY, "https": PROXY}))
     op = urllib.request.build_opener(*handlers)
     op.addheaders = [("User-Agent", UA)]
     return op

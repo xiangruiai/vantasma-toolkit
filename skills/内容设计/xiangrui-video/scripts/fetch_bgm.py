@@ -16,7 +16,19 @@ import os
 import subprocess
 import sys
 
-PROXY = os.environ.get("CHAPING_PROXY", "http://127.0.0.1:7897")
+def _user_proxy():
+    """代理三级解析(开源开箱:无代理用户直连):config.json proxy 字段 → XIANGRUI_PROXY 环境变量 → 空(直连)。"""
+    import json as _j, os as _o
+    cfg = _o.path.expanduser("~/.config/xiangrui-video/config.json")
+    try:
+        p = _j.load(open(cfg)).get("proxy", "")
+        if p:
+            return p
+    except Exception:
+        pass
+    return _o.environ.get("XIANGRUI_PROXY", "")
+
+PROXY = _user_proxy()
 
 # mood -> 免版权曲搜索词（NCS / no copyright 系，按吐槽式知识视频调性精选）
 MOODS = {

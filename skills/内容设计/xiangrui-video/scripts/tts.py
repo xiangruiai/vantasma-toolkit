@@ -14,7 +14,7 @@
     "volc": {"appid": "", "token": "", "voice": "zh_male_yangguangqingnian_moon_bigtts",
               "speed_ratio": 1.1, "cluster": "volcano_tts"},
     "edge": {"voice": "zh-CN-YunjianNeural", "rate": "+8%",
-              "proxy": "http://127.0.0.1:7897"}
+              "proxy": ""}
   }
 }
 火山豆包开通方式: console.volcengine.com/speech → 语音合成大模型 → 创建应用拿 appid + access_token。
@@ -44,7 +44,7 @@ DEFAULTS = {
     "volc": {"appid": "", "token": "", "voice": "zh_male_yangguangqingnian_moon_bigtts",
              "speed_ratio": 1.1, "cluster": "volcano_tts"},
     "edge": {"voice": "zh-CN-YunxiNeural", "rate": "+4%",
-             "proxy": "http://127.0.0.1:7897"},
+             "proxy": ""},
 }
 
 
