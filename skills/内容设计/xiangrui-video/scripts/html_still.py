@@ -79,17 +79,21 @@ def layout(W, H):
         safe_top, safe_bottom = int(H * 0.078), int(H * 0.172)
         # 左右安全区（祥瑞 2026-06-12 定）：竖屏平台右侧有点赞/评论按钮列、左侧有文案起始位，
         # 32px 贴边会被盖。水平边距提到 W*0.06（1080→64px），全部元素跟随 wx 自动收纳。
-        wx = int(W * 0.06)
-        wy = safe_top + int(H * 0.0595)
-        ww, wh = W - 2 * wx, int(H * 0.425)
+        # 窗口放大去"画中画闷"(祥瑞朋友反馈 2026-06-12):画面素材可出血到近通栏,
+        # 信息元素(标题/标签/章节轨/logo条)另走 mx=6% 安全边距,两者解耦
+        mx = int(W * 0.06)
+        wx = 28
+        wy = safe_top + int(H * 0.046)
+        ww, wh = W - 2 * wx, int(H * 0.47)
     else:      # landscape
         safe_top, safe_bottom = 0, 0
+        mx = 40
         wx, wy = 40, int(H * 0.12)
         ww, wh = int(W * 0.54), int(H * 0.70)
     bw = 5  # 窗口白描边
     cw = (ww - 2 * bw) // 2 * 2   # 偶数对齐，libx264 不收奇数尺寸
     ch = (wh - 2 * bw) // 2 * 2
-    return {"wx": wx, "wy": wy, "ww": ww, "wh": wh, "border": bw,
+    return {"wx": wx, "mx": mx, "wy": wy, "ww": ww, "wh": wh, "border": bw,
             "cx": wx + bw, "cy": wy + bw, "cw": cw, "ch": ch,
             "safe_top": safe_top, "safe_bottom": safe_bottom}
 
@@ -125,8 +129,8 @@ def _title_layout(W, H, L, title_lines=None):
     title_lines = title_lines if isinstance(title_lines, list) else []
     plain = lambda t: _re.sub(r"\(\(|\)\)", "", t)
     maxchars = max((len(plain(t)) for t in title_lines), default=4)
-    base_tfs = int(W * (0.115 if portrait else 0.055))
-    avail_w = (W - 2 * L["wx"] - 56) if portrait else int(W * 0.5)  # 容器可用宽（留竖条+gap）
+    base_tfs = int(W * (0.105 if portrait else 0.055))
+    avail_w = (W - 2 * L["mx"] - 56) if portrait else int(W * 0.5)  # 容器可用宽（留竖条+gap）
     # 标题字号自适应：长标题自动缩小，确保最长行不溢出容器宽（中文字宽≈tfs*1.06 含字距）
     tfs = min(base_tfs, int(avail_w / max(maxchars, 1) / 1.06))
     tfs = max(tfs, int(W * 0.052))  # 字号下限
@@ -185,7 +189,7 @@ body{{font-family:'PingFang SC','Hiragino Sans GB',sans-serif;position:relative;
 .prog{{position:absolute;left:0;top:{prog_top}px;height:10px;background:linear-gradient(90deg,{GREEN},{GREEN_LIGHT} 70%,{BERRY});
   border-radius:0 6px 6px 0;z-index:30;box-shadow:0 0 14px rgba(34,166,103,.6)}}
 /* 顶部 logo 条：绿块贴纸 + 右侧小字 */
-.top{{position:absolute;left:{L['wx']}px;right:{L['wx']}px;top:{toprow_top}px;
+.top{{position:absolute;left:{L['mx']}px;right:{L['mx']}px;top:{toprow_top}px;
   display:flex;align-items:center;justify-content:space-between;z-index:10}}
 .top .name{{background:{GREEN};color:#fff;font-family:'YSBTH';font-size:48px;letter-spacing:5px;
   padding:8px 30px 10px;border-radius:12px;box-shadow:0 10px 30px rgba(34,166,103,.35)}}
@@ -210,13 +214,13 @@ body{{font-family:'PingFang SC','Hiragino Sans GB',sans-serif;position:relative;
 /* 左缘刻度 + 等宽字信号标注 */
 .ticks{{position:absolute;left:0;top:0;bottom:0;width:12px;z-index:2;
   background:repeating-linear-gradient(180deg,rgba(255,255,255,.14) 0 2px,transparent 2px 54px)}}
-.sig{{position:absolute;left:{L['wx']}px;bottom:18px;font-family:ui-monospace,'SF Mono',Menlo,monospace;
+.sig{{position:absolute;left:{L['mx']}px;bottom:18px;font-family:ui-monospace,'SF Mono',Menlo,monospace;
   font-size:22px;letter-spacing:.18em;color:rgba(255,255,255,.32);z-index:10}}
 .live{{display:inline-block;width:14px;height:14px;border-radius:50%;background:{GREEN};
   margin-right:12px;vertical-align:1px;animation:blink 1.6s ease-in-out infinite}}
 @keyframes blink{{0%,100%{{opacity:1}}50%{{opacity:.25}}}}
 /* 字幕：无框大字白字 + 柔投影 + 居中绿短线锚（文字交叉淡换） */
-.bars{{position:absolute;left:{L['wx']}px;right:{L['wx']}px;top:{bars_top}px;height:104px;z-index:20}}
+.bars{{position:absolute;left:{L['mx']}px;right:{L['mx']}px;top:{bars_top}px;height:104px;z-index:20}}
 .bar-frame{{position:absolute;inset:0}}
 .bar-frame::after{{content:'';position:absolute;left:50%;bottom:-6px;transform:translateX(-50%);
   width:64px;height:6px;border-radius:4px;background:{GREEN};opacity:.9}}
@@ -225,7 +229,7 @@ body{{font-family:'PingFang SC','Hiragino Sans GB',sans-serif;position:relative;
   text-shadow:0 4px 26px rgba(0,0,0,.85),0 1px 3px rgba(0,0,0,.9);
   white-space:nowrap;overflow:hidden;opacity:0}}
 /* 固定主题大字：优设标题黑（自带8°斜），左侧绿竖条 */
-.showwrap{{position:absolute;left:{L['wx']}px;right:{L['wx']}px;top:{show_top}px;z-index:10;
+.showwrap{{position:absolute;left:{L['mx']}px;right:{L['mx']}px;top:{show_top}px;z-index:10;
   display:flex;gap:30px;align-items:stretch}}
 .vbar{{width:20px;background:{GREEN};border-radius:5px;box-shadow:4px 4px 0 rgba(0,0,0,.4)}}
 .show{{font-family:'YSBTH';line-height:1.3;font-size:{tfs}px;color:#fff;
@@ -234,14 +238,14 @@ body{{font-family:'PingFang SC','Hiragino Sans GB',sans-serif;position:relative;
 .show .acc{{color:{GREEN_LIGHT};background:linear-gradient(transparent 76%,{BERRY} 76%,{BERRY} 97%,transparent 97%);
   padding:0 10px}}
 /* 标签胶囊行（主题大字下方，#AI #科普 这类领域标签） */
-.tags{{position:absolute;left:{L['wx'] + 50}px;right:{L['wx']}px;top:{tags_top}px;
+.tags{{position:absolute;left:{L['mx'] + 50}px;right:{L['mx']}px;top:{tags_top}px;
   display:flex;gap:18px;z-index:10}}
 .tag{{font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:34px;letter-spacing:.06em;
   color:{GREEN_LIGHT};border:2px solid rgba(34,166,103,.55);border-radius:999px;
   padding:11px 30px;background:rgba(34,166,103,.10)}}
 /* 章节进度轨 v2（祥瑞 2026-06-12 二审定稿）：CH.NN 粉莓小章 + 当前章名 + 分段进度块。
    只显示当前章名（信息克制），分段块给"看到哪了"的进度感；跟随 tags_top 自适应不重叠 */
-.chap{{position:absolute;left:{L['wx'] + 50}px;right:{L['wx'] + 50}px;top:{chap_top}px;
+.chap{{position:absolute;left:{L['mx'] + 50}px;right:{L['mx'] + 50}px;top:{chap_top}px;
   display:flex;gap:24px;align-items:center;z-index:9}}
 .chap .cnum{{font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:28px;font-weight:800;
   color:#fff;background:{BERRY};border-radius:10px;padding:6px 18px;letter-spacing:.06em}}
@@ -252,7 +256,7 @@ body{{font-family:'PingFang SC','Hiragino Sans GB',sans-serif;position:relative;
 .chap .csegs i.cur{{background:linear-gradient(90deg,{GREEN},{GREEN_LIGHT});
   box-shadow:0 0 14px rgba(34,166,103,.7)}}
 /* 底部收边线（解决头重脚轻，给构图一个地基） */
-.baseline{{position:absolute;left:{L['wx']}px;right:{L['wx']}px;bottom:62px;height:3px;border-radius:2px;
+.baseline{{position:absolute;left:{L['mx']}px;right:{L['mx']}px;bottom:62px;height:3px;border-radius:2px;
   background:linear-gradient(90deg,rgba(34,166,103,.65),rgba(255,255,255,.10) 70%,transparent)}}
 /* 右下水印：幽灵字（实心超低透明度，不抢画面）。
    位置上移钻进标题块下方做垫底层（祥瑞 2026-06-12 定）：标题/标签/章节轨(z≥9)
