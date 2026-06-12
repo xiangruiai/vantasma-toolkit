@@ -149,3 +149,14 @@ python3 $SKILL/scripts/render.py --storyboard sb.json --workdir WORK # 出 WORK/
 ```
 
 render.py 发现 manifest 缺失会自动补跑 TTS。改了某句 narration 后删掉对应 `WORK/audio/scene_NNN.mp3` 重跑 tts.py 即可（其余句子不重合成——目前是全量重跑，量少无所谓）。
+
+### logo_card 品牌 logo 定格帧（口播点名软件/大厂时的专属一帧）
+```json
+{"type": "logo_card", "narration": "Claude能用,Codex能用,Cursor也能用。",
+ "logos": [{"image": "/abs/logos/claude.svg", "name": "Claude"},
+           {"image": "/abs/logos/openai.png", "name": "Codex"}],
+ "joiner": "+", "caption": "同一本秘籍,((都能用))",
+ "source": "logo:各品牌官方(科普合理使用)", "sfx": "whoosh"}
+```
+白底圆角大方章+名字在下(1-3 个,自动调尺寸),joiner 可选(+/VS/→),caption 底部结论。
+logo 用 `fetch_logo.py` 取(Simple Icons→favicon 兜底),规范见 asset-sourcing.md。

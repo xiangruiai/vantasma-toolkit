@@ -87,3 +87,20 @@ python3 -m yt_dlp --proxy http://127.0.0.1:7897 -x --audio-format mp3 \
 - 每个素材落地后 Read/抽帧确认，禁止盲用
 - 外部素材必有 source 字段（渲染器会打角标）
 - 对外发布前过一遍：来源标注齐不齐、引用片段长不长
+
+## 品牌 logo 徽章（口播点名软件/大厂时，祥瑞 2026-06-12 定）
+
+口播点名具体产品/公司（Claude、Codex、豆包、Cursor…）时，**logo 跟名字同时出现**当认知锚点：
+
+```bash
+python3 $SKILL/scripts/fetch_logo.py claude --out assets/logos/claude.svg          # Simple Icons 首选
+python3 $SKILL/scripts/fetch_logo.py doubao --domain doubao.com --out assets/logos/doubao.png  # 国产兜底 favicon
+python3 $SKILL/scripts/fetch_logo.py openai --color ffffff --out assets/logos/o_w.svg  # 深底单色化
+```
+
+**协调规范**：
+- logo 不改色不变形（深底可整体单色化白色），统一装进**白底圆角方章**（52-64px，logo 居中占 ~70%），
+  像 App 图标排排坐——原色在白章里互不打架，白章在深底玻璃卡里是统一语言
+- 点名才出现，不点名不出现，禁止满屏 logo 乱飞
+- scene 标 `source: "logo:各品牌官方(科普合理使用)"`；不变形不暗示官方背书
+- logo 是身份标识不算"素材复用"红线，assets/logos/ 可跨片缓存

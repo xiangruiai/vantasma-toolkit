@@ -25,7 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import html_still  # noqa: E402  万涂幻象动画场景（HTML+CSS 动画）
 
 HTML_TYPES = {"concept_card", "whiteboard", "diagram", "screenshot",
-              "impact_text", "ending", "demo", "editorial"}
+              "impact_text", "ending", "demo", "editorial", "logo_card"}
 MEDIA_TYPES = {"media", "image_full", "broll"}
 RECORD_JS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "record_scene.js")
 
@@ -140,13 +140,26 @@ def make_chunks(narration, ndur, max_chars):
 
 
 def record_frames(scene, meta, chunks, dur, W, H, workdir, idx):
-    """动画 HTML -> 逐帧 PNG 序列（带 alpha），返回帧目录。"""
+    """动画 HTML -> 逐帧 PNG 序列（带 alpha），返回帧目录。
+    headless Chrome 偶发 CDP 断连（机器负载/瞬时抽风），自动重试 3 次——
+    2026-06-12 实测连续两次整片渲染分别在第 3/5 镜被瞬时崩溃打断的教训。"""
     import shutil
+    import time
     html = html_still.build_html(scene, meta, W, H, workdir, idx, dur, chunks)
     fdir = os.path.join(workdir, "temp", f"frames_{idx:03d}")
     node = shutil.which("node") or "/opt/homebrew/bin/node"
-    run([node, RECORD_JS, html, fdir, str(W), str(H), f"{dur:.3f}", str(FPS)])
-    return fdir
+    last_err = None
+    for attempt in range(3):
+        try:
+            run([node, RECORD_JS, html, fdir, str(W), str(H), f"{dur:.3f}", str(FPS)])
+            return fdir
+        except RuntimeError as e:
+            last_err = e
+            shutil.rmtree(fdir, ignore_errors=True)
+            print(f"[retry] scene {idx} 录制失败(第{attempt + 1}次)，3s 后重试...",
+                  file=sys.stderr)
+            time.sleep(3)
+    raise last_err
 
 
 def record_html_scene(scene, meta, chunks, dur, W, H, workdir, idx):
@@ -272,6 +285,7 @@ def main():
             "logo": sb.get("logo"),
             "vol": sb.get("vol", "VOL.01"),
             "tags": sb.get("tags", []),
+            "chapters": sb.get("chapters") or [],
             "brand": sb.get("brand") or {}}
 
     # 1. 音频 manifest（缺则补跑 TTS）

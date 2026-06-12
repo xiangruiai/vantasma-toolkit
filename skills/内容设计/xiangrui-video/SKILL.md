@@ -293,6 +293,7 @@ bash scripts/setup.sh --install  # 一键安装全部必备依赖
 | `scripts/html_still.py` | 品牌场景卡合成（HTML→无头 Chrome 截图）；单跑出全类型样张 |
 | `scripts/fetch_broll.py` | B 站素材 search/download（内置绕 412 路径，CDN 拒 ffmpeg 直连所以先整段下载再裁） |
 | `scripts/fetch_bgm.py` | 按调性 mood 自动找免版权 BGM（yt_dlp，`list` 看 mood 表） |
+| `scripts/fetch_logo.py` | 品牌 logo 获取（Simple Icons→favicon 兜底），口播点名配徽章 |
 | `scripts/make_sfx.py` | 重新生成音效库 |
 | `scripts/export_jianying.py` | 工程导出为剪映草稿（场景视频/TTS音频/字幕三轨对齐，剪映里精修+手动导出） |
 

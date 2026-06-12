@@ -211,6 +211,16 @@ body{{font-family:'PingFang SC','Hiragino Sans GB',sans-serif;position:relative;
 .tag{{font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:31px;letter-spacing:.06em;
   color:{GREEN_LIGHT};border:2px solid rgba(34,166,103,.55);border-radius:999px;
   padding:9px 28px;background:rgba(34,166,103,.10)}}
+/* 章节进度轨（填标签与幽灵水印之间的真空带，留存五规则"进度暗示"的显性视觉） */
+.chap{{position:absolute;left:{L['wx'] + 50}px;right:{L['wx']}px;top:{tags_top + 104}px;
+  display:flex;gap:30px;align-items:center;z-index:9;border-top:1.5px solid rgba(255,255,255,.10);
+  padding-top:22px}}
+.chap .ch{{font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:25px;letter-spacing:.05em;
+  color:rgba(255,255,255,.28);font-weight:600;white-space:nowrap}}
+.chap .ch .no{{color:rgba(255,255,255,.40);margin-right:6px}}
+.chap .ch.on{{color:{GREEN_LIGHT}}}
+.chap .ch.on .no{{color:{BERRY}}}
+.chap .ch.on{{border-bottom:3px solid {BERRY};padding-bottom:8px}}
 /* 底部收边线（解决头重脚轻，给构图一个地基） */
 .baseline{{position:absolute;left:{L['wx']}px;right:{L['wx']}px;bottom:62px;height:3px;border-radius:2px;
   background:linear-gradient(90deg,rgba(34,166,103,.65),rgba(255,255,255,.10) 70%,transparent)}}
@@ -611,9 +621,54 @@ def win_editorial(s, L):
     return html, css
 
 
+def win_logo_card(s, L):
+    """品牌 logo 定格帧（祥瑞 2026-06-12 定）：口播点名软件/大厂时给它专属一帧——
+    白底圆角大方章 + 名字在下，1-3 个并排，可带连接符（+ / VS / →），GSAP 弹入。
+    字段：logos=[{"image":"/abs/logo.svg","name":"Codex"}] / joiner("+") / caption(底部结论,可含((accent)))"""
+    logos = s.get("logos", [])
+    joiner = s.get("joiner", "")
+    cap = _accent(s.get("caption", ""))
+    n = max(1, len(logos))
+    size = {1: 320, 2: 240, 3: 190}.get(n, 160)
+    fs = {1: 66, 2: 56, 3: 46}.get(n, 40)
+    cells = ""
+    for i, lg in enumerate(logos):
+        if i and joiner:
+            cells += (f'<div class="lj pop" style="animation-delay:{0.25 + i * 0.4:.2f}s">'
+                      f'{joiner}</div>')
+        cells += (f'<div class="lcell">'
+                  f'<div class="lbadge pop" style="animation-delay:{0.15 + i * 0.4:.2f}s">'
+                  f'<img src="file://{lg["image"]}"></div>'
+                  f'<div class="lname in" style="animation-delay:{0.35 + i * 0.4:.2f}s">'
+                  f'{lg["name"]}</div></div>')
+    cap_html = (f'<div class="lcap in" style="animation-delay:{0.5 + n * 0.4:.2f}s">{cap}</div>'
+                if cap else "")
+    html = (f'{BGGLOW}<div class="lgrid"></div>'
+            f'<div class="lwrap"><div class="lrow">{cells}</div>{cap_html}</div>')
+    css = f"""
+.lgrid{{position:absolute;inset:0;z-index:0;background:
+  repeating-linear-gradient(0deg,rgba(255,255,255,.055) 0 1.5px,transparent 1.5px 84px),
+  repeating-linear-gradient(90deg,rgba(255,255,255,.055) 0 1.5px,transparent 1.5px 84px)}}
+.lwrap{{position:relative;z-index:1;width:100%;height:100%;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:58px}}
+.lrow{{display:flex;align-items:flex-start;gap:46px}}
+.lcell{{display:flex;flex-direction:column;align-items:center;gap:28px}}
+.lbadge{{width:{size}px;height:{size}px;background:#fff;border-radius:{int(size * 0.24)}px;
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 26px 70px rgba(0,0,0,.55),0 0 60px rgba(255,255,255,.10)}}
+.lbadge img{{width:{int(size * 0.6)}px;height:{int(size * 0.6)}px;object-fit:contain}}
+.lname{{font-family:'YSBTH';font-size:{fs}px;color:#fff;font-style:italic;letter-spacing:3px}}
+.lj{{font-size:{int(size * 0.38)}px;color:#fff;font-weight:900;
+  margin-top:{int(size * 0.31)}px}}
+.lcap{{font-size:42px;color:{GREEN_LIGHT};font-weight:800;letter-spacing:2px}}
+"""
+    return html, css
+
+
 WIN_BUILDERS = {
     "demo": win_demo,
     "editorial": win_editorial,
+    "logo_card": win_logo_card,
     "concept_card": win_word_card,
     "whiteboard": win_image,
     "diagram": win_diagram,
@@ -697,10 +752,24 @@ body{{background:transparent !important}}
     grain_cls = "grain holed" if hole else "grain"
     # bare 模式（剪映分层导出用）：只渲染背景+窗口内容+HUD框+扫光刻度，
     # 关闭所有文字全局元素（logo/期数/字幕/标题/标签/水印/进度条），它们交给剪映可编辑轨道
+    # 章节进度轨：meta["chapters"]=[{"t":"它是个啥","from":0},...]，按 idx 高亮当前章
+    chap_block = ""
+    chapters = meta.get("chapters") or []
+    if chapters and W < H:
+        cur = 0
+        for ci, c in enumerate(chapters):
+            if idx >= int(c.get("from", 0)):
+                cur = ci
+        spans = "".join(
+            f'<span class="ch{" on" if ci == cur else ""}">'
+            f'<span class="no">{ci + 1:02d}</span>{c["t"]}</span>'
+            for ci, c in enumerate(chapters))
+        chap_block = f'<div class="chap">{spans}</div>'
     bare = meta.get("bare", False)
     if bare:
         top_block = bars_block = show_block = tags_block = ""
         baseline_block = sig_block = logo_block = prog_block = ""
+        chap_block = ""
     else:
         top_block = (f'<div class="top"><div class="name">{brand["name"]}</div>'
                      f'<div class="r"><span class="live"></span>{vol}</div></div>')
@@ -756,6 +825,7 @@ body{{background:transparent !important}}
 {bars_block}
 {show_block}
 {tags_block}
+{chap_block}
 {baseline_block}
 {sig_block}
 {logo_block}
