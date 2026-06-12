@@ -217,15 +217,16 @@ def render_media_scene(scene, meta, chunks, dur, W, H, workdir, idx):
             # 文档/截图嵌入卡（祥瑞 2026-06-12 二订：圆角版）：缩 84% + 米白细边 +
             # geq 圆角 alpha + 品牌深底 overlay——文档素材像展品嵌着，不裸铺不方角
             R = 26
-            # 自适应铺满(祥瑞 2026-06-12 三订):宽用足 94%/高用足 88%,横长图不再缩成小卡留大白
+            # 自适应卡装(祥瑞 2026-06-12 四订):宽用足 94%;高度上限 70% 且中心上移 42px——
+            # 给顶部章节条(58px)和底部字幕条(H-168 起)各留呼吸,卡不贴条
             contain = (
-                f"scale={int(cw*0.94)}:{int(ch*0.88)}:force_original_aspect_ratio=decrease,"
+                f"scale={int(cw*0.94)}:{int(ch*0.70)}:force_original_aspect_ratio=decrease,"
                 f"pad=iw+16:ih+16:8:8:color=0xf2efe4,format=rgba,"
                 f"geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
                 f"a='if(gt(abs(W/2-X),W/2-{R})*gt(abs(H/2-Y),H/2-{R}),"
                 f"if(lte(hypot({R}-(W/2-abs(W/2-X)),{R}-(H/2-abs(H/2-Y))),{R}),255,0),255)'[cardfg];"
                 f"color=c=0x141815:s={cw}x{ch}:r={FPS}[cardbg];"
-                f"[cardbg][cardfg]overlay=(W-w)/2:(H-h)/2:format=auto,fps={FPS}")
+                f"[cardbg][cardfg]overlay=(W-w)/2:(H-h)/2-42:format=auto,fps={FPS}")
         elif sh.get("fit", "cover") == "contain":
             contain = (f"split=2[bg][fg];"
                        f"[bg]scale={cw}:{ch}:force_original_aspect_ratio=increase,crop={cw}:{ch},"
