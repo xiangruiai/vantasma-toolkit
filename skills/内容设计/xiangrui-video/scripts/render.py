@@ -184,9 +184,11 @@ def normalize_shots(scene, dur):
         if scene.get("video"):
             shots = [{"media": "video", "src": scene["video"],
                       "video_start": scene.get("video_start", 0),
+                      "fit": scene.get("fit", "cover"),
                       "source": scene.get("source", "")}]
         else:
             shots = [{"media": "image", "src": scene["image"],
+                      "fit": scene.get("fit", "cover"),
                       "source": scene.get("source", "")}]
     total_w = sum(s.get("weight", 1) for s in shots)
     timed, cur = [], 0.0
