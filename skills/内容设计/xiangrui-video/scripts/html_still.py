@@ -77,7 +77,10 @@ def layout(W, H):
     纯装饰（baseline/SIG/幽灵水印）留在底部遮挡区填构图。"""
     if H > W:  # portrait
         safe_top, safe_bottom = int(H * 0.078), int(H * 0.172)
-        wx, wy = 32, safe_top + int(H * 0.0595)
+        # 左右安全区（祥瑞 2026-06-12 定）：竖屏平台右侧有点赞/评论按钮列、左侧有文案起始位，
+        # 32px 贴边会被盖。水平边距提到 W*0.06（1080→64px），全部元素跟随 wx 自动收纳。
+        wx = int(W * 0.06)
+        wy = safe_top + int(H * 0.0595)
         ww, wh = W - 2 * wx, int(H * 0.425)
     else:      # landscape
         safe_top, safe_bottom = 0, 0
@@ -113,13 +116,16 @@ def _accent(text):
     return out
 
 
-def _frame_css(W, H, dur, L, title_lines=None):
+def _title_layout(W, H, L, title_lines=None):
+    """标题/标签/章节轨一体布局（2026-06-12 二审：两行标题自适应防重叠）。
+    空间不够依次降级：① 正常间距居中 ② 压缩间距 + 章节轨允许下沉 ≤44px（仍远离平台 UI）
+    ③ 还不够就 chap_show=False 章节轨让位——三层兜底，任何行数标题都不重叠。"""
     import re as _re, math as _math
     portrait = H > W
     title_lines = title_lines if isinstance(title_lines, list) else []
     plain = lambda t: _re.sub(r"\(\(|\)\)", "", t)
     maxchars = max((len(plain(t)) for t in title_lines), default=4)
-    base_tfs = int(W * (0.10 if portrait else 0.055))
+    base_tfs = int(W * (0.115 if portrait else 0.055))
     avail_w = (W - 2 * L["wx"] - 56) if portrait else int(W * 0.5)  # 容器可用宽（留竖条+gap）
     # 标题字号自适应：长标题自动缩小，确保最长行不溢出容器宽（中文字宽≈tfs*1.06 含字距）
     tfs = min(base_tfs, int(avail_w / max(maxchars, 1) / 1.06))
@@ -127,18 +133,40 @@ def _frame_css(W, H, dur, L, title_lines=None):
     cpl = max(1, int(avail_w / (tfs * 1.06)))  # 每行能放的字数
     est_lines = sum(max(1, _math.ceil(len(plain(t)) / cpl)) for t in title_lines) or 1
     bars_top = L["wy"] + L["wh"] + 18
-    prog_top = 0  # 进度条贴最顶（祥瑞定：可出安全区）
-    toprow_top = L["safe_top"] - 10 if portrait else int(L["wy"] * 0.22)
     title_h = int(tfs * 1.34 * est_lines)  # 按实际渲染行数算高，标签据此避让
+    TAGS_H, CHAP_H = 58, 56
     if portrait:
         bars_bottom = bars_top + 104
         zone = (H - L["safe_bottom"]) - bars_bottom
-        block = title_h + 40 + 52                     # 标题 + 间隙 + tags 行
-        show_top = bars_bottom + max(24, (zone - block) // 2)
-        tags_top = show_top + title_h + 40
+        gap1, gap2, dip = 40, 44, 0
+        need = title_h + gap1 + TAGS_H + gap2 + CHAP_H
+        if need > zone:  # 紧凑模式：压间距 + 允许章节轨下沉
+            gap1, gap2 = 24, 28
+            need = title_h + gap1 + TAGS_H + gap2 + CHAP_H
+            dip = min(44, max(0, need - zone))
+        chap_show = need <= zone + 44
+        block = need if chap_show else title_h + gap1 + TAGS_H
+        show_top = bars_bottom + max(18, int((zone + dip - block) * 0.72))
+        tags_top = show_top + title_h + gap1
+        chap_top = tags_top + TAGS_H + gap2
     else:
         show_top = bars_top + int(H * 0.072)
         tags_top = show_top + title_h + 24
+        chap_top = tags_top + 96
+        chap_show = True
+    return {"tfs": tfs, "est_lines": est_lines, "title_h": title_h,
+            "bars_top": bars_top, "show_top": show_top, "tags_top": tags_top,
+            "chap_top": chap_top, "chap_show": chap_show}
+
+
+def _frame_css(W, H, dur, L, title_lines=None):
+    portrait = H > W
+    T = _title_layout(W, H, L, title_lines)
+    tfs, title_h = T["tfs"], T["title_h"]
+    bars_top, show_top = T["bars_top"], T["show_top"]
+    tags_top, chap_top = T["tags_top"], T["chap_top"]
+    prog_top = 0  # 进度条贴最顶（祥瑞定：可出安全区）
+    toprow_top = L["safe_top"] - 10 if portrait else int(L["wy"] * 0.22)
     return f"""
 @font-face{{font-family:'YSBTH';src:url('file://{FONT_TITLE_PATH}')}}
 *{{margin:0;padding:0;box-sizing:border-box}}
@@ -208,24 +236,29 @@ body{{font-family:'PingFang SC','Hiragino Sans GB',sans-serif;position:relative;
 /* 标签胶囊行（主题大字下方，#AI #科普 这类领域标签） */
 .tags{{position:absolute;left:{L['wx'] + 50}px;right:{L['wx']}px;top:{tags_top}px;
   display:flex;gap:18px;z-index:10}}
-.tag{{font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:31px;letter-spacing:.06em;
+.tag{{font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:34px;letter-spacing:.06em;
   color:{GREEN_LIGHT};border:2px solid rgba(34,166,103,.55);border-radius:999px;
-  padding:9px 28px;background:rgba(34,166,103,.10)}}
-/* 章节进度轨（填标签与幽灵水印之间的真空带，留存五规则"进度暗示"的显性视觉） */
-.chap{{position:absolute;left:{L['wx'] + 50}px;right:{L['wx']}px;top:{tags_top + 104}px;
-  display:flex;gap:30px;align-items:center;z-index:9;border-top:1.5px solid rgba(255,255,255,.10);
-  padding-top:22px}}
-.chap .ch{{font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:25px;letter-spacing:.05em;
-  color:rgba(255,255,255,.28);font-weight:600;white-space:nowrap}}
-.chap .ch .no{{color:rgba(255,255,255,.40);margin-right:6px}}
-.chap .ch.on{{color:{GREEN_LIGHT}}}
-.chap .ch.on .no{{color:{BERRY}}}
-.chap .ch.on{{border-bottom:3px solid {BERRY};padding-bottom:8px}}
+  padding:11px 30px;background:rgba(34,166,103,.10)}}
+/* 章节进度轨 v2（祥瑞 2026-06-12 二审定稿）：CH.NN 粉莓小章 + 当前章名 + 分段进度块。
+   只显示当前章名（信息克制），分段块给"看到哪了"的进度感；跟随 tags_top 自适应不重叠 */
+.chap{{position:absolute;left:{L['wx'] + 50}px;right:{L['wx'] + 50}px;top:{chap_top}px;
+  display:flex;gap:24px;align-items:center;z-index:9}}
+.chap .cnum{{font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:28px;font-weight:800;
+  color:#fff;background:{BERRY};border-radius:10px;padding:6px 18px;letter-spacing:.06em}}
+.chap .cname{{font-family:'YSBTH';font-size:40px;color:#fff;letter-spacing:3px;white-space:nowrap}}
+.chap .csegs{{flex:1;display:flex;gap:10px;align-items:center;margin-left:8px}}
+.chap .csegs i{{flex:1;height:11px;border-radius:6px;background:rgba(255,255,255,.13)}}
+.chap .csegs i.done{{background:rgba(34,166,103,.55)}}
+.chap .csegs i.cur{{background:linear-gradient(90deg,{GREEN},{GREEN_LIGHT});
+  box-shadow:0 0 14px rgba(34,166,103,.7)}}
 /* 底部收边线（解决头重脚轻，给构图一个地基） */
 .baseline{{position:absolute;left:{L['wx']}px;right:{L['wx']}px;bottom:62px;height:3px;border-radius:2px;
   background:linear-gradient(90deg,rgba(34,166,103,.65),rgba(255,255,255,.10) 70%,transparent)}}
-/* 右下水印：幽灵字（实心超低透明度，贴底出血，不抢画面） */
-.logo{{position:absolute;right:20px;bottom:96px;font-size:{int(W*0.175)}px;font-family:'YSBTH';
+/* 右下水印：幽灵字（实心超低透明度，不抢画面）。
+   位置上移钻进标题块下方做垫底层（祥瑞 2026-06-12 定）：标题/标签/章节轨(z≥9)
+   直接压在它(z=3)上面，构图不再下空；随 tags_top 动态锚定，两行标题也跟随 */
+.logo{{position:absolute;right:20px;bottom:96px;
+  font-size:{int(W*0.175)}px;font-family:'YSBTH';
   color:rgba(165,214,167,.075);letter-spacing:6px;z-index:3;white-space:nowrap}}
 /* 通用动画 */
 .in{{opacity:0;animation:rise .65s cubic-bezier(.2,.8,.2,1) forwards}}
@@ -755,16 +788,20 @@ body{{background:transparent !important}}
     # 章节进度轨：meta["chapters"]=[{"t":"它是个啥","from":0},...]，按 idx 高亮当前章
     chap_block = ""
     chapters = meta.get("chapters") or []
+    # 两行标题空间不够时章节轨让位（_title_layout 三层兜底的第三层）
+    if chapters and W < H and not _title_layout(W, H, L, meta.get("show_title") or [])["chap_show"]:
+        chapters = []
     if chapters and W < H:
         cur = 0
         for ci, c in enumerate(chapters):
             if idx >= int(c.get("from", 0)):
                 cur = ci
-        spans = "".join(
-            f'<span class="ch{" on" if ci == cur else ""}">'
-            f'<span class="no">{ci + 1:02d}</span>{c["t"]}</span>'
-            for ci, c in enumerate(chapters))
-        chap_block = f'<div class="chap">{spans}</div>'
+        segs = "".join(
+            f'<i class="{"done" if ci < cur else "cur" if ci == cur else ""}"></i>'
+            for ci in range(len(chapters)))
+        chap_block = (f'<div class="chap"><span class="cnum">CH.{cur + 1:02d}</span>'
+                      f'<span class="cname">{chapters[cur]["t"]}</span>'
+                      f'<div class="csegs">{segs}</div></div>')
     bare = meta.get("bare", False)
     if bare:
         top_block = bars_block = show_block = tags_block = ""
