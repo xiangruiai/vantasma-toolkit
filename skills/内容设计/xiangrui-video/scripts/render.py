@@ -214,10 +214,17 @@ def render_media_scene(scene, meta, chunks, dur, W, H, workdir, idx):
         # 画面适配窗口：默认 cover 填满裁切（祥瑞 2026-06-11 确认这样最好，干净不突兀）。
         # 极少数"必须看清整张内容"的素材可标 "fit":"contain"（完整缩放+模糊铺底），一般不用。
         if sh.get("fit") == "card":
-            # 文档/截图嵌入卡（祥瑞 2026-06-12 定）：缩至 84% + 米白细边 + 品牌深底
-            contain = (f"scale={int(cw*0.84)}:{int(ch*0.84)}:force_original_aspect_ratio=decrease,"
-                       f"pad=iw+12:ih+12:6:6:color=0xf2efe4,"
-                       f"pad={cw}:{ch}:(ow-iw)/2:(oh-ih)/2:color=0x141815")
+            # 文档/截图嵌入卡（祥瑞 2026-06-12 二订：圆角版）：缩 84% + 米白细边 +
+            # geq 圆角 alpha + 品牌深底 overlay——文档素材像展品嵌着，不裸铺不方角
+            R = 26
+            contain = (
+                f"scale={int(cw*0.84)}:{int(ch*0.84)}:force_original_aspect_ratio=decrease,"
+                f"pad=iw+16:ih+16:8:8:color=0xf2efe4,format=rgba,"
+                f"geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
+                f"a='if(gt(abs(W/2-X),W/2-{R})*gt(abs(H/2-Y),H/2-{R}),"
+                f"if(lte(hypot({R}-(W/2-abs(W/2-X)),{R}-(H/2-abs(H/2-Y))),{R}),255,0),255)'[cardfg];"
+                f"color=c=0x141815:s={cw}x{ch}:r={FPS}[cardbg];"
+                f"[cardbg][cardfg]overlay=(W-w)/2:(H-h)/2:format=auto,fps={FPS}")
         elif sh.get("fit", "cover") == "contain":
             contain = (f"split=2[bg][fg];"
                        f"[bg]scale={cw}:{ch}:force_original_aspect_ratio=increase,crop={cw}:{ch},"

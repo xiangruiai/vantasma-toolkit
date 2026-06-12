@@ -26,6 +26,10 @@ import json
 import os
 import subprocess
 import sys
+
+FFMPEG = "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg"
+if not __import__("os").path.exists(FFMPEG):
+    FFMPEG = "ffmpeg"
 import uuid
 
 FFPROBE = "/opt/homebrew/opt/ffmpeg-full/bin/ffprobe"
@@ -186,6 +190,21 @@ def run_storyboard(sb_path, workdir):
     scenes = sb["scenes"]
     manifest = [None] * len(scenes)
 
+    def trim_silence(path):
+        """裁掉 TTS 头尾静音（祥瑞 2026-06-12 定：头部 0.12-0.26s 静音导致每镜'图先出来话后到'）。
+        头部留 0.04s 起音、尾部留 0.12s 收尾。"""
+        import subprocess as sp
+        tmp = path + ".trim.mp3"
+        r = sp.run([FFMPEG, "-y", "-v", "error", "-i", path, "-af",
+                    # 只裁头部(2026-06-12 翻车教训:stop_periods 会在句内第一个停顿处截断整句!)
+                    "silenceremove=start_periods=1:start_silence=0.04:start_threshold=-38dB",
+                    "-c:a", "libmp3lame", "-q:a", "2", tmp], capture_output=True)
+        if r.returncode == 0 and os.path.exists(tmp) and os.path.getsize(tmp) > 1000:
+            os.replace(tmp, path)
+        else:
+            try: os.remove(tmp)
+            except OSError: pass
+
     # 播客后端可用时整批合成（一次会话 prosody 连贯，音色=群日报播客同款）
     appid, token = podcast_creds()
     use_podcast = cfg.get("backend", "auto") in ("auto", "podcast") and appid and token
@@ -196,6 +215,7 @@ def run_storyboard(sb_path, workdir):
         try:
             tts_podcast_batch(texts, outs, cfg)
             for i, out in zip(idxs, outs):
+                trim_silence(out)
                 dur = duration_of(out)
                 manifest[i] = {"index": i, "file": out, "duration": round(dur, 3),
                                "text": scenes[i]["narration"].strip(), "backend": "podcast"}
@@ -210,6 +230,8 @@ def run_storyboard(sb_path, workdir):
                 continue
             out = os.path.join(audio_dir, f"scene_{i:03d}.mp3")
             backend, dur = synthesize(text, out, cfg)
+            trim_silence(out)
+            dur = duration_of(out)
             manifest[i] = {"index": i, "file": out, "duration": round(dur, 3),
                            "text": text, "backend": backend}
             print(f"scene {i:03d} [{backend}] {dur:.2f}s  {text[:30]}")

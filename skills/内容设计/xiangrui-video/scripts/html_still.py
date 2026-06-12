@@ -539,6 +539,39 @@ def win_ending(s, L):
            "to{box-shadow:0 14px 60px rgba(34,166,103,.6)}}"
            "@keyframes typein{to{opacity:1}}"
            "@keyframes blinkc{0%,49%{opacity:1}50%,100%{opacity:0}}")
+    if L["wy"] == 0:
+        # 横版结尾(祥瑞 2026-06-12 三审定稿):编辑式左对齐——去绿胶囊大块/去emoji,
+        # kicker + 大问题字 + 细线 + 细描边搜索行(CSS画放大镜) + mono 注释,杂志收尾页气质
+        html_l = f"""
+<div style="position:absolute;inset:0;background:
+  radial-gradient(ellipse 900px 600px at 12% 0%,rgba(34,166,103,.22),transparent 60%),
+  linear-gradient(170deg,#101412,#0a0d0b)"></div>
+<div style="position:absolute;inset:0;background:repeating-linear-gradient(90deg,rgba(255,255,255,.05) 0 1px,transparent 1px 160px)"></div>
+<div style="position:absolute;inset:0;padding:8% 9%">
+  <div class="in" style="font-family:ui-monospace,Menlo,monospace;font-size:28px;
+    letter-spacing:.5em;color:{GREEN_LIGHT};animation-delay:.1s">ONE MORE THING</div>
+  <div class="in" style="font-family:'YSBTH';font-size:92px;color:#fff;letter-spacing:3px;
+    line-height:1.5;margin-top:34px;animation-delay:.3s">{text}</div>
+  <div class="in" style="width:120px;height:7px;background:{GREEN};border-radius:4px;
+    margin-top:38px;box-shadow:0 0 16px rgba(34,166,103,.5);animation-delay:.5s"></div>
+  <div class="in" style="margin-top:64px;display:flex;align-items:center;gap:28px;
+    border:2px solid rgba(255,255,255,.28);border-radius:18px;padding:24px 38px;
+    width:56%;animation-delay:.8s">
+    <span style="position:relative;width:38px;height:38px;flex:0 0 auto">
+      <span style="position:absolute;width:26px;height:26px;border:4px solid {LITE_G};
+        border-radius:50%;left:0;top:0"></span>
+      <span style="position:absolute;width:14px;height:5px;background:{LITE_G};
+        transform:rotate(45deg);left:23px;top:27px;border-radius:3px"></span></span>
+    <span style="font-family:'YSBTH';font-size:54px;color:#fff;letter-spacing:5px">{search_spans}</span>
+    <span style="display:inline-block;width:5px;height:52px;background:{LITE_G};
+      animation:blinkc 1s step-end infinite"></span>
+  </div>
+  <div class="in" style="font-family:ui-monospace,Menlo,monospace;font-size:26px;
+    letter-spacing:.32em;color:rgba(255,255,255,.5);margin-top:26px;animation-delay:1.1s">{search_hint}</div>
+  <div class="in" style="position:absolute;right:9%;bottom:12%;font-family:ui-monospace,Menlo,monospace;
+    font-size:24px;letter-spacing:.3em;color:rgba(255,255,255,.4);animation-delay:1.3s">{_b["name"]}出品</div>
+</div>"""
+        return html_l, css
     q_html = ""
     if question:
         qfs = int(L["cw"] * 0.8 / max(4, len(question)))
