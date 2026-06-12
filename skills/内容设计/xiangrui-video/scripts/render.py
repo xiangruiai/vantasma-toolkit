@@ -286,9 +286,15 @@ def main():
         raise RuntimeError("manifest 与 storyboard 场景数不一致，重跑 tts.py")
 
     # 2. 逐场景渲染（视频+音频合成单元）；先算全部时长给顶部进度条用
+    # 智能剪口播（祥瑞 2026-06-12 定）：画面最多比口播长 max_gap 秒（默认 1.0），
+    # min_dur 再大也被钳住——人声断档是留存杀手，信息密的画面该用更长口播去配，
+    # 不是用静默画面去等。例外：scene 显式给 dur（绝对时长）或 max_gap 单场景覆盖。
+    max_gap_global = float(sb.get("max_gap", 1.0))
     durs = []
     for i, scene in enumerate(sb["scenes"]):
-        d = max(manifest[i]["duration"] + PAD, float(scene.get("min_dur", MIN_SCENE)))
+        ndur = manifest[i]["duration"]
+        gap_cap = float(scene.get("max_gap", max_gap_global))
+        d = max(ndur + PAD, min(float(scene.get("min_dur", MIN_SCENE)), ndur + gap_cap))
         if scene.get("dur"):
             d = max(d, float(scene["dur"]))
         durs.append(d)
