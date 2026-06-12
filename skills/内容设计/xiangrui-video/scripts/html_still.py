@@ -165,14 +165,14 @@ def _title_layout(W, H, L, title_lines=None):
             "chap_top": chap_top, "chap_show": chap_show}
 
 
-def _frame_css(W, H, dur, L, title_lines=None):
+def _frame_css(W, H, dur, L, title_lines=None, has_chapbar=False):
     portrait = H > W
     T = _title_layout(W, H, L, title_lines)
     tfs, title_h = T["tfs"], T["title_h"]
     bars_top, show_top = T["bars_top"], T["show_top"]
     tags_top, chap_top = T["tags_top"], T["chap_top"]
     prog_top = 0  # 进度条贴最顶（祥瑞定：可出安全区）
-    toprow_top = L["safe_top"] - 10 if portrait else 36
+    toprow_top = L["safe_top"] - 10 if portrait else (84 if has_chapbar else 36)
     return f"""
 @font-face{{font-family:'YSBTH';src:url('file://{FONT_TITLE_PATH}')}}
 *{{margin:0;padding:0;box-sizing:border-box}}
@@ -188,15 +188,28 @@ body{{font-family:'PingFang SC','Hiragino Sans GB',sans-serif;position:relative;
 .vig{{position:absolute;inset:0;background:radial-gradient(ellipse 130% 115% at 50% 42%,transparent 62%,rgba(0,0,0,.4));
   pointer-events:none;z-index:80}}
 /* 顶部全片进度条（爆款留存标配） */
-.prog{{position:absolute;left:0;top:{prog_top}px;height:10px;background:linear-gradient(90deg,{GREEN},{GREEN_LIGHT} 70%,{BERRY});
-  border-radius:0 6px 6px 0;z-index:30;box-shadow:0 0 14px rgba(34,166,103,.6)}}
+.prog{{position:absolute;left:0;top:{prog_top}px;
+  height:{10 if portrait else (58 if has_chapbar else 4)}px;
+  background:{('linear-gradient(90deg,' + GREEN + ',' + GREEN_LIGHT + ' 70%,' + BERRY + ')') if (portrait or not has_chapbar) else 'rgba(34,166,103,.30)'};
+  border-radius:0 6px 6px 0;z-index:{30 if not has_chapbar or portrait else 28};
+  box-shadow:{('0 0 14px rgba(34,166,103,.6)' if portrait else ('none' if has_chapbar else '0 0 6px rgba(34,166,103,.35)'))}}}
+/* 横版章节分段条(影视飓风式,祥瑞 2026-06-12 定):全宽分段+段内标题+当前章高亮,.prog 作底层填充 */
+.chapbar{{position:absolute;left:0;right:0;top:0;height:58px;z-index:29;display:flex;
+  background:rgba(8,10,8,.78);backdrop-filter:blur(14px);border-bottom:1px solid rgba(255,255,255,.10)}}
+.chapbar .cseg{{display:flex;align-items:center;justify-content:center;position:relative;
+  border-right:1px solid rgba(255,255,255,.14);overflow:hidden}}
+.chapbar .cseg span{{font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:23px;
+  letter-spacing:.08em;color:rgba(255,255,255,.45);font-weight:700;white-space:nowrap;z-index:31}}
+.chapbar .cseg.cur span{{color:{GREEN_LIGHT};font-weight:800}}
+.chapbar .cseg.done span{{color:rgba(255,255,255,.7)}}
 /* 顶部 logo 条：绿块贴纸 + 右侧小字 */
 .top{{position:absolute;left:{L['mx']}px;right:{L['mx']}px;top:{toprow_top}px;
   display:flex;align-items:center;justify-content:space-between;z-index:10}}
-.top .name{{background:{GREEN};color:#fff;font-family:'YSBTH';font-size:48px;letter-spacing:5px;
-  padding:8px 30px 10px;border-radius:12px;box-shadow:0 10px 30px rgba(34,166,103,.35)}}
-.top .r{{font-size:26px;letter-spacing:.12em;color:rgba(255,255,255,.72);font-weight:600;
-  font-family:ui-monospace,'SF Mono',Menlo,monospace{';background:rgba(12,13,12,.55);border-radius:24px;padding:8px 22px' if not portrait else ''}}}
+.top .name{{background:{GREEN};color:#fff;font-family:'YSBTH';font-size:{48 if portrait else 30}px;letter-spacing:{5 if portrait else 3}px;
+  padding:{'8px 30px 10px' if portrait else '4px 18px 6px'};border-radius:{12 if portrait else 8}px;
+  box-shadow:{'0 10px 30px rgba(34,166,103,.35)' if portrait else 'none'};opacity:{'1' if portrait else '.92'}}}
+.top .r{{font-size:{26 if portrait else 20}px;letter-spacing:.12em;color:rgba(255,255,255,{'.72' if portrait else '.6'});font-weight:600;
+  font-family:ui-monospace,'SF Mono',Menlo,monospace{';background:rgba(12,13,12,.4);border-radius:20px;padding:6px 16px' if not portrait else ''}}}
 /* 内容窗口：细边微光（科技感，非赛博） */
 .win{{position:absolute;left:{L['wx']}px;top:{L['wy']}px;width:{L['ww']}px;height:{L['wh']}px;
   border:{L['border']}px solid rgba(255,255,255,.85);border-radius:{22 if portrait else 0}px;overflow:hidden;
@@ -808,11 +821,22 @@ body{{background:transparent !important}}
         chap_block = (f'<div class="chap"><span class="cnum">CH.{cur + 1:02d}</span>'
                       f'<span class="cname">{chapters[cur]["t"]}</span>'
                       f'<div class="csegs">{segs}</div></div>')
+    # 横版章节分段条(影视飓风式):chapters_t=[{t,f0,f1}],当前镜头所在章高亮
+    chapbar_block = ""
+    chapters_t = meta.get("chapters_t") or []
+    if chapters_t and W > H:
+        p0 = (meta.get("prog") or (0, 0))[0]
+        segs = ""
+        for c in chapters_t:
+            cls = "cur" if c["f0"] <= p0 < c["f1"] else ("done" if p0 >= c["f1"] else "")
+            segs += (f'<div class="cseg {cls}" style="width:{(c["f1"] - c["f0"]) * 100:.2f}%">'
+                     f'<span>{c["t"]}</span></div>')
+        chapbar_block = f'<div class="chapbar">{segs}</div>'
     bare = meta.get("bare", False)
     if bare:
         top_block = bars_block = show_block = tags_block = ""
         baseline_block = sig_block = logo_block = prog_block = ""
-        chap_block = ""
+        chap_block = chapbar_block = ""
     else:
         top_block = (f'<div class="top"><div class="name">{brand["name"]}</div>'
                      f'<div class="r"><span class="live"></span>{vol}</div></div>')
@@ -860,9 +884,9 @@ body{{background:transparent !important}}
         libs += f'<script src="file://{os.path.join(ASSETS, "vendor", "echarts.min.js")}"></script>\n'
     gsap_block = libs + f'<script>{takeover}\n{demo_js}</script>'
     html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
-<style>{_frame_css(W, H, dur, L, title_lines)}{extra_css}{bars_css}{hole_css}{prog_css}{memes_css}</style></head>
+<style>{_frame_css(W, H, dur, L, title_lines, has_chapbar=bool(chapbar_block))}{extra_css}{bars_css}{hole_css}{prog_css}{memes_css}</style></head>
 <body>
-{bg_div}<div class="scan"></div><div class="ticks"></div>{prog_block}
+{bg_div}<div class="scan"></div><div class="ticks"></div>{chapbar_block}{prog_block}
 {top_block}
 <div class="win"><div class="inner">{inner}</div></div>
 {'' if W > H else '<div class="cnr c1"></div><div class="cnr c2"></div><div class="cnr c3"></div><div class="cnr c4"></div>'}

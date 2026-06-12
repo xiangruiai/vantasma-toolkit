@@ -316,6 +316,13 @@ def main():
         durs.append(d)
     total_planned = sum(durs) or 1.0
 
+    # 章节时间占比(横版顶部章节分段条用):按各章首镜累计时长算分界
+    chaps = sb.get("chapters") or []
+    if chaps:
+        bounds = [sum(durs[:int(c.get("from", 0))]) / total_planned for c in chaps] + [1.0]
+        meta["chapters_t"] = [{"t": c["t"], "f0": bounds[k], "f1": bounds[k + 1]}
+                              for k, c in enumerate(chaps)]
+
     timeline, units, cursor = [], [], 0.0
     for i, scene in enumerate(sb["scenes"]):
         m = manifest[i]
