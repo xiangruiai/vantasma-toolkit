@@ -200,8 +200,12 @@ body{{font-family:'PingFang SC','Hiragino Sans GB',sans-serif;position:relative;
   background:rgba(34,166,103,.92);color:#fff;font-family:'YSBTH';font-size:27px;letter-spacing:3px}}
 .chapbar .cbrand span{{font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:18px;
   letter-spacing:.1em;color:rgba(255,255,255,.8)}}
+.chapbar .cwrap{{flex:1;display:flex;position:relative}}
+.chapbar .cfill{{position:absolute;left:0;top:0;bottom:0;width:0;z-index:1;
+  background:linear-gradient(90deg,{GREEN},{GREEN_LIGHT} 72%,{BERRY});opacity:.85;
+  animation:progw var(--pdur) linear forwards}}
 .chapbar .cseg{{display:flex;align-items:center;justify-content:center;position:relative;
-  border-right:1px solid rgba(255,255,255,.14);overflow:hidden}}
+  border-right:1px solid rgba(255,255,255,.14);overflow:hidden;z-index:2}}
 /* 画面叠字(媒体镜大字标注,2026-06-12 祥瑞定:让画面和口播咬合+破卡片单调) */
 .ovl{{position:absolute;left:{int(W*0.055)}px;bottom:{int(H*0.22)}px;z-index:18;max-width:62%}}
 .ovl .ovt{{font-family:'YSBTH';font-size:78px;color:#fff;line-height:1.45;letter-spacing:3px;
@@ -213,8 +217,8 @@ body{{font-family:'PingFang SC','Hiragino Sans GB',sans-serif;position:relative;
   border-left:5px solid {GREEN}}}
 .chapbar .cseg span{{font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:23px;
   letter-spacing:.08em;color:rgba(255,255,255,.45);font-weight:700;white-space:nowrap;z-index:31}}
-.chapbar .cseg.cur span{{color:{GREEN_LIGHT};font-weight:800}}
-.chapbar .cseg.done span{{color:rgba(255,255,255,.7)}}
+.chapbar .cseg.cur span{{color:#fff;font-weight:800;text-shadow:0 1px 8px rgba(0,0,0,.45)}}
+.chapbar .cseg.done span{{color:rgba(255,255,255,.92);text-shadow:0 1px 8px rgba(0,0,0,.4)}}
 /* 顶部 logo 条：绿块贴纸 + 右侧小字 */
 .top{{position:absolute;left:{L['mx']}px;right:{L['mx']}px;top:{toprow_top}px;
   display:flex;align-items:center;justify-content:space-between;z-index:10}}
@@ -796,7 +800,8 @@ def build_html(scene, meta, W, H, workdir, idx, dur, chunks=None):
     # 全片进度条：本场景从 p0% 匀速涨到 p1%
     p0, p1 = meta.get("prog", (0.0, 1.0))
     prog_css = (f"@keyframes progw{{from{{width:{p0*100:.2f}%}}to{{width:{p1*100:.2f}%}}}}\n"
-                f".prog{{animation:progw {dur:.3f}s linear forwards}}\n")
+                f".prog{{animation:progw {dur:.3f}s linear forwards}}\n"
+                f".chapbar .cfill{{--pdur:{dur:.3f}s}}\n")
     hole = scene["type"] in MEDIA_TYPES
     hole_css, bg_div = "", ""
     if hole:
@@ -840,12 +845,15 @@ body{{background:transparent !important}}
     chapters_t = meta.get("chapters_t") or []
     if chapters_t and W > H:
         p0 = (meta.get("prog") or (0, 0))[0]
-        segs = (f'<div class="cbrand">{brand["name"]}<span>{vol}</span></div>')
+        segs = ""
         for c in chapters_t:
             cls = "cur" if c["f0"] <= p0 < c["f1"] else ("done" if p0 >= c["f1"] else "")
             segs += (f'<div class="cseg {cls}" style="flex:{c["f1"] - c["f0"]:.4f}">'
                      f'<span>{c["t"]}</span></div>')
-        chapbar_block = f'<div class="chapbar">{segs}</div>'
+        # 填充式进度(祥瑞 2026-06-12 定):从品牌格右缘起,品牌渐变整高填充随播放铺满分段区
+        chapbar_block = (f'<div class="chapbar"><div class="cbrand">{brand["name"]}'
+                         f'<span>{vol}</span></div>'
+                         f'<div class="cwrap"><div class="cfill"></div>{segs}</div></div>')
     # 画面叠字:scene.overlay={"title":"((大字))","sub":"小标注"}(媒体镜标注画面内容)
     ovl_block = ""
     ov = scene.get("overlay")
@@ -873,7 +881,7 @@ body{{background:transparent !important}}
             show_block, tags_block, baseline_block = "", "", ""
         sig_block = f'<div class="sig">SIG.{idx:02d} / {brand["sig_tag"]}</div>'
         logo_block = f'<div class="logo">{logo}</div>'
-        prog_block = '<div class="prog"></div>'
+        prog_block = "" if chapbar_block else '<div class="prog"></div>'
     # GSAP 统一接管：所有场景引入 gsap，自动把框架标准动画类(.in/.pop/.slideL/.slideR/.smash)
     # 从 CSS 缓动升级为 GSAP 弹性缓动（back/power），保留各元素原有 animation-delay 时序。
     # 录制器逐帧 seek globalTimeline，确定性。demo 场景的 demo_js 在接管之后追加执行。

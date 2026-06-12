@@ -213,7 +213,12 @@ def render_media_scene(scene, meta, chunks, dur, W, H, workdir, idx):
         part = os.path.join(workdir, "temp", f"shot_{idx:03d}_{j}.mp4")
         # 画面适配窗口：默认 cover 填满裁切（祥瑞 2026-06-11 确认这样最好，干净不突兀）。
         # 极少数"必须看清整张内容"的素材可标 "fit":"contain"（完整缩放+模糊铺底），一般不用。
-        if sh.get("fit", "cover") == "contain":
+        if sh.get("fit") == "card":
+            # 文档/截图嵌入卡（祥瑞 2026-06-12 定）：缩至 84% + 米白细边 + 品牌深底
+            contain = (f"scale={int(cw*0.84)}:{int(ch*0.84)}:force_original_aspect_ratio=decrease,"
+                       f"pad=iw+12:ih+12:6:6:color=0xf2efe4,"
+                       f"pad={cw}:{ch}:(ow-iw)/2:(oh-ih)/2:color=0x141815")
+        elif sh.get("fit", "cover") == "contain":
             contain = (f"split=2[bg][fg];"
                        f"[bg]scale={cw}:{ch}:force_original_aspect_ratio=increase,crop={cw}:{ch},"
                        f"gblur=sigma=24,eq=brightness=-0.12[bgb];"
@@ -341,20 +346,22 @@ def main():
             vis = record_html_scene(scene, meta_i, chunks, dur, W, H, workdir, i)
         else:
             raise ValueError(f"未知场景类型: {scene['type']}")
-        unit = os.path.join(workdir, "temp", f"unit_{i:03d}.mp4")
+        # 单元音频用无损 PCM + atrim 精确到采样点（2026-06-12 音画同步根修：
+        # AAC 每单元时长向上取整到 1024 采样帧边界，几十个镜头累积零点几秒"画面快于声音"）
+        unit = os.path.join(workdir, "temp", f"unit_{i:03d}.mov")
         if m["file"]:
             run([FFMPEG, "-y", "-v", "error", "-i", vis, "-i", m["file"],
                  "-filter_complex",
                  f"[1:a]aformat=sample_rates=44100:channel_layouts=stereo,"
-                 f"apad=whole_dur={dur:.3f}[a]",
+                 f"apad=whole_dur={dur:.3f},atrim=0:{dur:.3f}[a]",
                  "-map", "0:v", "-map", "[a]", "-t", f"{dur:.3f}",
-                 "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", unit])
+                 "-c:v", "copy", "-c:a", "pcm_s16le", unit])
         else:
             run([FFMPEG, "-y", "-v", "error", "-i", vis,
                  "-f", "lavfi", "-t", f"{dur:.3f}",
                  "-i", "anullsrc=r=44100:cl=stereo",
                  "-map", "0:v", "-map", "1:a", "-t", f"{dur:.3f}",
-                 "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", unit])
+                 "-c:v", "copy", "-c:a", "pcm_s16le", unit])
         units.append(unit)
         timeline.append({"scene": scene, "start": cursor, "end": cursor + dur,
                          "narration_dur": ndur})
@@ -362,7 +369,7 @@ def main():
     total = cursor
 
     # 3. 拼接（场景间智能转场，自实现的剪映式效果，不依赖剪映引擎）
-    joined = os.path.join(workdir, "temp", "joined.mp4")
+    joined = os.path.join(workdir, "temp", "joined.mov")
     durs = [t["end"] - t["start"] for t in timeline]
     use_trans = sb.get("transitions", True) and len(units) > 1
     if use_trans:
@@ -394,7 +401,7 @@ def main():
             ["-filter_complex", ";".join(vf + af),
              "-map", f"[{pv}]", "-map", f"[{pa}]",
              "-c:v", "libx264", "-preset", "medium", "-crf", "19",
-             "-c:a", "aac", "-b:a", "192k", joined])
+             "-c:a", "pcm_s16le", joined])
         # 转场缩短了时间轴：重算每个场景 start，SFX 跟着对
         for i, t in enumerate(timeline):
             t["start"] = new_starts[i]
@@ -479,6 +486,29 @@ def main():
          "-movflags", "+faststart", "-t", f"{total:.3f}", out_path]
     print("终混渲染中...")
     run(cmd)
+
+    # 双版本（祥瑞 2026-06-12 定）：配了 BGM 时额外输出无伴奏版，发布平台自选配乐
+    if bgm_idx is not None:
+        nob = os.path.splitext(out_path)[0] + "_nobgm.mp4"
+        inputs2 = inputs[:-4]  # 去掉 ["-stream_loop","-1","-i",bgm]
+        fc2, amix2 = [], ["[0:a]"]
+        for j, (idx, delay) in enumerate(sfx_specs):
+            fc2.append(f"[{idx}:a]adelay={delay}|{delay},volume=0.9[sfx{j}]")
+            amix2.append(f"[sfx{j}]")
+        if len(amix2) > 1:
+            fc2.append(f"{''.join(amix2)}amix=inputs={len(amix2)}:normalize=0:duration=first[am2]")
+            amap2 = "[am2]"
+        else:
+            amap2 = "[0:a]"
+        if fade_d > 0:
+            fc2.append(f"{amap2}afade=t=out:st={fade_st:.3f}:d={fade_d:.3f}[af2]")
+            amap2 = "[af2]"
+        run(inputs2 + ["-filter_complex", ";".join(fc2)] +
+            ["-map", "0:v", "-map", amap2, "-vf", vf,
+             "-c:v", "libx264", "-preset", "medium", "-crf", "19",
+             "-c:a", "aac", "-b:a", "192k",
+             "-movflags", "+faststart", "-t", f"{total:.3f}", nob])
+        print(f"   无伴奏版: {nob}")
 
     if not args.keep_temp:
         pass  # temp 保留给排查，由调用方清理
