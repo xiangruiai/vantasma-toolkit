@@ -86,11 +86,13 @@ def layout(W, H):
         wy = safe_top + int(H * 0.046)
         ww, wh = W - 2 * wx, int(H * 0.47)
     else:      # landscape
+        # 横版=无框沉浸模式(祥瑞 2026-06-12 定):画面全屏铺,品牌只留角标+底部字幕条,
+        # 没有窗口/标题大字/标签——对齐 B站/YouTube 横版知识区的全屏素材流语言
         safe_top, safe_bottom = 0, 0
-        mx = 40
-        wx, wy = 40, int(H * 0.12)
-        ww, wh = int(W * 0.54), int(H * 0.70)
-    bw = 5  # 窗口白描边
+        mx = 80
+        wx, wy = 0, 0
+        ww, wh = W, H
+    bw = 5 if H > W else 0  # 窗口白描边(横版无框沉浸:0)
     cw = (ww - 2 * bw) // 2 * 2   # 偶数对齐，libx264 不收奇数尺寸
     ch = (wh - 2 * bw) // 2 * 2
     return {"wx": wx, "mx": mx, "wy": wy, "ww": ww, "wh": wh, "border": bw,
@@ -136,7 +138,7 @@ def _title_layout(W, H, L, title_lines=None):
     tfs = max(tfs, int(W * 0.052))  # 字号下限
     cpl = max(1, int(avail_w / (tfs * 1.06)))  # 每行能放的字数
     est_lines = sum(max(1, _math.ceil(len(plain(t)) / cpl)) for t in title_lines) or 1
-    bars_top = L["wy"] + L["wh"] + 18
+    bars_top = (L["wy"] + L["wh"] + 18) if H > W else H - 168
     title_h = int(tfs * 1.34 * est_lines)  # 按实际渲染行数算高，标签据此避让
     TAGS_H, CHAP_H = 58, 56
     if portrait:
@@ -170,7 +172,7 @@ def _frame_css(W, H, dur, L, title_lines=None):
     bars_top, show_top = T["bars_top"], T["show_top"]
     tags_top, chap_top = T["tags_top"], T["chap_top"]
     prog_top = 0  # 进度条贴最顶（祥瑞定：可出安全区）
-    toprow_top = L["safe_top"] - 10 if portrait else int(L["wy"] * 0.22)
+    toprow_top = L["safe_top"] - 10 if portrait else 36
     return f"""
 @font-face{{font-family:'YSBTH';src:url('file://{FONT_TITLE_PATH}')}}
 *{{margin:0;padding:0;box-sizing:border-box}}
@@ -194,10 +196,10 @@ body{{font-family:'PingFang SC','Hiragino Sans GB',sans-serif;position:relative;
 .top .name{{background:{GREEN};color:#fff;font-family:'YSBTH';font-size:48px;letter-spacing:5px;
   padding:8px 30px 10px;border-radius:12px;box-shadow:0 10px 30px rgba(34,166,103,.35)}}
 .top .r{{font-size:26px;letter-spacing:.12em;color:rgba(255,255,255,.72);font-weight:600;
-  font-family:ui-monospace,'SF Mono',Menlo,monospace}}
+  font-family:ui-monospace,'SF Mono',Menlo,monospace{';background:rgba(12,13,12,.55);border-radius:24px;padding:8px 22px' if not portrait else ''}}}
 /* 内容窗口：细边微光（科技感，非赛博） */
 .win{{position:absolute;left:{L['wx']}px;top:{L['wy']}px;width:{L['ww']}px;height:{L['wh']}px;
-  border:{L['border']}px solid rgba(255,255,255,.85);border-radius:22px;overflow:hidden;
+  border:{L['border']}px solid rgba(255,255,255,.85);border-radius:{22 if portrait else 0}px;overflow:hidden;
   background:{PAPER};box-shadow:0 30px 70px rgba(0,0,0,.6),0 0 28px rgba(34,166,103,.18);z-index:5}}
 .win .inner{{position:absolute;inset:0}}
 /* HUD 角括号（框架层，永远盖在素材上） */
@@ -220,7 +222,7 @@ body{{font-family:'PingFang SC','Hiragino Sans GB',sans-serif;position:relative;
   margin-right:12px;vertical-align:1px;animation:blink 1.6s ease-in-out infinite}}
 @keyframes blink{{0%,100%{{opacity:1}}50%{{opacity:.25}}}}
 /* 字幕：无框大字白字 + 柔投影 + 居中绿短线锚（文字交叉淡换） */
-.bars{{position:absolute;left:{L['mx']}px;right:{L['mx']}px;top:{bars_top}px;height:104px;z-index:20}}
+.bars{{position:absolute;left:{L['mx'] if portrait else int(W*0.2)}px;right:{L['mx'] if portrait else int(W*0.2)}px;top:{bars_top}px;height:104px;z-index:20}}
 .bar-frame{{position:absolute;inset:0}}
 .bar-frame::after{{content:'';position:absolute;left:50%;bottom:-6px;transform:translateX(-50%);
   width:64px;height:6px;border-radius:4px;background:{GREEN};opacity:.9}}
@@ -261,8 +263,8 @@ body{{font-family:'PingFang SC','Hiragino Sans GB',sans-serif;position:relative;
 /* 右下水印：幽灵字（实心超低透明度，不抢画面）。
    位置上移钻进标题块下方做垫底层（祥瑞 2026-06-12 定）：标题/标签/章节轨(z≥9)
    直接压在它(z=3)上面，构图不再下空；随 tags_top 动态锚定，两行标题也跟随 */
-.logo{{position:absolute;right:20px;bottom:96px;
-  font-size:{int(W*0.175)}px;font-family:'YSBTH';
+.logo{{position:absolute;right:20px;bottom:{96 if portrait else 20}px;
+  font-size:{int(W*0.175) if portrait else int(W*0.085)}px;font-family:'YSBTH';
   color:rgba(165,214,167,.075);letter-spacing:6px;z-index:3;white-space:nowrap}}
 /* 通用动画 */
 .in{{opacity:0;animation:rise .65s cubic-bezier(.2,.8,.2,1) forwards}}
@@ -818,6 +820,8 @@ body{{background:transparent !important}}
         show_block = f'<div class="showwrap"><div class="vbar"></div><div class="show">{show}</div></div>'
         tags_block = tags_html
         baseline_block = '<div class="baseline"></div>'
+        if W > H:  # 横版无框沉浸:全屏画面流,不放主题大字/标签/基线
+            show_block, tags_block, baseline_block = "", "", ""
         sig_block = f'<div class="sig">SIG.{idx:02d} / {brand["sig_tag"]}</div>'
         logo_block = f'<div class="logo">{logo}</div>'
         prog_block = '<div class="prog"></div>'
@@ -861,7 +865,7 @@ body{{background:transparent !important}}
 {bg_div}<div class="scan"></div><div class="ticks"></div>{prog_block}
 {top_block}
 <div class="win"><div class="inner">{inner}</div></div>
-<div class="cnr c1"></div><div class="cnr c2"></div><div class="cnr c3"></div><div class="cnr c4"></div>
+{'' if W > H else '<div class="cnr c1"></div><div class="cnr c2"></div><div class="cnr c3"></div><div class="cnr c4"></div>'}
 {memes_html}
 {bars_block}
 {show_block}
