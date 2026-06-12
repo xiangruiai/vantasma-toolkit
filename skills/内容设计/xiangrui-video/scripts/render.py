@@ -217,8 +217,9 @@ def render_media_scene(scene, meta, chunks, dur, W, H, workdir, idx):
             # 文档/截图嵌入卡（祥瑞 2026-06-12 二订：圆角版）：缩 84% + 米白细边 +
             # geq 圆角 alpha + 品牌深底 overlay——文档素材像展品嵌着，不裸铺不方角
             R = 26
+            # 自适应铺满(祥瑞 2026-06-12 三订):宽用足 94%/高用足 88%,横长图不再缩成小卡留大白
             contain = (
-                f"scale={int(cw*0.84)}:{int(ch*0.84)}:force_original_aspect_ratio=decrease,"
+                f"scale={int(cw*0.94)}:{int(ch*0.88)}:force_original_aspect_ratio=decrease,"
                 f"pad=iw+16:ih+16:8:8:color=0xf2efe4,format=rgba,"
                 f"geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
                 f"a='if(gt(abs(W/2-X),W/2-{R})*gt(abs(H/2-Y),H/2-{R}),"
