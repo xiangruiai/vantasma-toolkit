@@ -547,8 +547,21 @@ def win_demo(s, L):
     """定制演示动画场景：AI 按本片内容现写的 HTML 动画（打破千篇一律的核心武器）。
     字段：demo_html（窗口内 body 片段）、demo_css（keyframes 等）、demo_bg=paper|dark。
     可在 demo_js 里用 rough.js（手绘草图，去AI味）/ echarts（数据图）—— 已本地引入。"""
-    # 统一苹果风深底（demo_bg 参数保留但 paper 也走深色光晕）
-    return f'{BGGLOW}{s.get("demo_html", "")}', s.get("demo_css", "")
+    # demo_bg=dark(默认)：苹果风深底光晕；demo_bg=paper：纸面白底+点阵
+    # （手绘 Rough 场景用 paper 才有"纸上画的"人味，2026-06-12 实装）
+    # 绘制顺序铁律：背景(绝对定位)会盖住未定位的普通流内容——GSAP 动过的元素因残留
+    # transform 形成 stacking context 才"侥幸"浮上来。所以内容必须包进 position:relative
+    # 的层(z-index:1)，背景全部 z-index:0 以下，任何静态元素都不会被背景吞掉。
+    content = (f'<div style="position:relative;z-index:1;width:100%;height:100%">'
+               f'{s.get("demo_html", "")}</div>')
+    if s.get("demo_bg") == "paper":
+        paper_bg = ('<div style="position:absolute;inset:0;z-index:0;background:'
+                    'radial-gradient(circle at 24% 12%,rgba(34,166,103,.07),transparent 50%),'
+                    '#f6f3ea"></div>'
+                    '<div style="position:absolute;inset:0;z-index:0;background-image:radial-gradient('
+                    'rgba(60,60,50,.13) 1.6px,transparent 1.6px);background-size:34px 34px"></div>')
+        return f'{paper_bg}{content}', s.get("demo_css", "")
+    return f'{BGGLOW}{content}', s.get("demo_css", "")
 
 
 def win_editorial(s, L):
