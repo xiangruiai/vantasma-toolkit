@@ -188,11 +188,11 @@ body{{font-family:'PingFang SC','Hiragino Sans GB',sans-serif;position:relative;
 .vig{{position:absolute;inset:0;background:radial-gradient(ellipse 130% 115% at 50% 42%,transparent 62%,rgba(0,0,0,.4));
   pointer-events:none;z-index:80}}
 /* 顶部全片进度条（爆款留存标配） */
-.prog{{position:absolute;left:0;top:{prog_top}px;
-  height:{10 if portrait else (58 if has_chapbar else 4)}px;
-  background:{('linear-gradient(90deg,' + GREEN + ',' + GREEN_LIGHT + ' 70%,' + BERRY + ')') if (portrait or not has_chapbar) else 'rgba(34,166,103,.30)'};
-  border-radius:0 6px 6px 0;z-index:{30 if not has_chapbar or portrait else 28};
-  box-shadow:{('0 0 14px rgba(34,166,103,.6)' if portrait else ('none' if has_chapbar else '0 0 6px rgba(34,166,103,.35)'))}}}
+.prog{{position:absolute;left:0;top:{prog_top if (portrait or not has_chapbar) else 53}px;
+  height:{10 if portrait else (5 if has_chapbar else 4)}px;
+  background:linear-gradient(90deg,{GREEN},{GREEN_LIGHT} 70%,{BERRY});
+  border-radius:0 6px 6px 0;z-index:{30 if portrait else 32};
+  box-shadow:0 0 {14 if portrait else 8}px rgba(34,166,103,{'.6' if portrait else '.5'})}}
 /* 横版章节分段条(影视飓风式,祥瑞 2026-06-12 定):全宽分段+段内标题+当前章高亮,.prog 作底层填充 */
 .chapbar{{position:absolute;left:0;right:0;top:0;height:58px;z-index:29;display:flex;
   background:rgba(8,10,8,.78);backdrop-filter:blur(14px);border-bottom:1px solid rgba(255,255,255,.10)}}
@@ -588,7 +588,8 @@ def win_media(s, L):
         css += (f"@keyframes chip{i}{{0%{{opacity:0}}{p0:.2f}%{{opacity:0}}"
                 f"{min(p0+1.5, p1):.2f}%{{opacity:1}}{p1:.2f}%{{opacity:1}}"
                 f"{min(p1+0.4,100):.2f}%{{opacity:0}}100%{{opacity:0}}}}\n")
-        chips += (f'<div style="position:absolute;right:18px;top:18px;background:rgba(0,0,0,.68);'
+        chip_top = 74 if L["wy"] == 0 else 18  # 横版无框:避开顶部章节条
+        chips += (f'<div style="position:absolute;right:18px;top:{chip_top}px;background:rgba(0,0,0,.68);'
                   f'color:#ddd;font-size:25px;padding:7px 18px;border-radius:8px;z-index:3;'
                   f'opacity:0;animation:chip{i} {dur:.3f}s linear forwards">{src}</div>')
     cap_html = ""
