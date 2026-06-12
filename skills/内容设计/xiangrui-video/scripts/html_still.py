@@ -196,8 +196,21 @@ body{{font-family:'PingFang SC','Hiragino Sans GB',sans-serif;position:relative;
 /* 横版章节分段条(影视飓风式,祥瑞 2026-06-12 定):全宽分段+段内标题+当前章高亮,.prog 作底层填充 */
 .chapbar{{position:absolute;left:0;right:0;top:0;height:58px;z-index:29;display:flex;
   background:rgba(8,10,8,.78);backdrop-filter:blur(14px);border-bottom:1px solid rgba(255,255,255,.10)}}
+.chapbar .cbrand{{flex:0 0 auto;display:flex;align-items:center;gap:16px;padding:0 30px;
+  background:rgba(34,166,103,.92);color:#fff;font-family:'YSBTH';font-size:27px;letter-spacing:3px}}
+.chapbar .cbrand span{{font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:18px;
+  letter-spacing:.1em;color:rgba(255,255,255,.8)}}
 .chapbar .cseg{{display:flex;align-items:center;justify-content:center;position:relative;
   border-right:1px solid rgba(255,255,255,.14);overflow:hidden}}
+/* 画面叠字(媒体镜大字标注,2026-06-12 祥瑞定:让画面和口播咬合+破卡片单调) */
+.ovl{{position:absolute;left:{int(W*0.055)}px;bottom:{int(H*0.22)}px;z-index:18;max-width:62%}}
+.ovl .ovt{{font-family:'YSBTH';font-size:78px;color:#fff;line-height:1.45;letter-spacing:3px;
+  text-shadow:0 4px 30px rgba(0,0,0,.85),0 0 60px rgba(0,0,0,.5)}}
+.ovl .ovt .acc{{color:{GREEN_LIGHT}}}
+.ovl .ovs{{font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:30px;
+  color:rgba(255,255,255,.85);margin-top:18px;text-shadow:0 2px 14px rgba(0,0,0,.9);
+  background:rgba(8,10,8,.45);display:inline-block;padding:8px 20px;border-radius:10px;
+  border-left:5px solid {GREEN}}}
 .chapbar .cseg span{{font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:23px;
   letter-spacing:.08em;color:rgba(255,255,255,.45);font-weight:700;white-space:nowrap;z-index:31}}
 .chapbar .cseg.cur span{{color:{GREEN_LIGHT};font-weight:800}}
@@ -826,20 +839,31 @@ body{{background:transparent !important}}
     chapters_t = meta.get("chapters_t") or []
     if chapters_t and W > H:
         p0 = (meta.get("prog") or (0, 0))[0]
-        segs = ""
+        segs = (f'<div class="cbrand">{brand["name"]}<span>{vol}</span></div>')
         for c in chapters_t:
             cls = "cur" if c["f0"] <= p0 < c["f1"] else ("done" if p0 >= c["f1"] else "")
-            segs += (f'<div class="cseg {cls}" style="width:{(c["f1"] - c["f0"]) * 100:.2f}%">'
+            segs += (f'<div class="cseg {cls}" style="flex:{c["f1"] - c["f0"]:.4f}">'
                      f'<span>{c["t"]}</span></div>')
         chapbar_block = f'<div class="chapbar">{segs}</div>'
+    # 画面叠字:scene.overlay={"title":"((大字))","sub":"小标注"}(媒体镜标注画面内容)
+    ovl_block = ""
+    ov = scene.get("overlay")
+    if ov:
+        ovt = _accent(ov.get("title", ""))
+        ovs = ov.get("sub", "")
+        ovl_block = (f'<div class="ovl"><div class="ovt in">{ovt}</div>'
+                     + (f'<div class="ovs in" style="animation-delay:.4s">{ovs}</div>' if ovs else "")
+                     + '</div>')
     bare = meta.get("bare", False)
     if bare:
         top_block = bars_block = show_block = tags_block = ""
         baseline_block = sig_block = logo_block = prog_block = ""
-        chap_block = chapbar_block = ""
+        chap_block = chapbar_block = ovl_block = ""
     else:
         top_block = (f'<div class="top"><div class="name">{brand["name"]}</div>'
                      f'<div class="r"><span class="live"></span>{vol}</div></div>')
+        if W > H:  # 横版:品牌已并入章节条最左格,顶部不再放 logo/期数(祥瑞 2026-06-12 定)
+            top_block = ""
         bars_block = f'<div class="bars">{bars_html}</div>'
         show_block = f'<div class="showwrap"><div class="vbar"></div><div class="show">{show}</div></div>'
         tags_block = tags_html
@@ -886,7 +910,7 @@ body{{background:transparent !important}}
     html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>{_frame_css(W, H, dur, L, title_lines, has_chapbar=bool(chapbar_block))}{extra_css}{bars_css}{hole_css}{prog_css}{memes_css}</style></head>
 <body>
-{bg_div}<div class="scan"></div><div class="ticks"></div>{chapbar_block}{prog_block}
+{bg_div}<div class="scan"></div><div class="ticks"></div>{chapbar_block}{prog_block}{ovl_block}
 {top_block}
 <div class="win"><div class="inner">{inner}</div></div>
 {'' if W > H else '<div class="cnr c1"></div><div class="cnr c2"></div><div class="cnr c3"></div><div class="cnr c4"></div>'}
