@@ -3,7 +3,7 @@
 > 丢一个主题、或者一个公众号链接进去，约 25 分钟出一条 60-90 秒的竖屏知识科普视频。
 > 配音、字幕、动画、音效、封面，全自动。
 
-一个 Skill。高信息密度+快节奏吐槽式科普，文案学脱口秀（铺垫-包袱-干货-callback），视觉是一套苹果 Keynote 玻璃风的固定品牌框架。默认品牌是「万涂幻象」，所有品牌元素可一个配置文件换皮。
+一个 Skill。高信息密度+快节奏吐槽式科普，文案学脱口秀（铺垫-包袱-干货-callback），视觉是万涂幻象自有的固定品牌框架 + 纸白手绘内容卡（编辑排版骨架 + Rough.js 手绘，刻意去 AI 味，不堆深底玻璃卡）。默认品牌是「万涂幻象」，所有品牌元素可一个配置文件换皮。
 
 ---
 
@@ -61,6 +61,22 @@ bash ~/.claude/skills/xiangrui-video/scripts/setup.sh --install
 必备依赖：ffmpeg（含 libass 的完整版）、Node + puppeteer-core/ws、Chrome、edge-tts、openai-whisper、tiktoken。音效和标题字体已随 skill 附带。
 
 然后对 agent 说「做个视频，讲讲 XX」或者丢一个文章链接即可。
+
+---
+
+## ✦ 升级（已经装过的）
+
+装过了想更到最新版，最省事的一句话直接发给 AI：
+
+> 把 xiangrui-video skill 升级到最新版。
+
+或者一行命令（不动你 `~/.config/xiangrui-video/config.json` 里的换皮配置）：
+
+```bash
+D=$(mktemp -d) && git clone --depth 1 -q https://github.com/xiangruiai/vantasma-toolkit.git "$D" && cp -rf "$D/skills/内容设计/xiangrui-video" ~/.claude/skills/ && echo "✅ xiangrui-video 已升级到最新"
+```
+
+依赖没动就不用再跑 setup.sh；万一提示缺依赖，补跑一次 `bash ~/.claude/skills/xiangrui-video/scripts/setup.sh --install` 即可。
 
 ---
 
