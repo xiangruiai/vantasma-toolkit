@@ -254,14 +254,14 @@ body{{font-family:'PingFang SC','Hiragino Sans GB',sans-serif;position:relative;
   margin-right:12px;vertical-align:1px;animation:blink 1.6s ease-in-out infinite}}
 @keyframes blink{{0%,100%{{opacity:1}}50%{{opacity:.25}}}}
 /* 字幕：无框大字白字 + 柔投影 + 居中绿短线锚（文字交叉淡换） */
-.bars{{position:absolute;left:{L['mx'] if portrait else int(W*0.2)}px;right:{L['mx'] if portrait else int(W*0.2)}px;top:{bars_top}px;height:104px;z-index:20}}
+.bars{{position:absolute;left:{L['mx'] if portrait else int(W*0.075)}px;right:{L['mx'] if portrait else int(W*0.075)}px;top:{bars_top}px;height:104px;z-index:20}}
 .bar-frame{{position:absolute;inset:0}}
 .bar-frame::after{{content:'';position:absolute;left:50%;bottom:-6px;transform:translateX(-50%);
   width:64px;height:6px;border-radius:4px;background:{GREEN};opacity:.9}}
 .bar-text{{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   color:#fff;font-family:'YSBTH';font-size:52px;letter-spacing:2px;
   text-shadow:0 4px 26px rgba(0,0,0,.85),0 1px 3px rgba(0,0,0,.9);
-  white-space:nowrap;overflow:hidden;opacity:0}}
+  white-space:nowrap;opacity:0}}
 /* 固定主题大字：优设标题黑（自带8°斜），左侧绿竖条 */
 .showwrap{{position:absolute;left:{L['mx']}px;right:{L['mx']}px;top:{show_top}px;z-index:10;
   display:flex;gap:30px;align-items:stretch}}
@@ -315,10 +315,30 @@ body{{font-family:'PingFang SC','Hiragino Sans GB',sans-serif;position:relative;
 """
 
 
-def _bars_html_css(chunks, dur):
-    """字幕条：白条本体常驻不动，只有文字交叉淡入淡出（群反馈：白条闪跳难受）。"""
+def _sub_em_width(t):
+    """估算一行字幕的字宽（em）：中日韩全角≈1.0，其余(拉丁/数字/标点/空格)≈0.56。"""
+    w = 0.0
+    for ch in t:
+        w += 1.0 if ord(ch) > 0x2E80 else 0.56
+    return w
+
+
+def _bars_html_css(chunks, dur, bar_w=None):
+    """字幕条：白条本体常驻不动，只有文字交叉淡入淡出（群反馈：白条闪跳难受）。
+    字号按最长一行自适应缩到字幕条宽内（祥瑞 2026-06-13 定）：长句不再两边截断。"""
     if not chunks:
         return "", ""
+    # 按最长行算统一字号：fs*em_width + letter_spacing*字数 <= 可用宽。整段用同一字号更稳。
+    fs = 52
+    if bar_w:
+        usable = bar_w - 56            # 两侧各留 ~28px 呼吸
+        ls = 2                         # letter-spacing
+        worst = max(((_sub_em_width(t), len(t)) for t, _, _ in chunks),
+                    key=lambda x: x[0])
+        em, n = worst
+        if em > 0:
+            fit = (usable - ls * n) / em
+            fs = int(max(30, min(52, fit)))
     items, css = "", ""
     for i, (text, t0, t1) in enumerate(chunks):
         p0 = max(0.0, t0 / dur * 100)
@@ -329,7 +349,8 @@ def _bars_html_css(chunks, dur):
         css += (f"@keyframes bart{i}{{0%{{opacity:0}}{p0:.2f}%{{opacity:0}}"
                 f"{pin:.2f}%{{opacity:1}}{pout:.2f}%{{opacity:1}}"
                 f"{p1:.2f}%{{opacity:0}}100%{{opacity:0}}}}\n")
-        items += (f'<div class="bar-text" style="animation:bart{i} {dur:.3f}s linear forwards">{text}</div>')
+        items += (f'<div class="bar-text" style="font-size:{fs}px;'
+                  f'animation:bart{i} {dur:.3f}s linear forwards">{text}</div>')
     html = f'<div class="bar-frame">{items}</div>'
     return html, css
 
@@ -410,52 +431,68 @@ def _diagram_shell(kicker, title_html, inner, css=""):
     return html, base_css
 
 
+def _safe_band(L):
+    """横版卡片的安全垂直带（祥瑞 2026-06-13 定）：内容必须落在 顶部章节条(58px) 与
+    底部字幕条(H-168) 之间——不顶到章节条、不压到字幕条、不溢出。返回 (band_top, band_h)，
+    把卡片里 0..1 的垂直比例重映射进这条带。竖版窗口本身已是安全区，原样返回 (0, ch)。"""
+    cw, ch = L["cw"], L["ch"]
+    if cw > ch:  # 横版全屏：上避章节条、下避字幕条
+        band_top = 96               # 章节条 58 + 呼吸 ~38
+        band_bot = ch - 196         # 字幕条 ch-168 之上再留 ~28
+        return band_top, max(160, band_bot - band_top)
+    return 0, ch
+
+
 def win_diagram(s, L):
     """深底手绘图解卡（design-system 去 AI 味：杀规整玻璃卡换 Rough.js 手绘，保留万涂幻象
     墨绿深底调性）：BGGLOW 深底 + 亮绿/亮粉手绘框/编号圈 + 左对齐编辑标题（白字发光）。
-    compare=两手绘 hachure 框 + 手绘 VS 圈；list/flow=手绘编号圈列表。"""
+    compare=两手绘 hachure 框 + 手绘 VS 圈；list/flow=手绘编号圈列表。
+    所有垂直坐标经 _safe_band 重映射，横版不顶章节条、不压字幕条。"""
     d = s.get("diagram", {})
     kind = d.get("kind", "list")
     title = d.get("title", "")
     kicker = d.get("kicker") or f"{(L.get('brand') or brand_config())['name_en']} NOTES"
     cw, ch = L["cw"], L["ch"]
     land = cw > ch
+    bnd_t, bnd_h = _safe_band(L)
+    vy = lambda f: int(bnd_t + bnd_h * f)   # 垂直比例 -> 安全带内绝对像素
     kfs = int(cw * (0.015 if land else 0.024))
     tfs = int(cw * (0.052 if land else 0.07))
-    head = (f'<div class="in" style="position:absolute;left:{int(cw*0.06)}px;top:{int(ch*0.055)}px;'
+    head = (f'<div class="in" style="position:absolute;left:{int(cw*0.06)}px;top:{vy(0.0)}px;'
             f'font-family:ui-monospace,Menlo,monospace;font-size:{kfs}px;letter-spacing:.32em;'
             f'color:{LITE_G};font-weight:700;z-index:2">{kicker}</div>'
-            f'<div class="in" style="position:absolute;left:{int(cw*0.055)}px;top:{int(ch*0.10)}px;'
+            f'<div class="in" style="position:absolute;left:{int(cw*0.055)}px;top:{vy(0.07)}px;'
             f'font-family:YSBTH,sans-serif;font-size:{tfs}px;color:#fff;line-height:1.0;z-index:2;'
             f'text-shadow:0 0 42px rgba(34,166,103,.5)">{title}</div>')
     svg = '<svg id="dgrs" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1"></svg>'
-    js = (f"var svg=document.getElementById('dgrs');var rc=rough.svg(svg);var CW={cw},CH={ch};"
-          f"svg.appendChild(rc.line(CW*0.056,CH*0.205,CW*{0.40 if land else 0.62},CH*0.205,"
+    js = (f"var svg=document.getElementById('dgrs');var rc=rough.svg(svg);"
+          f"var CW={cw},CH={ch},BT={bnd_t},BH={bnd_h};"
+          f"svg.appendChild(rc.line(CW*0.056,(BT+BH*0.165),CW*{0.40 if land else 0.62},(BT+BH*0.165),"
           f"{{stroke:'{LITE_P}',roughness:2.6,strokeWidth:5,bowing:2}}));")
 
     if kind == "compare":
         Lc, Rc = d.get("left", {}), d.get("right", {})
-        by, bh, bw, lx, rx = (0.29, 0.53, 0.40, 0.055, 0.545) if land else (0.30, 0.60, 0.40, 0.055, 0.545)
-        js += (f"svg.appendChild(rc.rectangle(CW*{lx},CH*{by},CW*{bw},CH*{bh},"
+        by, bh, bw, lx, rx = (0.26, 0.60, 0.40, 0.055, 0.545) if land else (0.30, 0.60, 0.40, 0.055, 0.545)
+        js += (f"svg.appendChild(rc.rectangle(CW*{lx},(BT+BH*{by}),CW*{bw},BH*{bh},"
                f"{{stroke:'{LITE_G}',roughness:2.3,strokeWidth:3,bowing:1.4,fillStyle:'hachure',"
                f"fill:'rgba(126,216,168,0.11)',hachureGap:9,hachureAngle:41}}));"
-               f"svg.appendChild(rc.rectangle(CW*{rx},CH*{by},CW*{bw},CH*{bh},"
+               f"svg.appendChild(rc.rectangle(CW*{rx},(BT+BH*{by}),CW*{bw},BH*{bh},"
                f"{{stroke:'{LITE_P}',roughness:2.3,strokeWidth:3,bowing:1.4,fillStyle:'hachure',"
                f"fill:'rgba(255,143,174,0.11)',hachureGap:9,hachureAngle:-41}}));"
-               f"svg.appendChild(rc.circle(CW*0.50,CH*{by+bh*0.5:.3f},{int(cw*0.055)},"
+               f"svg.appendChild(rc.circle(CW*0.50,(BT+BH*{by+bh*0.5:.3f}),{int(cw*0.055)},"
                f"{{stroke:'#fff',roughness:1.7,strokeWidth:3.5,fill:'#0c0d0c',fillStyle:'solid'}}));")
         ctfs = int(cw * (0.026 if land else 0.04))
         pfs = int(cw * (0.02 if land else 0.032))
 
         def col(c, color, x):
             pts = "".join(
-                f'<div class="in" style="font-size:{pfs}px;color:rgba(255,255,255,.88);margin-top:{int(ch*0.028)}px;'
+                f'<div class="in" style="font-size:{pfs}px;color:rgba(255,255,255,.88);margin-top:{int(bnd_h*0.028)}px;'
                 f'font-weight:600;line-height:1.35">{p}</div>' for p in c.get("points", []))
-            return (f'<div style="position:absolute;left:{int(cw*(x+0.025))}px;top:{int(ch*(by+0.04))}px;'
+            return (f'<div style="position:absolute;left:{int(cw*(x+0.025))}px;top:{vy(by+0.04)}px;'
                     f'width:{int(cw*(bw-0.05))}px;z-index:3">'
                     f'<div class="in" style="font-family:YSBTH,sans-serif;font-size:{ctfs}px;color:{color}">'
                     f'{c.get("title","")}</div>{pts}</div>')
-        vs = (f'<div style="position:absolute;left:50%;top:{int(ch*(by+bh*0.5))}px;'
+        vs = (f'<div style="position:absolute;left:50%;top:{vy(by+bh*0.5)}px;'
               f'transform:translate(-50%,-50%);z-index:4;font-family:YSBTH,sans-serif;'
               f'font-size:{int(cw*0.022)}px;color:#fff">VS</div>')
         html = f'{BGGLOW}{svg}{head}{col(Lc,LITE_G,lx)}{col(Rc,LITE_P,rx)}{vs}'
@@ -464,7 +501,7 @@ def win_diagram(s, L):
     # list / flow：深底手绘编号圈 + 主词 + 描述（左对齐编辑列表）
     items = d.get("items", [])
     n = max(len(items), 1)
-    top0, bot = (0.28, 0.80) if land else (0.30, 0.92)
+    top0, bot = (0.27, 0.99) if land else (0.30, 0.99)
     rowh = (bot - top0) / n
     rad = int(cw * (0.044 if land else 0.066))
     nfs = int(cw * (0.032 if land else 0.048))
@@ -476,7 +513,7 @@ def win_diagram(s, L):
         color = LITE_P if last else LITE_G
         fillrgb = "255,143,174" if last else "126,216,168"
         cyc = top0 + rowh * (i + 0.5)
-        js += (f"svg.appendChild(rc.circle(CW*0.115,CH*{cyc:.3f},{rad*2},"
+        js += (f"svg.appendChild(rc.circle(CW*0.115,(BT+BH*{cyc:.3f}),{rad*2},"
                f"{{stroke:'{color}',roughness:1.9,strokeWidth:3.5,"
                f"fill:'rgba({fillrgb},0.14)',fillStyle:'solid'}}));")
         tag = it.get("tag", "")
@@ -484,11 +521,11 @@ def win_diagram(s, L):
                     f'color:{color};border:1.5px solid {color};border-radius:6px;padding:2px 12px;'
                     f'margin-left:14px;letter-spacing:.1em;white-space:nowrap">{tag}</span>') if tag else ""
         rows += (f'<div class="in" style="position:absolute;left:{int(cw*0.21)}px;right:{int(cw*0.06)}px;'
-                 f'top:{int(ch*(cyc-rowh*0.5))}px;height:{int(ch*rowh)}px;display:flex;flex-direction:column;'
+                 f'top:{vy(cyc-rowh*0.5)}px;height:{int(bnd_h*rowh)}px;display:flex;flex-direction:column;'
                  f'justify-content:center;z-index:3">'
                  f'<div style="font-family:YSBTH,sans-serif;font-size:{mfs}px;color:#fff">{it.get("t","")}{tag_html}</div>'
                  f'<div style="font-size:{dfs}px;color:rgba(255,255,255,.6);margin-top:6px;font-weight:600;line-height:1.4">{it.get("d","")}</div></div>'
-                 f'<div style="position:absolute;left:{int(cw*0.115)}px;top:{int(ch*cyc)}px;'
+                 f'<div style="position:absolute;left:{int(cw*0.115)}px;top:{vy(cyc)}px;'
                  f'transform:translate(-50%,-50%);z-index:4;font-family:YSBTH,sans-serif;'
                  f'font-size:{nfs}px;color:{color}">{i+1:02d}</div>')
     html = f'{BGGLOW}{svg}{head}{rows}'
@@ -723,6 +760,8 @@ def win_editorial(s, L):
                  f'<div><span class="ecap">{_accent(it.get("cap", ""))}</span>{tag}{desc}</div></div>')
     # 横版(cw>ch)字号若仍按 cw 比例会过大致标题换行+列表溢出底部；横版单独缩放并上移列表，竖版保持原值
     land = cw > ch
+    bnd_t, bnd_h = _safe_band(L)           # 横版安全带：不顶章节条、不压字幕条
+    vy = lambda f: int(bnd_t + bnd_h * f)
     h1_fs = 0.052 if land else 0.082
     rows_top = 0.265 if land else 0.37
     eno_col = 0.10 if land else 0.13
@@ -737,13 +776,13 @@ def win_editorial(s, L):
     css = (
         f".egrid{{position:absolute;inset:0;background:repeating-linear-gradient(90deg,"
         f"rgba(255,255,255,.04) 0 1px,transparent 1px {int(cw * 0.083)}px);opacity:.55}}"
-        f".ekick{{position:absolute;left:{int(cw * 0.05)}px;top:{int(ch * 0.055)}px;"
+        f".ekick{{position:absolute;left:{int(cw * 0.05)}px;top:{vy(0.0) if land else int(ch * 0.055)}px;"
         f"font:600 {int(cw * kick_fs)}px ui-monospace,Menlo;letter-spacing:.3em;color:{GREEN_LIGHT}}}"
-        f".eh1{{position:absolute;left:{int(cw * 0.046)}px;top:{int(ch * h1_top)}px;{h1_right}"
+        f".eh1{{position:absolute;left:{int(cw * 0.046)}px;top:{vy(0.05) if land else int(ch * h1_top)}px;{h1_right}"
         f"font-family:'YSBTH';font-size:{int(cw * h1_fs)}px;line-height:1.0}}"
-        f".eidx{{position:absolute;right:{int(cw * 0.055)}px;top:{int(ch * 0.072)}px;"
+        f".eidx{{position:absolute;right:{int(cw * 0.055)}px;top:{vy(0.02) if land else int(ch * 0.072)}px;"
         f"font-family:'YSBTH';font-size:{int(cw * 0.028)}px;color:rgba(255,255,255,.22);letter-spacing:.1em}}"
-        f".erows{{position:absolute;left:{int(cw * 0.046)}px;right:{int(cw * 0.046)}px;top:{int(ch * rows_top)}px}}"
+        f".erows{{position:absolute;left:{int(cw * 0.046)}px;right:{int(cw * 0.046)}px;top:{vy(0.27) if land else int(ch * rows_top)}px}}"
         f".erow{{display:grid;grid-template-columns:{int(cw * eno_col)}px 1fr;align-items:baseline;"
         f"gap:{int(cw * 0.024)}px;padding:{int(ch * row_pad)}px 0;border-top:1.5px solid rgba(255,255,255,.12)}}"
         f".erow:last-child{{border-bottom:1.5px solid rgba(255,255,255,.12)}}"
@@ -837,7 +876,9 @@ def build_html(scene, meta, W, H, workdir, idx, dur, chunks=None):
     _res = WIN_BUILDERS[scene["type"]](scene, L)
     inner, extra_css = _res[0], _res[1]
     win_js = _res[2] if len(_res) > 2 else ""  # 卡片场景（diagram）的 Rough 手绘生成 JS
-    bars_html, bars_css = _bars_html_css(chunks or [], dur)
+    # 字幕条宽度 = .bars 两侧内缩后的可用宽（横版 W*0.075，竖版 mx），字号据此自适应不截断
+    _sub_inset = L["mx"] if H > W else int(W * 0.075)
+    bars_html, bars_css = _bars_html_css(chunks or [], dur, bar_w=W - 2 * _sub_inset)
     title_lines = meta.get("show_title") or []
     if len(title_lines) >= 2:
         show = (f'<span class="l1">{_accent(title_lines[0])}</span><br>'
