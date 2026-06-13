@@ -285,9 +285,23 @@ def main():
     ap.add_argument("--workdir", required=True)
     ap.add_argument("--out")
     ap.add_argument("--keep-temp", action="store_true")
+    ap.add_argument("--skip-lint", action="store_true",
+                    help="跳过图主文辅质量闸门（仅排查用，正常出片别用）")
     args = ap.parse_args()
 
     sb = json.load(open(args.storyboard))
+
+    # 渲染前硬关卡：图主文辅 / 反模板化 lint（祥瑞 2026-06-13 定）。
+    # 铁律写在 SKILL.md 没有强制力——模型会偷懒套纯文字版式，这里拒绝渲染才真正治本。
+    if not args.skip_lint:
+        import lint_storyboard
+        ok, report = lint_storyboard.lint(sb)
+        print(lint_storyboard.format_report(report))
+        if not ok:
+            print("\n渲染已拒绝。按上面改法重排 sb.json 再跑；确需强渲染加 --skip-lint。",
+                  file=sys.stderr)
+            sys.exit(1)
+
     workdir = os.path.abspath(args.workdir)
     os.makedirs(os.path.join(workdir, "temp"), exist_ok=True)
     global FPS
