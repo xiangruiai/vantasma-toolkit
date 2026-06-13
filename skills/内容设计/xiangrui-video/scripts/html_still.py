@@ -29,7 +29,9 @@ GRAIN = ("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width=
          "<rect width='220' height='220' filter='url(%23n)' opacity='0.6'/></svg>")
 
 
-# Keynote 玻璃语言公共件（2026-06-10 祥瑞定稿：全部卡片苹果风深底玻璃）
+# Keynote 玻璃语言公共件（旧定稿，2026-06-10）。2026-06-13 起卡片场景
+# diagram/impact/editorial 已按 design-system 迁移到纸白手绘语言（PAPER_BG+Rough.js）；
+# GLASS/BGGLOW 现仅 demo dark 模式 / word_card / ending 等兜底场景保留。
 GLASS = ("backdrop-filter:blur(20px);background:rgba(255,255,255,.07);"
          "border:1.5px solid rgba(255,255,255,.16);"
          "box-shadow:0 20px 60px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.12)")
@@ -38,6 +40,14 @@ BGGLOW = ('<div style="position:absolute;inset:0;background:'
           'radial-gradient(ellipse 600px 500px at 95% 90%,rgba(232,74,109,.20),transparent 55%),'
           'linear-gradient(170deg,#101412,#0a0d0b)"></div>')
 LITE_G, LITE_P = "#7ed8a8", "#ff8fae"
+# 纸白手绘底（design-system 2026-06-11 去 AI 味主底：纸面+点阵，配 Rough.js 手绘，
+# 取代 2026-06-10 旧定稿的"苹果风深底玻璃"卡片语言）
+PAPER_BG = ('<div style="position:absolute;inset:0;z-index:0;background:'
+            'radial-gradient(circle at 22% 10%,rgba(34,166,103,.07),transparent 52%),'
+            'radial-gradient(circle at 90% 92%,rgba(232,74,109,.05),transparent 50%),#f6f3ea"></div>'
+            '<div style="position:absolute;inset:0;z-index:0;background-image:'
+            'radial-gradient(rgba(60,60,50,.13) 1.6px,transparent 1.6px);background-size:34px 34px"></div>')
+INK_SOFT = "#2a2a2a"
 
 ASSETS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets")
 BG_PORTRAIT = os.path.join(ASSETS, "bg_portrait.png")
@@ -409,64 +419,87 @@ def _diagram_shell(kicker, title_html, inner, css=""):
 
 
 def win_diagram(s, L):
-    """B+C 融合：杂志编辑骨架（超大斜体序号/规线/标签框）+ 手作点缀（微旋转/胶带/马克笔/手绘感）。"""
+    """纸白手绘图解卡（design-system 2026-06-11 去 AI 味语言）：纸面点阵底 +
+    Rough.js 手绘框/编号圈 + 左对齐编辑标题 + 翠绿/粉莓双色。
+    compare=两手绘 hachure 框+手绘 VS 圈；list/flow=手绘编号圈列表。"""
     d = s.get("diagram", {})
     kind = d.get("kind", "list")
     title = d.get("title", "")
     kicker = d.get("kicker") or f"{(L.get('brand') or brand_config())['name_en']} NOTES"
-    title_html = (f'<div class="dgtitle in" style="animation-delay:.18s">{title}</div>') if title else ""
+    cw, ch = L["cw"], L["ch"]
+    land = cw > ch
+    kfs = int(cw * (0.015 if land else 0.024))
+    tfs = int(cw * (0.052 if land else 0.07))
+    head = (f'<div class="in" style="position:absolute;left:{int(cw*0.06)}px;top:{int(ch*0.055)}px;'
+            f'font-family:ui-monospace,Menlo,monospace;font-size:{kfs}px;letter-spacing:.32em;'
+            f'color:{GREEN};font-weight:700;z-index:2">{kicker}</div>'
+            f'<div class="in" style="position:absolute;left:{int(cw*0.055)}px;top:{int(ch*0.10)}px;'
+            f'font-family:YSBTH,sans-serif;font-size:{tfs}px;color:{INK};line-height:1.0;z-index:2">{title}</div>')
+    svg = '<svg id="dgrs" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1"></svg>'
+    js = (f"var svg=document.getElementById('dgrs');var rc=rough.svg(svg);var CW={cw},CH={ch};"
+          f"svg.appendChild(rc.line(CW*0.056,CH*0.205,CW*{0.40 if land else 0.62},CH*0.205,"
+          f"{{stroke:'{BERRY}',roughness:2.6,strokeWidth:5,bowing:2}}));")
 
     if kind == "compare":
         Lc, Rc = d.get("left", {}), d.get("right", {})
+        by, bh, bw, lx, rx = 0.30, 0.60, 0.40, 0.055, 0.545
+        js += (f"svg.appendChild(rc.rectangle(CW*{lx},CH*{by},CW*{bw},CH*{bh},"
+               f"{{stroke:'{GREEN}',roughness:2.3,strokeWidth:3,bowing:1.4,fillStyle:'hachure',"
+               f"fill:'rgba(34,166,103,0.06)',hachureGap:9,hachureAngle:41}}));"
+               f"svg.appendChild(rc.rectangle(CW*{rx},CH*{by},CW*{bw},CH*{bh},"
+               f"{{stroke:'{BERRY}',roughness:2.3,strokeWidth:3,bowing:1.4,fillStyle:'hachure',"
+               f"fill:'rgba(232,74,109,0.06)',hachureGap:9,hachureAngle:-41}}));"
+               f"svg.appendChild(rc.circle(CW*0.50,CH*{by+bh*0.5:.3f},{int(cw*0.055)},"
+               f"{{stroke:'{INK}',roughness:1.7,strokeWidth:3.5,fill:'#fff',fillStyle:'solid'}}));")
+        ctfs = int(cw * (0.026 if land else 0.04))
+        pfs = int(cw * (0.02 if land else 0.032))
 
-        def col(c, accent, lite, glow, mark, cls, dly):
+        def col(c, color, x):
             pts = "".join(
-                f'<div class="in" style="display:flex;gap:14px;margin-top:22px;align-items:flex-start;'
-                f'animation-delay:{dly+0.2+j*0.13:.2f}s">'
-                f'<div style="font-size:40px;font-weight:900;color:{lite};line-height:1.3">{mark}</div>'
-                f'<div style="font-size:40px;color:rgba(255,255,255,.88);line-height:1.5;font-weight:600">{p}</div></div>'
-                for j, p in enumerate(c.get("points", [])))
-            return (f'<div class="{cls}" style="flex:1;animation-delay:{dly}s">'
-                    f'<div class="gcard" style="position:relative;padding:46px 40px;'
-                    f'border-top:3px solid {lite}">'
-                    f'<div style="font-size:60px;font-weight:900;color:#fff;'
-                    f'text-shadow:0 0 40px {glow}">{c.get("title","")}</div>'
-                    f'{pts}</div></div>')
-        css = ("@keyframes vsin{from{opacity:0;transform:translate(-50%,-50%) scale(0)}"
-               "to{opacity:1;transform:translate(-50%,-50%) scale(1)}}")
-        inner = (f'<div style="display:flex;gap:30px;position:relative;margin-top:40px">'
-                 f'{col(Lc, GREEN, LITE_G, "rgba(34,166,103,.8)", "✓", "slideL", 0.35)}'
-                 f'{col(Rc, BERRY, LITE_P, "rgba(232,74,109,.8)", "✕", "slideR", 0.5)}'
-                 f'<div style="position:absolute;left:50%;top:42%;width:88px;height:88px;border-radius:50%;'
-                 f'backdrop-filter:blur(16px);background:rgba(255,255,255,.1);'
-                 f'border:1.5px solid rgba(255,255,255,.25);color:#fff;display:flex;align-items:center;'
-                 f'justify-content:center;font-size:36px;font-weight:900;'
-                 f'box-shadow:0 10px 32px rgba(0,0,0,.4);opacity:0;'
-                 f'animation:vsin .55s .9s cubic-bezier(.3,1.5,.4,1) forwards;transform:translate(-50%,-50%)">VS</div></div>')
-        return _diagram_shell(kicker, title_html, inner, css)
+                f'<div class="in" style="font-size:{pfs}px;color:{INK_SOFT};margin-top:{int(ch*0.028)}px;'
+                f'font-weight:600;line-height:1.35">{p}</div>' for p in c.get("points", []))
+            return (f'<div style="position:absolute;left:{int(cw*(x+0.025))}px;top:{int(ch*(by+0.04))}px;'
+                    f'width:{int(cw*(bw-0.05))}px;z-index:3">'
+                    f'<div class="in" style="font-family:YSBTH,sans-serif;font-size:{ctfs}px;color:{color}">'
+                    f'{c.get("title","")}</div>{pts}</div>')
+        vs = (f'<div style="position:absolute;left:50%;top:{int(ch*(by+bh*0.5))}px;'
+              f'transform:translate(-50%,-50%);z-index:4;font-family:YSBTH,sans-serif;'
+              f'font-size:{int(cw*0.022)}px;color:{INK}">VS</div>')
+        html = f'{PAPER_BG}{svg}{head}{col(Lc,GREEN,lx)}{col(Rc,BERRY,rx)}{vs}'
+        return html, "", js
 
-    # flow / list：玻璃行卡 + 发光超大序号 + 玻璃标签
+    # list / flow：纸面手绘编号圈 + 主词 + 描述（左对齐编辑列表）
     items = d.get("items", [])
-    rows = []
+    n = max(len(items), 1)
+    top0, bot = 0.30, 0.93
+    rowh = (bot - top0) / n
+    rad = int(cw * (0.044 if land else 0.066))
+    nfs = int(cw * (0.032 if land else 0.048))
+    mfs = int(cw * (0.03 if land else 0.044))
+    dfs = int(cw * (0.018 if land else 0.027))
+    rows = ""
     for i, it in enumerate(items):
-        dly = 0.4 + i * 0.3
-        last = i == len(items) - 1 and kind == "flow"
-        lite = LITE_P if last else LITE_G
-        glow = "rgba(232,74,109,.8)" if last else "rgba(34,166,103,.8)"
+        last = (i == n - 1 and kind == "flow")
+        color = BERRY if last else GREEN
+        fillrgb = "232,74,109" if last else "34,166,103"
+        cyc = top0 + rowh * (i + 0.5)
+        js += (f"svg.appendChild(rc.circle(CW*0.115,CH*{cyc:.3f},{rad*2},"
+               f"{{stroke:'{color}',roughness:1.9,strokeWidth:3.5,"
+               f"fill:'rgba({fillrgb},0.09)',fillStyle:'solid'}}));")
         tag = it.get("tag", "")
-        tag_html = (f'<div style="display:inline-block;font-family:Menlo,monospace;font-size:23px;'
-                    f'border:1.5px solid {lite};color:{lite};border-radius:999px;'
-                    f'padding:4px 18px;margin-top:12px;font-weight:700">{tag}</div>') if tag else ""
-        rows.append(
-            f'<div class="slideL" style="animation-delay:{dly:.2f}s;margin-top:{0 if i == 0 else 22}px">'
-            f'<div class="gcard" style="display:flex;gap:34px;padding:30px 38px;align-items:center">'
-            f'<div style="font-size:100px;font-weight:900;line-height:.9;color:#fff;min-width:128px;'
-            f'font-family:\'YSBTH\';text-shadow:0 0 44px {glow}">{i+1:02d}</div>'
-            f'<div><div style="font-size:48px;font-weight:900;color:#fff">{it.get("t","")}</div>'
-            f'<div style="font-size:30px;color:rgba(255,255,255,.6);margin-top:8px;line-height:1.45;font-weight:600">{it.get("d","")}</div>'
-            f'{tag_html}</div></div></div>')
-    inner = "".join(rows)
-    return _diagram_shell(kicker, title_html, inner)
+        tag_html = (f'<span style="font-family:ui-monospace,Menlo,monospace;font-size:{int(cw*0.014)}px;'
+                    f'color:{color};border:1.5px solid {color};border-radius:6px;padding:2px 12px;'
+                    f'margin-left:14px;letter-spacing:.1em;white-space:nowrap">{tag}</span>') if tag else ""
+        rows += (f'<div class="in" style="position:absolute;left:{int(cw*0.21)}px;right:{int(cw*0.06)}px;'
+                 f'top:{int(ch*(cyc-rowh*0.5))}px;height:{int(ch*rowh)}px;display:flex;flex-direction:column;'
+                 f'justify-content:center;z-index:3">'
+                 f'<div style="font-family:YSBTH,sans-serif;font-size:{mfs}px;color:{INK}">{it.get("t","")}{tag_html}</div>'
+                 f'<div style="font-size:{dfs}px;color:#555;margin-top:6px;font-weight:600;line-height:1.4">{it.get("d","")}</div></div>'
+                 f'<div style="position:absolute;left:{int(cw*0.115)}px;top:{int(ch*cyc)}px;'
+                 f'transform:translate(-50%,-50%);z-index:4;font-family:YSBTH,sans-serif;'
+                 f'font-size:{nfs}px;color:{color}">{i+1:02d}</div>')
+    html = f'{PAPER_BG}{svg}{head}{rows}'
+    return html, "", js
 
 
 def win_screenshot(s, L):
@@ -491,37 +524,32 @@ def win_screenshot(s, L):
 
 
 def win_impact(s, L):
-    """砸字卡（Keynote 玻璃语言）：光晕底 + 玻璃胶囊引导行 + 发光大字 + 依据小注。"""
+    """巨字情绪卡（design-system 去 AI 味语言）：纸面点阵底 + 墨色巨字（轻微旋转 +
+    翠绿淡投影）+ Rough.js 手绘粉莓下划线。给密集干货打情绪标点，杀深底玻璃 AI 味。"""
     text = s.get("text", "")
     kicker = s.get("kicker", "")
     sub = s.get("sub", "")
-    fs = int(L["cw"] * 0.78 / max(2, len(text)))
-    css = ("@keyframes smash{0%{opacity:0;transform:scale(2.4)}55%{opacity:1;"
-           "transform:scale(.95)}100%{opacity:1;transform:scale(1)}}"
-           "@keyframes kin{0%,8%{opacity:0;transform:translateY(-28px)}16%{opacity:1;transform:none}100%{opacity:1}}"
-           "@keyframes sin{0%,42%{opacity:0;transform:translateY(28px)}52%{opacity:1;transform:none}100%{opacity:1}}")
-    glass = ("backdrop-filter:blur(20px);background:rgba(255,255,255,.07);"
-             "border:1.5px solid rgba(255,255,255,.16);border-radius:999px;"
-             "box-shadow:0 20px 60px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.12)")
-    kicker_html = (f'<div style="{glass};padding:16px 44px;font-size:{int(L["cw"]*0.035)}px;font-weight:700;'
-                   f'color:#cfe8d8;opacity:0;animation:kin 6s linear forwards">{kicker}</div>') if kicker else ""
-    sub_html = (f'<div style="font-family:Menlo,monospace;font-size:{int(L["cw"]*0.024)}px;'
-                f'color:rgba(255,255,255,.45);letter-spacing:.08em;opacity:0;'
-                f'animation:sin 6s linear forwards">{sub}</div>') if sub else ""
-    html = f"""
-<div style="position:absolute;inset:0;background:
-  radial-gradient(ellipse 700px 500px at 20% 0%,rgba(34,166,103,.28),transparent 60%),
-  radial-gradient(ellipse 600px 500px at 95% 90%,rgba(232,74,109,.20),transparent 55%),
-  linear-gradient(170deg,#101412,#0a0d0b)"></div>
-<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
-  justify-content:center;gap:52px;z-index:1;padding:0 5%">
-  {kicker_html}
-  <div class="smash" style="font-family:'YSBTH';font-size:{fs}px;font-weight:900;color:#fff;letter-spacing:4px;
-    text-shadow:0 0 70px rgba(34,166,103,.85),0 0 24px rgba(255,255,255,.4);opacity:0;
-    animation:smash .5s .15s cubic-bezier(.2,.9,.3,1.2) forwards">{text}</div>
-  {sub_html}
-</div>"""
-    return html, css
+    cw, ch = L["cw"], L["ch"]
+    land = cw > ch
+    fs = int(cw * (0.62 if land else 0.70) / max(2, len(text)))
+    fs = min(fs, int(ch * 0.26))
+    kfs = int(cw * (0.018 if land else 0.028))
+    svg = '<svg id="imrs" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1"></svg>'
+    js = (f"var svg=document.getElementById('imrs');var rc=rough.svg(svg);var CW={cw},CH={ch};"
+          f"svg.appendChild(rc.line(CW*0.22,CH*0.665,CW*0.78,CH*0.665,"
+          f"{{stroke:'{BERRY}',roughness:2.8,strokeWidth:9,bowing:2.5}}));")
+    kicker_html = (f'<div class="in" style="font-family:ui-monospace,Menlo,monospace;font-size:{kfs}px;'
+                   f'letter-spacing:.3em;color:{GREEN};font-weight:700;margin-bottom:{int(ch*0.045)}px">{kicker}</div>') if kicker else ""
+    sub_html = (f'<div class="in" style="font-family:ui-monospace,Menlo,monospace;font-size:{int(cw*0.022)}px;'
+                f'color:#666;letter-spacing:.08em;margin-top:{int(ch*0.05)}px">{sub}</div>') if sub else ""
+    html = (f'{PAPER_BG}{svg}'
+            f'<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;'
+            f'justify-content:center;z-index:2;padding:0 6%">'
+            f'{kicker_html}'
+            f'<div class="smash" style="font-family:YSBTH,sans-serif;font-size:{fs}px;color:{INK};'
+            f'letter-spacing:4px;transform:rotate(-2deg);text-shadow:3px 5px 0 rgba(34,166,103,.16)">{text}</div>'
+            f'{sub_html}</div>')
+    return html, "", js
 
 
 def win_ending(s, L):
@@ -695,28 +723,44 @@ def win_editorial(s, L):
         rows += (f'<div class="erow{on} in" style="animation-delay:{0.3 + i * 0.12:.2f}s">'
                  f'<div class="eno">{it.get("no", "")}</div>'
                  f'<div><span class="ecap">{_accent(it.get("cap", ""))}</span>{tag}{desc}</div></div>')
+    # 横版(cw>ch)字号若仍按 cw 比例会过大致标题换行+列表溢出底部；横版单独缩放并上移列表，竖版保持原值
+    land = cw > ch
+    h1_fs = 0.052 if land else 0.082
+    rows_top = 0.265 if land else 0.37
+    eno_col = 0.10 if land else 0.13
+    eno_fs = 0.052 if land else 0.072
+    cap_fs = 0.036 if land else 0.045
+    desc_fs = 0.019 if land else 0.024
+    row_pad = 0.021 if land else 0.03
+    kick_fs = 0.015 if land else 0.019
+    h1_top = 0.082 if land else 0.088
+    # 横版标题不换行(缩了字号能单行)，竖版保持可换行原行为
+    h1_right = f"right:{int(cw * 0.05)}px;white-space:nowrap;" if land else ""
+    # 纸面点阵底（design-system 去 AI 味）：墨色文字 + 翠绿/粉莓 accent，竖网格细线转深色
     css = (
-        f".egrid{{position:absolute;inset:0;background:repeating-linear-gradient(90deg,"
-        f"rgba(255,255,255,.04) 0 1px,transparent 1px {int(cw * 0.083)}px);opacity:.55}}"
-        f".ekick{{position:absolute;left:{int(cw * 0.05)}px;top:{int(ch * 0.055)}px;"
-        f"font:600 {int(cw * 0.019)}px ui-monospace,Menlo;letter-spacing:.3em;color:{GREEN_LIGHT}}}"
-        f".eh1{{position:absolute;left:{int(cw * 0.046)}px;top:{int(ch * 0.088)}px;"
-        f"font-family:'YSBTH';font-size:{int(cw * 0.082)}px;line-height:.98}}"
-        f".eidx{{position:absolute;right:{int(cw * 0.055)}px;top:{int(ch * 0.072)}px;"
-        f"font-family:'YSBTH';font-size:{int(cw * 0.028)}px;color:rgba(255,255,255,.22);letter-spacing:.1em}}"
-        f".erows{{position:absolute;left:{int(cw * 0.046)}px;right:{int(cw * 0.046)}px;top:{int(ch * 0.37)}px}}"
-        f".erow{{display:grid;grid-template-columns:{int(cw * 0.13)}px 1fr;align-items:baseline;"
-        f"gap:{int(cw * 0.024)}px;padding:{int(ch * 0.03)}px 0;border-top:1.5px solid rgba(255,255,255,.12)}}"
-        f".erow:last-child{{border-bottom:1.5px solid rgba(255,255,255,.12)}}"
-        f".eno{{font-family:'YSBTH';font-size:{int(cw * 0.072)}px;line-height:.8;color:rgba(255,255,255,.16)}}"
+        f".egrid{{position:absolute;inset:0;z-index:1;background:repeating-linear-gradient(90deg,"
+        f"rgba(0,0,0,.045) 0 1px,transparent 1px {int(cw * 0.083)}px);opacity:.6}}"
+        f".ekick{{position:absolute;left:{int(cw * 0.05)}px;top:{int(ch * 0.055)}px;z-index:2;"
+        f"font:700 {int(cw * kick_fs)}px ui-monospace,Menlo;letter-spacing:.3em;color:{GREEN}}}"
+        f".eh1{{position:absolute;left:{int(cw * 0.046)}px;top:{int(ch * h1_top)}px;{h1_right}z-index:2;"
+        f"font-family:'YSBTH';font-size:{int(cw * h1_fs)}px;line-height:1.0;color:{INK}}}"
+        f".eh1 .acc{{color:{GREEN};background:linear-gradient(transparent 72%,{PEACH} 72%,{PEACH} 96%,transparent 96%);padding:0 6px}}"
+        f".eidx{{position:absolute;right:{int(cw * 0.055)}px;top:{int(ch * 0.072)}px;z-index:2;"
+        f"font-family:'YSBTH';font-size:{int(cw * 0.028)}px;color:rgba(0,0,0,.18);letter-spacing:.1em}}"
+        f".erows{{position:absolute;left:{int(cw * 0.046)}px;right:{int(cw * 0.046)}px;top:{int(ch * rows_top)}px;z-index:2}}"
+        f".erow{{display:grid;grid-template-columns:{int(cw * eno_col)}px 1fr;align-items:baseline;"
+        f"gap:{int(cw * 0.024)}px;padding:{int(ch * row_pad)}px 0;border-top:1.5px solid rgba(0,0,0,.14)}}"
+        f".erow:last-child{{border-bottom:1.5px solid rgba(0,0,0,.14)}}"
+        f".eno{{font-family:'YSBTH';font-size:{int(cw * eno_fs)}px;line-height:.8;color:rgba(0,0,0,.15)}}"
         f".erow.on .eno{{color:{GREEN}}}"
-        f".ecap{{font-family:'YSBTH';font-size:{int(cw * 0.045)}px;letter-spacing:1px}}"
-        f".edesc{{font-size:{int(cw * 0.024)}px;color:rgba(255,255,255,.5);margin-top:8px}}"
-        f".etag{{display:inline-block;font:600 {int(cw * 0.017)}px ui-monospace,Menlo;letter-spacing:.15em;"
-        f"color:{GREEN_LIGHT};border:1.5px solid rgba(34,166,103,.5);border-radius:6px;"
-        f"padding:3px 12px;margin-left:14px;vertical-align:middle}}"
+        f".ecap{{font-family:'YSBTH';font-size:{int(cw * cap_fs)}px;letter-spacing:1px;color:{INK}}}"
+        f".ecap .acc{{color:{GREEN}}}"
+        f".edesc{{font-size:{int(cw * desc_fs)}px;color:#555;margin-top:8px;font-weight:600}}"
+        f".etag{{display:inline-block;font:700 {int(cw * 0.017)}px ui-monospace,Menlo;letter-spacing:.15em;"
+        f"color:{GREEN};border:1.5px solid rgba(34,166,103,.5);border-radius:6px;"
+        f"padding:3px 12px;margin-left:14px;vertical-align:middle;white-space:nowrap}}"
     )
-    html = (f'{BGGLOW}<div class="egrid"></div>'
+    html = (f'{PAPER_BG}<div class="egrid"></div>'
             f'<div class="ekick">{kicker}</div>'
             f'<div class="eh1">{title}</div>'
             f'<div class="eidx">{idx_label}</div>'
@@ -795,7 +839,9 @@ def build_html(scene, meta, W, H, workdir, idx, dur, chunks=None):
     brand = brand_config()
     brand.update(meta.get("brand") or {})
     L["brand"] = brand
-    inner, extra_css = WIN_BUILDERS[scene["type"]](scene, L)
+    _res = WIN_BUILDERS[scene["type"]](scene, L)
+    inner, extra_css = _res[0], _res[1]
+    win_js = _res[2] if len(_res) > 2 else ""  # 卡片场景（diagram/impact）的 Rough 手绘生成 JS
     bars_html, bars_css = _bars_html_css(chunks or [], dur)
     title_lines = meta.get("show_title") or []
     if len(title_lines) >= 2:
@@ -942,13 +988,15 @@ body{{background:transparent !important}}
   });
 })();
 """
-    # 按需引入开源库（demo_js 用到才引）：rough.js 手绘 / echarts 数据图（设计语言三支柱）
+    # 按需引入开源库：rough.js 手绘 / echarts 数据图（设计语言三支柱）。
+    # demo 场景走 demo_js；diagram/impact 等卡片场景走 win_js（win_* 返回的第三个值）。
+    all_js = (demo_js + "\n" + win_js).strip()
     libs = f'<script src="file://{gsap_path}"></script>\n'
-    if "rough" in demo_js:
+    if "rough" in all_js:
         libs += f'<script src="file://{os.path.join(ASSETS, "vendor", "rough.min.js")}"></script>\n'
-    if "echarts" in demo_js:
+    if "echarts" in all_js:
         libs += f'<script src="file://{os.path.join(ASSETS, "vendor", "echarts.min.js")}"></script>\n'
-    gsap_block = libs + f'<script>{takeover}\n{demo_js}</script>'
+    gsap_block = libs + f'<script>{takeover}\n{all_js}</script>'
     html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>{_frame_css(W, H, dur, L, title_lines, has_chapbar=bool(chapbar_block))}{extra_css}{bars_css}{hole_css}{prog_css}{memes_css}</style></head>
 <body>
