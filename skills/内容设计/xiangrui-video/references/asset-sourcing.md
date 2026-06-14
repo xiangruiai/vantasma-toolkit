@@ -78,8 +78,9 @@ python3 ~/.claude/skills/seedream-image/scripts/gen_image.py \
 ## 6. BGM（可选）
 
 ```bash
-python3 -m yt_dlp --proxy http://127.0.0.1:7897 -x --audio-format mp3 \
+python3 -m yt_dlp -x --audio-format mp3 \
   "ytsearch1:NCS no copyright funk upbeat" -o WORK/assets/bgm.mp3
+# 国内访问 YouTube 不通时加 --proxy http://你的代理地址
 ```
 
 ## 7. 常驻角色 / 手绘人物（seedream 生成 + char_cutout 抠图，2026-06-13 定）
