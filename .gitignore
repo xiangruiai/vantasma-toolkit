@@ -20,6 +20,13 @@ venv/
 *~
 .claude/
 
+# 密钥 / 凭据（绝不入库）
+.env
+.env.*
+*.env
+secrets.json
+credentials.json
+
 # wxchat / vchat 私人缓存 + 数据
 decrypted/
 decoded_voices/
