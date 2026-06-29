@@ -2,7 +2,7 @@
 
 > 万涂幻象出品的个人工具合集 · **仅供个人学习与研究用途**
 >
-> 含 1 个 CLI（vchat）+ 11 个 Skill（按领域分 4 类）。
+> 含 1 个 CLI（vchat）+ 11 个 Skill（按领域分 4 类）+ 关联开源 Web 应用。
 
 ---
 
@@ -58,6 +58,14 @@ vantasma-toolkit/
     └── 生活/
         └── didi-ride-skill/             飞书叫滴滴
 ```
+
+---
+
+## 关联开源项目
+
+| 项目 | 用途 | 地址 |
+|---|---|---|
+| 祥瑞白板录制工具 | 面向课程讲解、产品说明和异步沟通的白板录制工作台，集成白板、录制、摄像头、素材库、提词器和幻灯片画幅。 | [xiangruiai/xiangrui-whiteboard-recorder](https://github.com/xiangruiai/xiangrui-whiteboard-recorder) |
 
 ---
 
