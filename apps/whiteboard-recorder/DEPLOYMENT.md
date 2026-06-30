@@ -76,11 +76,19 @@ RESEND_API_KEY
 vantasma-whiteboard-recorder.pages.dev
 ```
 
+当前项目已经部署到：
+
+```text
+https://vantasma-whiteboard-recorder.pages.dev
+```
+
 5. 在 Cloudflare Pages 项目里添加 Custom domain：
 
 ```text
 whiteboard.xiangruiai.com
 ```
+
+当前 Cloudflare Pages 项目已登记这个 Custom domain，状态会等待 DNS 生效。
 
 ## 火山引擎 DNS 记录
 
@@ -91,13 +99,13 @@ whiteboard.xiangruiai.com
 | 记录类型 | `CNAME` |
 | 主机记录 | `whiteboard` |
 | 线路 | 默认 |
-| 记录值 | Cloudflare Pages 给出的 `*.pages.dev` 地址 |
+| 记录值 | `vantasma-whiteboard-recorder.pages.dev` |
 | TTL | 10 分钟 |
 
 示例：
 
 ```text
-whiteboard.xiangruiai.com CNAME <Cloudflare Pages 分配的 pages.dev 地址>
+whiteboard.xiangruiai.com CNAME vantasma-whiteboard-recorder.pages.dev
 ```
 
 如果 Cloudflare Pages 要求 TXT 验证，按页面提示再添加一条 TXT 记录即可。

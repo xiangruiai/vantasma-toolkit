@@ -10,7 +10,13 @@
 
 ## 在线地址
 
-计划绑定到：
+当前 Cloudflare Pages 地址：
+
+```text
+https://vantasma-whiteboard-recorder.pages.dev
+```
+
+计划绑定到自有域名：
 
 ```text
 https://whiteboard.xiangruiai.com
