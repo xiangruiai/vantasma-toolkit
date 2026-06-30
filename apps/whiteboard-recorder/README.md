@@ -4,7 +4,7 @@
 
 祥瑞白板录制工具是一套录制优先的白板应用。它把白板、摄像头、素材库、提词器、幻灯片画幅和视频导出整合在一起，目标是让讲解型内容可以更简单、稳定、好看地完成。
 
-当前网页版基于 React + Vite 构建，白板编辑能力使用 `@excalidraw/excalidraw`。我们在它之上做了自己的录制工作台、中文化菜单、素材库面板、摄像头浮窗、录制画幅、提词器、快捷键和导出体验。
+当前网页版基于 React + Vite 构建，白板编辑能力使用 `@excalidraw/excalidraw`。录制工作流、摄像头、提词器、画幅选择等功能逻辑受到张咋啦的白板录制工具 Excalicord 启发，并在此基础上改成面向中文讲解、课程录制和异步沟通的工作台。我们在它之上做了自己的中文化菜单、素材库面板、摄像头浮窗、录制画幅、提词器、快捷键和导出体验。
 
 本项目作为 `xiangruiai/vantasma-toolkit` 工具箱的一部分开源，源码目录为 `apps/whiteboard-recorder`。
 
@@ -84,8 +84,8 @@ npm run deploy:cloudflare
 特别说明：
 
 - Excalidraw 是 MIT License，本项目使用它作为白板编辑内核，并保留来源说明。
-- mp4-muxer、ffmpeg.wasm、MediaPipe、Mermaid、Vega 等项目按各自许可证使用。
-- Excalicord 对白板录制体验的探索给了我们产品方向上的启发。当前仓库从公开 fork 演化而来，发布时会持续保留来源说明，并逐步把产品实现收敛成祥瑞白板自己的系统。
+- mp4-muxer、ffmpeg.wasm、MediaPipe 等项目按各自许可证使用。
+- 张咋啦的 Excalicord 对白板录制功能逻辑和产品工作流给了我们直接启发。当前仓库从公开 fork 演化而来，发布时会持续保留来源说明，并逐步把产品实现收敛成祥瑞白板自己的系统。
 
 ## 操作说明
 

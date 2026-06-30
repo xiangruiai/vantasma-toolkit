@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-This product is being shaped as its own recording-first whiteboard app. It uses open-source projects as building blocks and keeps attribution separate from product branding.
+This product is being shaped as its own recording-first whiteboard app. It uses open-source projects as building blocks, takes product workflow inspiration from Zara Zhang's Excalicord, and keeps attribution separate from product branding.
 
 The application is published from a codebase that started as a public Excalicord fork and has since been adapted into Xiangrui Whiteboard Recorder. When a third-party project has its own license, that license continues to apply. When a referenced project has no detected license, keep the reference explicit and review the code path before broad redistribution.
 
@@ -45,7 +45,7 @@ The application is published from a codebase that started as a public Excalicord
 - Project reference: https://www.excalicord.com/
 - Repository in this workspace: https://github.com/thinking-one-hour-everyday/excalicord
 - License status: no license detected in the fork metadata at the time of review.
-- Use policy: referenced for product research, workflow comparison, and experience inspiration. This codebase currently carries historical fork lineage, so this notice is intentionally kept visible until those portions are either replaced, relicensed with permission, or otherwise clarified.
+- Use policy: referenced for product research, recording workflow, camera and teleprompter interaction, aspect-ratio recording setup, and experience inspiration. This codebase currently carries historical fork lineage, so this notice is intentionally kept visible until those portions are either replaced, relicensed with permission, or otherwise clarified.
 
 ## Smart Teleprompter
 
