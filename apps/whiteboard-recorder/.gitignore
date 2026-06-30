@@ -12,6 +12,7 @@ dist
 dist-ssr
 *.local
 third_party_sources/
+.wrangler-functions-test/
 
 # Editor directories and files
 .vscode/*

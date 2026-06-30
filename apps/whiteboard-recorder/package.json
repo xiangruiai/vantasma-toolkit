@@ -16,7 +16,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "cf:functions": "npx wrangler@latest pages functions build functions --outdir .wrangler-functions-test",
+    "deploy:cloudflare": "npm run build && npx wrangler@latest pages deploy dist --project-name vantasma-whiteboard-recorder"
   },
   "dependencies": {
     "@excalidraw/excalidraw": "^0.18.0",

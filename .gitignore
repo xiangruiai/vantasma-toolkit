@@ -55,5 +55,6 @@ dist/
 dist-ssr/
 .vercel/
 .wrangler/
+.wrangler-functions-test/
 .netlify/
 third_party_sources/
