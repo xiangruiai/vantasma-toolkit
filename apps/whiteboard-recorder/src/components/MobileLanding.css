@@ -1,0 +1,334 @@
+/**
+ * MobileLanding Styles
+ * Aesthetic: Warm Studio - light theme, premium, inviting
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Fraunces:wght@600;700&display=swap');
+
+.mobile-landing {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: #fefcf9;
+  color: #1c1917;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Noto Sans SC', 'Segoe UI', sans-serif;
+  position: relative;
+  overflow-x: hidden;
+  overflow-y: scroll;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Subtle ambient background */
+.mobile-bg {
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 80% 50% at 50% 0%, rgba(239, 68, 68, 0.06) 0%, transparent 50%),
+    radial-gradient(ellipse 60% 40% at 70% 100%, rgba(120, 113, 108, 0.05) 0%, transparent 50%);
+  pointer-events: none;
+}
+
+.mobile-content {
+  position: relative;
+  z-index: 1;
+  padding: 48px 24px 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  box-sizing: border-box;
+}
+
+.mobile-language-switcher {
+  align-self: flex-end;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 28px;
+  background: #ffffff;
+  border: 1px solid #e7e5e4;
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(28, 25, 23, 0.06);
+}
+
+.mobile-language-switcher button {
+  min-width: 44px;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: #78716c;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Noto Sans SC', 'Segoe UI', sans-serif;
+  cursor: pointer;
+}
+
+.mobile-language-switcher button.active {
+  background: #292524;
+  color: #ffffff;
+}
+
+/* Icon */
+.mobile-icon {
+  width: 56px;
+  height: 56px;
+  color: #1c1917;
+  margin-bottom: 20px;
+}
+
+.mobile-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* Headlines */
+.mobile-headline {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 36px;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  margin: 0 0 12px;
+  color: #1c1917;
+}
+
+.mobile-subheadline {
+  font-size: 16px;
+  line-height: 1.5;
+  color: #57534e;
+  margin: 0 0 24px;
+  max-width: 300px;
+}
+
+/* Desktop notice */
+.mobile-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 18px;
+  background: #f5f5f4;
+  border-radius: 12px;
+  font-size: 14px;
+  color: #57534e;
+  margin-bottom: 24px;
+}
+
+.notice-icon {
+  font-size: 18px;
+}
+
+/* Form */
+.mobile-form {
+  width: 100%;
+  max-width: 340px;
+}
+
+.form-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #44403c;
+  margin-bottom: 12px;
+}
+
+.form-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.mobile-form input {
+  flex: 1;
+  min-width: 0;
+  padding: 14px 16px;
+  background: white;
+  border: 1.5px solid #e7e5e4;
+  border-radius: 12px;
+  color: #1c1917;
+  font-size: 16px;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Noto Sans SC', 'Segoe UI', sans-serif;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.mobile-form input::placeholder {
+  color: #a8a29e;
+}
+
+.mobile-form input:focus {
+  border-color: #1c1917;
+  box-shadow: 0 0 0 3px rgba(28, 25, 23, 0.08);
+}
+
+.mobile-form input.input-error {
+  border-color: #ef4444;
+}
+
+.mobile-form input:disabled {
+  opacity: 0.6;
+}
+
+.mobile-form button {
+  padding: 14px 24px;
+  background: #1c1917;
+  border: none;
+  border-radius: 12px;
+  color: white;
+  font-size: 15px;
+  font-weight: 600;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Noto Sans SC', 'Segoe UI', sans-serif;
+  cursor: pointer;
+  transition: transform 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+
+.mobile-form button:active {
+  transform: scale(0.97);
+  background: #292524;
+}
+
+.mobile-form button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.form-error {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #dc2626;
+  text-align: left;
+}
+
+/* Success state */
+.mobile-success {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px;
+  background: #f0efff;
+  border: 1px solid #d0ccff;
+  border-radius: 16px;
+  max-width: 340px;
+  width: 100%;
+}
+
+.success-icon {
+  width: 40px;
+  height: 40px;
+  background: #6c63e6;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  color: white;
+}
+
+.mobile-success p {
+  margin: 0;
+  font-size: 15px;
+  color: #5146d8;
+}
+
+/* Alternatives */
+.mobile-alternatives {
+  margin-top: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.alt-divider {
+  font-size: 13px;
+  color: #a8a29e;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.alt-buttons {
+  display: flex;
+  gap: 12px;
+}
+
+.alt-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+  background: transparent;
+  border: 1.5px solid #e7e5e4;
+  border-radius: 10px;
+  color: #57534e;
+  font-size: 14px;
+  font-weight: 500;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Noto Sans SC', 'Segoe UI', sans-serif;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.alt-btn:active {
+  background: #f5f5f4;
+  border-color: #d6d3d1;
+  color: #1c1917;
+}
+
+.alt-btn span {
+  font-size: 16px;
+}
+
+/* Preview mockup - shows what recorded video looks like */
+.mobile-preview {
+  margin-top: 32px;
+  width: 100%;
+  max-width: 320px;
+  perspective: 1000px;
+}
+
+.preview-mockup {
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.12),
+    0 0 0 1px rgba(0, 0, 0, 0.06);
+  transform: rotateX(4deg);
+  transform-origin: center top;
+}
+
+.mockup-canvas {
+  aspect-ratio: 16 / 10;
+  background: #fefcf9;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Excalidraw-style whiteboard content */
+.whiteboard-content {
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  inset: 0;
+}
+
+/* Avatar in bottom-right corner with circular outline */
+.mockup-avatar {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  overflow: hidden;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  border: 3px solid white;
+  outline: 2px solid #1e1e1e;
+  background: white;
+}
+
+.mockup-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  display: block;
+}

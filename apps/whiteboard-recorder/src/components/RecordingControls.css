@@ -1,0 +1,476 @@
+/**
+ * RecordingControls Styles
+ * Aesthetic: Echo-native draggable glass dock
+ */
+
+.recording-controls {
+  position: fixed;
+  z-index: 950;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  box-sizing: border-box;
+  max-width: calc(100vw - 28px);
+  height: 48px;
+  padding: 5px;
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid rgba(28, 25, 23, 0.1);
+  border-radius: 14px;
+  box-shadow:
+    0 1px 1px rgba(28, 25, 23, 0.05),
+    0 10px 28px rgba(28, 25, 23, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(18px) saturate(1.18);
+  -webkit-backdrop-filter: blur(18px) saturate(1.18);
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Noto Sans SC', 'Segoe UI', sans-serif;
+  color: #292524;
+  cursor: grab;
+  user-select: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.recording-controls--docked {
+  top: var(--recording-dock-top, 16px);
+  right: var(--recording-dock-right, 24px);
+  transition: top 0.18s ease, right 0.18s ease, box-shadow 0.18s ease;
+}
+
+.recording-controls--dragged {
+  top: auto;
+  right: auto;
+}
+
+.recording-controls.dragging {
+  cursor: grabbing;
+  box-shadow:
+    0 1px 1px rgba(28, 25, 23, 0.05),
+    0 16px 44px rgba(28, 25, 23, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.75);
+}
+
+.app-container[data-theme='dark'] .recording-controls {
+  background: rgba(36, 33, 31, 0.86);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #f5f5f4;
+  box-shadow:
+    0 1px 1px rgba(0, 0, 0, 0.26),
+    0 14px 36px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.app-container[data-theme='dark'] .recording-controls.dragging {
+  box-shadow:
+    0 1px 1px rgba(0, 0, 0, 0.28),
+    0 18px 52px rgba(0, 0, 0, 0.38),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+/* ========== ICON BUTTONS ========== */
+.icon-btn {
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: #78716c;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, transform 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.icon-btn svg {
+  display: block;
+}
+
+.icon-btn:hover:not(:disabled) {
+  background: rgba(245, 245, 244, 0.96);
+  color: #44403c;
+}
+
+.app-container[data-theme='dark'] .icon-btn {
+  color: #c7c2bb;
+}
+
+.app-container[data-theme='dark'] .icon-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.09);
+  color: #fefcf9;
+}
+
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.icon-btn.active {
+  background: #292524;
+  color: white;
+}
+
+.app-container[data-theme='dark'] .icon-btn.active {
+  background: #f5f5f4;
+  color: #1c1917;
+}
+
+.icon-btn:disabled::after,
+.icon-btn:disabled::before {
+  display: none;
+}
+
+/* Cursor toggle - red when active */
+.cursor-toggle-btn.active {
+  background: transparent;
+  color: #ef4444;
+}
+
+.cursor-toggle-btn.active:hover {
+  background: #fef2f2;
+}
+
+.app-container[data-theme='dark'] .cursor-toggle-btn.active {
+  background: transparent;
+  color: #f87171;
+}
+
+.app-container[data-theme='dark'] .cursor-toggle-btn.active:hover {
+  background: rgba(248, 113, 113, 0.12);
+}
+
+/* ========== MAIN BUTTONS ========== */
+.control-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, box-shadow 0.15s, transform 0.15s, border-color 0.15s, color 0.15s;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Noto Sans SC', 'Segoe UI', sans-serif;
+  letter-spacing: 0;
+  flex: 0 0 auto;
+}
+
+.record-button {
+  background: #dc2626;
+  color: white;
+  box-shadow: 0 2px 8px rgba(220, 38, 38, 0.3);
+}
+
+.record-button:hover {
+  background: #b91c1c;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.4);
+}
+
+.recording-size-popover {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  width: min(380px, calc(100vw - 32px));
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(28, 25, 23, 0.14);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow:
+    0 18px 50px rgba(28, 25, 23, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(18px) saturate(1.16);
+  -webkit-backdrop-filter: blur(18px) saturate(1.16);
+  cursor: default;
+  white-space: normal;
+}
+
+.app-container[data-theme='dark'] .recording-size-popover {
+  background: rgba(31, 29, 27, 0.96);
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow:
+    0 22px 60px rgba(0, 0, 0, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.recording-size-row {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr) 18px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.recording-size-label,
+.recording-size-unit,
+.recording-size-cross {
+  color: #78716c;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.recording-size-cross {
+  text-align: center;
+  color: #57534e;
+}
+
+.app-container[data-theme='dark'] .recording-size-label,
+.app-container[data-theme='dark'] .recording-size-unit,
+.app-container[data-theme='dark'] .recording-size-cross {
+  color: #a8a29e;
+}
+
+.recording-size-input {
+  width: 100%;
+  height: 40px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid #e7e5e4;
+  background: #f8f7f5;
+  color: #292524;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  text-align: center;
+  outline: none;
+}
+
+.recording-size-input:focus {
+  border-color: #7c6df2;
+  box-shadow: 0 0 0 3px rgba(124, 109, 242, 0.16);
+}
+
+.app-container[data-theme='dark'] .recording-size-input {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #f5f5f4;
+}
+
+.recording-aspect-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.recording-aspect-option {
+  min-width: 0;
+  height: 58px;
+  padding: 6px 8px;
+  border: 1px solid #e7e5e4;
+  border-radius: 10px;
+  background: rgba(250, 250, 249, 0.92);
+  color: #292524;
+  cursor: pointer;
+  font: inherit;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.15s;
+}
+
+.recording-aspect-option:hover {
+  background: #f5f5f4;
+  border-color: #d6d3d1;
+}
+
+.recording-aspect-option.active {
+  background: #292524;
+  border-color: #292524;
+  color: #fff;
+}
+
+.recording-aspect-option span,
+.recording-aspect-option small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recording-aspect-option span {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.recording-aspect-option small {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #a8a29e;
+}
+
+.recording-aspect-option.active small {
+  color: rgba(255, 255, 255, 0.68);
+}
+
+.app-container[data-theme='dark'] .recording-aspect-option {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #f5f5f4;
+}
+
+.app-container[data-theme='dark'] .recording-aspect-option:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.app-container[data-theme='dark'] .recording-aspect-option.active {
+  background: #f5f5f4;
+  border-color: #f5f5f4;
+  color: #1c1917;
+}
+
+.app-container[data-theme='dark'] .recording-aspect-option.active small {
+  color: rgba(28, 25, 23, 0.62);
+}
+
+.stop-button {
+  background: #44403c;
+  color: white;
+}
+
+.stop-button:hover {
+  background: #292524;
+  transform: translateY(-1px);
+}
+
+/* Pause/Resume button */
+.pause-button {
+  background: #f59e0b;
+  color: white;
+  box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3);
+}
+
+.pause-button:hover {
+  background: #d97706;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
+}
+
+/* Cancel button for preview mode */
+.cancel-button {
+  background: transparent;
+  color: #78716c;
+  border: 1.5px solid #e7e5e4;
+}
+
+.cancel-button:hover {
+  background: #f5f5f4;
+  border-color: #d6d3d1;
+  color: #44403c;
+}
+
+/* Confirm button to start recording */
+.confirm-button {
+  background: #6c63e6;
+  color: white;
+  box-shadow: 0 2px 8px rgba(108, 99, 230, 0.3);
+}
+
+.confirm-button:hover {
+  background: #5146d8;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(108, 99, 230, 0.4);
+}
+
+/* ========== TIMER ========== */
+.recording-timer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #44403c;
+  font-family: 'SF Mono', 'Menlo', monospace;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 0 4px;
+}
+
+.app-container[data-theme='dark'] .recording-timer,
+.app-container[data-theme='dark'] .converting-status {
+  color: #e7e5e4;
+}
+
+.recording-dot {
+  width: 8px;
+  height: 8px;
+  background: #dc2626;
+  border-radius: 50%;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+/* Paused state - amber color, no animation */
+.recording-dot.paused {
+  background: #f59e0b;
+  animation: none;
+}
+
+.recording-timer.paused {
+  color: #78716c;
+}
+
+.app-container[data-theme='dark'] .recording-timer.paused {
+  color: #a8a29e;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.9); }
+}
+
+/* ========== CONVERTING STATUS ========== */
+.converting-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #44403c;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 12px;
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #e7e5e4;
+  border-top-color: #44403c;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.app-container[data-theme='dark'] .spinner {
+  border-color: rgba(255, 255, 255, 0.16);
+  border-top-color: #f5f5f4;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 920px) {
+  .recording-controls {
+    gap: 4px;
+    height: 54px;
+    max-width: calc(100vw - 20px);
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .recording-controls::-webkit-scrollbar {
+    display: none;
+  }
+
+  .recording-controls--docked {
+    top: 10px;
+    right: 14px;
+  }
+
+  .icon-btn {
+    width: 38px;
+    height: 38px;
+  }
+
+  .control-button {
+    height: 38px;
+    padding: 0 14px;
+  }
+
+}

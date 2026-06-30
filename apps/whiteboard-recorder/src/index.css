@@ -1,0 +1,60 @@
+/**
+ * Global Styles & CSS Reset
+ *
+ * This file sets up the base styles for the entire app.
+ * We remove default margins/padding and set up consistent defaults.
+ */
+
+/* Remove all default margins and padding */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;  /* Makes width/height include padding and border */
+}
+
+/* Root variables - could be used for theming later */
+:root {
+  /* Typography */
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Noto Sans SC', 'Segoe UI', sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+
+  /* Smooth font rendering */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  /* Colors */
+  --hx-paper: #f8f7f3;
+  --hx-surface: #ffffff;
+  --hx-ink: #23211f;
+  --hx-muted: #77716b;
+  --hx-line: #e7e1db;
+  --hx-accent: #6c63e6;
+  --hx-accent-strong: #5146d8;
+  --hx-accent-soft: #f0efff;
+  --hx-record: #e22d32;
+  --hx-shadow: 0 16px 44px rgba(35, 33, 31, 0.15);
+  --color-primary: var(--hx-accent);
+  --color-primary-light: var(--hx-accent-soft);
+  --color-danger: #ef4444;
+  --color-dark: #1a1a2e;
+}
+
+/* Ensure html and body fill the viewport */
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;  /* Prevent scrollbars */
+}
+
+/* The React root element */
+#root {
+  width: 100%;
+  height: 100%;
+}
+
+/* Prevent text selection during drag operations */
+.no-select {
+  user-select: none;
+  -webkit-user-select: none;
+}

@@ -51,3 +51,9 @@ tmp/
 
 # Node
 node_modules/
+dist/
+dist-ssr/
+.vercel/
+.wrangler/
+.netlify/
+third_party_sources/

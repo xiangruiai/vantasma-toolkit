@@ -1,0 +1,205 @@
+.slide-strip {
+  position: absolute;
+  right: calc(18px + var(--sidebar-avoidance-right, 0px));
+  top: 50%;
+  z-index: 960;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 50px;
+  padding: 9px 7px;
+  border: 1px solid rgba(35, 33, 31, 0.08);
+  border-radius: 15px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow:
+    0 1px 2px rgba(28, 25, 23, 0.05),
+    0 14px 34px rgba(28, 25, 23, 0.14);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  color: #4d4741;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Noto Sans SC", "Segoe UI", sans-serif;
+  transform: translateY(-50%);
+  transition: right 0.18s ease;
+  user-select: none;
+}
+
+.slide-strip-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  width: 100%;
+  color: #8a837c;
+  font-size: 10px;
+  font-weight: 680;
+  line-height: 1.1;
+  letter-spacing: 0;
+}
+
+.slide-strip-header svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.slide-strip-list {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  max-height: min(48vh, 360px);
+  overflow-y: auto;
+  width: 46px;
+  padding: 8px 6px;
+  margin: -8px -6px;
+  scrollbar-width: none;
+}
+
+.slide-strip-list::-webkit-scrollbar {
+  display: none;
+}
+
+.slide-strip-page,
+.slide-strip-add {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+  border: 1px solid rgba(35, 33, 31, 0.1);
+  background: #fbfaf8;
+  color: #6f6861;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 720;
+  line-height: 1;
+  transition:
+    background 0.14s ease,
+    border-color 0.14s ease,
+    color 0.14s ease,
+    transform 0.14s ease,
+    box-shadow 0.14s ease;
+}
+
+.slide-strip-page:hover,
+.slide-strip-add:hover {
+  border-color: rgba(108, 99, 230, 0.22);
+  background: #f0efff;
+  color: #5146d8;
+  transform: translateY(-1px);
+}
+
+.slide-strip-page.active {
+  border-color: rgba(108, 99, 230, 0.28);
+  background: #6c63e6;
+  color: #ffffff;
+  box-shadow: 0 8px 18px rgba(108, 99, 230, 0.24);
+}
+
+.slide-strip-page.active:hover {
+  background: #5146d8;
+  color: #ffffff;
+}
+
+.slide-strip-delete {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid #ffffff;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #ffffff;
+  opacity: 0;
+  transform: scale(0.8);
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+
+.slide-strip-page:hover .slide-strip-delete,
+.slide-strip-delete:focus-visible {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.slide-strip-delete svg {
+  width: 9px;
+  height: 9px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+.slide-strip-divider {
+  width: 24px;
+  height: 1px;
+  background: rgba(35, 33, 31, 0.09);
+}
+
+.slide-strip-add {
+  border-style: dashed;
+}
+
+.slide-strip-add svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.app-container[data-theme='dark'] .slide-strip {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(38, 36, 42, 0.92);
+  color: #e7e5e4;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.18),
+    0 18px 38px rgba(0, 0, 0, 0.32);
+}
+
+.app-container[data-theme='dark'] .slide-strip-header {
+  color: #a8a29e;
+}
+
+.app-container[data-theme='dark'] .slide-strip-page,
+.app-container[data-theme='dark'] .slide-strip-add {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: #d6d3d1;
+}
+
+.app-container[data-theme='dark'] .slide-strip-page:hover,
+.app-container[data-theme='dark'] .slide-strip-add:hover {
+  border-color: rgba(141, 134, 255, 0.38);
+  background: rgba(141, 134, 255, 0.16);
+  color: #dedbff;
+}
+
+.app-container[data-theme='dark'] .slide-strip-page.active {
+  border-color: rgba(141, 134, 255, 0.5);
+  background: #6c63e6;
+  color: #ffffff;
+}
+
+.app-container[data-theme='dark'] .slide-strip-divider {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+@media (max-width: 720px) {
+  .slide-strip {
+    right: calc(10px + var(--sidebar-avoidance-right, 0px));
+    width: 46px;
+    padding: 8px 6px;
+  }
+}

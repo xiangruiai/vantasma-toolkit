@@ -1,0 +1,51 @@
+.global-native-tooltip {
+  position: fixed;
+  z-index: 10000;
+  width: max-content;
+  max-width: min(22rem, calc(100vw - 24px));
+  padding: 0.5rem 0.625rem;
+  border: 1px solid rgba(39, 35, 32, 0.1);
+  border-radius: 0.625rem;
+  background: rgba(255, 255, 255, 0.96);
+  color: #292524;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 10px 28px rgba(39, 35, 32, 0.16);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 0.8125rem;
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  transform: translateX(-50%);
+  animation: native-tooltip-in 120ms ease-out;
+}
+
+.global-native-tooltip.top {
+  transform: translate(-50%, -100%);
+}
+
+.app-container[data-theme='dark'] .global-native-tooltip {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(34, 31, 30, 0.96);
+  color: #f7f2ee;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.24),
+    0 14px 36px rgba(0, 0, 0, 0.38);
+}
+
+@keyframes native-tooltip-in {
+  from {
+    opacity: 0;
+    translate: 0 3px;
+  }
+
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}

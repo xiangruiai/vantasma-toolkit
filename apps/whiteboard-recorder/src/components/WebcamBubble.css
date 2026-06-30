@@ -1,0 +1,41 @@
+/**
+ * WebcamBubble Styles
+ * Aesthetic: Warm Studio - soft, floating, premium
+ */
+
+.webcam-bubble {
+  position: absolute;
+  z-index: 1000;
+  overflow: hidden;
+  border: none;
+  box-shadow: none;
+  cursor: grab;
+  transition: transform 0.2s ease;
+}
+
+.webcam-bubble.circle {
+  border-radius: 50%;
+}
+
+.webcam-bubble.square {
+  border-radius: 18px;
+}
+
+.webcam-bubble.dragging {
+  cursor: grabbing;
+  transform: scale(1.02);
+}
+
+.webcam-bubble:hover {
+}
+
+.webcam-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+
+.drag-handle {
+  display: none;
+}
