@@ -62,14 +62,6 @@ cd apps/whiteboard-recorder
 npm run deploy:cloudflare
 ```
 
-部署后需要在 Cloudflare Pages 的环境变量中配置：
-
-```text
-RESEND_API_KEY
-```
-
-否则移动端“发送桌面打开链接”这个功能会返回邮件服务未配置。
-
 4. 部署成功后会得到一个 `*.pages.dev` 地址，例如：
 
 ```text

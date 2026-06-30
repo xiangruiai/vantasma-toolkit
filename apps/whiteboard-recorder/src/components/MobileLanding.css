@@ -1,60 +1,63 @@
 /**
  * MobileLanding Styles
- * Aesthetic: Warm Studio - light theme, premium, inviting
+ * A compact mobile notice for the computer web version.
  */
-
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Fraunces:wght@600;700&display=swap');
 
 .mobile-landing {
   min-height: 100vh;
   min-height: 100dvh;
-  background: #fefcf9;
-  color: #1c1917;
+  background: #fbfaf8;
+  color: #242120;
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Noto Sans SC', 'Segoe UI', sans-serif;
   position: relative;
   overflow-x: hidden;
-  overflow-y: scroll;
+  overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
 
-/* Subtle ambient background */
 .mobile-bg {
   position: fixed;
   inset: 0;
   background:
-    radial-gradient(ellipse 80% 50% at 50% 0%, rgba(239, 68, 68, 0.06) 0%, transparent 50%),
-    radial-gradient(ellipse 60% 40% at 70% 100%, rgba(120, 113, 108, 0.05) 0%, transparent 50%);
+    radial-gradient(circle at 20% 10%, rgba(105, 92, 231, 0.14), transparent 34%),
+    radial-gradient(circle at 90% 18%, rgba(239, 68, 68, 0.08), transparent 30%),
+    linear-gradient(180deg, #fffefd 0%, #f5f3ef 100%);
   pointer-events: none;
 }
 
 .mobile-content {
   position: relative;
   z-index: 1;
-  padding: 48px 24px 60px;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 28px 20px;
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   text-align: center;
   box-sizing: border-box;
 }
 
 .mobile-language-switcher {
-  align-self: flex-end;
+  position: fixed;
+  top: max(18px, env(safe-area-inset-top));
+  right: 18px;
+  z-index: 2;
   display: flex;
   gap: 4px;
   padding: 4px;
-  margin-bottom: 28px;
   background: #ffffff;
   border: 1px solid #e7e5e4;
-  border-radius: 10px;
-  box-shadow: 0 4px 16px rgba(28, 25, 23, 0.06);
+  border-radius: 12px;
+  box-shadow: 0 10px 24px rgba(36, 33, 32, 0.08);
 }
 
 .mobile-language-switcher button {
   min-width: 44px;
-  padding: 7px 10px;
+  padding: 8px 10px;
   border: none;
-  border-radius: 7px;
+  border-radius: 9px;
   background: transparent;
   color: #78716c;
   font-size: 12px;
@@ -64,271 +67,168 @@
 }
 
 .mobile-language-switcher button.active {
-  background: #292524;
+  background: #2c2826;
   color: #ffffff;
 }
 
-/* Icon */
+.mobile-card {
+  width: min(100%, 390px);
+  box-sizing: border-box;
+  padding: 34px 24px 26px;
+  border: 1px solid rgba(36, 33, 32, 0.08);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow:
+    0 24px 60px rgba(36, 33, 32, 0.12),
+    0 1px 0 rgba(255, 255, 255, 0.92) inset;
+  backdrop-filter: blur(18px);
+}
+
 .mobile-icon {
   width: 56px;
   height: 56px;
-  color: #1c1917;
-  margin-bottom: 20px;
+  display: grid;
+  place-items: center;
+  margin: 0 auto 18px;
+  border-radius: 18px;
+  color: #6b5ce7;
+  background: #f0edff;
+  box-shadow: 0 12px 24px rgba(107, 92, 231, 0.16);
 }
 
 .mobile-icon svg {
-  width: 100%;
-  height: 100%;
+  width: 34px;
+  height: 34px;
 }
 
-/* Headlines */
-.mobile-headline {
-  font-family: 'Fraunces', Georgia, serif;
-  font-size: 36px;
+.mobile-kicker {
+  margin: 0 0 10px;
+  color: #6b5ce7;
+  font-size: 13px;
   font-weight: 700;
-  line-height: 1.1;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
+}
+
+.mobile-headline {
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.18;
+  letter-spacing: 0;
   margin: 0 0 12px;
-  color: #1c1917;
+  color: #242120;
 }
 
 .mobile-subheadline {
   font-size: 16px;
-  line-height: 1.5;
+  line-height: 1.65;
   color: #57534e;
-  margin: 0 0 24px;
-  max-width: 300px;
+  margin: 0 auto 22px;
+  max-width: 320px;
 }
 
-/* Desktop notice */
 .mobile-notice {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 18px;
-  background: #f5f5f4;
-  border-radius: 12px;
-  font-size: 14px;
-  color: #57534e;
-  margin-bottom: 24px;
+  justify-content: center;
+  gap: 10px;
+  padding: 13px 16px;
+  background: #f7f5ff;
+  border: 1px solid #ded9ff;
+  border-radius: 16px;
+  font-size: 15px;
+  font-weight: 650;
+  color: #4f46c8;
+  margin-bottom: 22px;
 }
 
 .notice-icon {
-  font-size: 18px;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  flex: 0 0 auto;
 }
 
-/* Form */
-.mobile-form {
+.notice-icon svg {
   width: 100%;
-  max-width: 340px;
+  height: 100%;
 }
 
-.form-label {
-  font-size: 14px;
-  font-weight: 500;
-  color: #44403c;
-  margin-bottom: 12px;
-}
-
-.form-row {
-  display: flex;
-  gap: 8px;
-  width: 100%;
-}
-
-.mobile-form input {
-  flex: 1;
-  min-width: 0;
-  padding: 14px 16px;
-  background: white;
-  border: 1.5px solid #e7e5e4;
-  border-radius: 12px;
-  color: #1c1917;
-  font-size: 16px;
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Noto Sans SC', 'Segoe UI', sans-serif;
-  outline: none;
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-
-.mobile-form input::placeholder {
-  color: #a8a29e;
-}
-
-.mobile-form input:focus {
-  border-color: #1c1917;
-  box-shadow: 0 0 0 3px rgba(28, 25, 23, 0.08);
-}
-
-.mobile-form input.input-error {
-  border-color: #ef4444;
-}
-
-.mobile-form input:disabled {
-  opacity: 0.6;
-}
-
-.mobile-form button {
-  padding: 14px 24px;
-  background: #1c1917;
-  border: none;
-  border-radius: 12px;
-  color: white;
-  font-size: 15px;
-  font-weight: 600;
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Noto Sans SC', 'Segoe UI', sans-serif;
-  cursor: pointer;
-  transition: transform 0.15s, background 0.15s;
-  white-space: nowrap;
-}
-
-.mobile-form button:active {
-  transform: scale(0.97);
-  background: #292524;
-}
-
-.mobile-form button:disabled {
-  opacity: 0.7;
-  cursor: not-allowed;
-}
-
-.form-error {
-  margin-top: 8px;
-  font-size: 13px;
-  color: #dc2626;
-  text-align: left;
-}
-
-/* Success state */
-.mobile-success {
+.mobile-actions {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 12px;
-  padding: 24px;
-  background: #f0efff;
-  border: 1px solid #d0ccff;
-  border-radius: 16px;
-  max-width: 340px;
   width: 100%;
+  max-width: 340px;
+  margin: 0 auto;
 }
 
-.success-icon {
-  width: 40px;
-  height: 40px;
-  background: #6c63e6;
-  border-radius: 50%;
+.mobile-actions-label {
+  margin: 0;
+  color: #78716c;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.mobile-action-buttons {
+  display: flex;
+  gap: 12px;
+  width: 100%;
+  justify-content: center;
+}
+
+.mobile-action-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 20px;
-  color: white;
-}
-
-.mobile-success p {
-  margin: 0;
-  font-size: 15px;
-  color: #5146d8;
-}
-
-/* Alternatives */
-.mobile-alternatives {
-  margin-top: 24px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-}
-
-.alt-divider {
-  font-size: 13px;
-  color: #a8a29e;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-}
-
-.alt-buttons {
-  display: flex;
-  gap: 12px;
-}
-
-.alt-btn {
-  display: flex;
-  align-items: center;
   gap: 6px;
-  padding: 10px 16px;
-  background: transparent;
+  min-height: 44px;
+  flex: 1 1 0;
+  padding: 11px 14px;
+  background: #ffffff;
   border: 1.5px solid #e7e5e4;
-  border-radius: 10px;
+  border-radius: 14px;
   color: #57534e;
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 650;
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Noto Sans SC', 'Segoe UI', sans-serif;
   cursor: pointer;
   transition: all 0.15s;
 }
 
-.alt-btn:active {
+.mobile-action-btn.primary {
+  background: #6b5ce7;
+  border-color: #6b5ce7;
+  color: white;
+}
+
+.mobile-action-btn:active {
   background: #f5f5f4;
   border-color: #d6d3d1;
   color: #1c1917;
+  transform: scale(0.98);
 }
 
-.alt-btn span {
+.mobile-action-btn.primary:active {
+  background: #5d4fd4;
+  color: white;
+}
+
+.mobile-action-btn span {
   font-size: 16px;
 }
 
-/* Preview mockup - shows what recorded video looks like */
-.mobile-preview {
-  margin-top: 32px;
-  width: 100%;
-  max-width: 320px;
-  perspective: 1000px;
-}
+@media (max-width: 360px) {
+  .mobile-card {
+    padding: 30px 18px 22px;
+    border-radius: 24px;
+  }
 
-.preview-mockup {
-  border-radius: 16px;
-  overflow: hidden;
-  box-shadow:
-    0 8px 32px rgba(0, 0, 0, 0.12),
-    0 0 0 1px rgba(0, 0, 0, 0.06);
-  transform: rotateX(4deg);
-  transform-origin: center top;
-}
+  .mobile-headline {
+    font-size: 27px;
+  }
 
-.mockup-canvas {
-  aspect-ratio: 16 / 10;
-  background: #fefcf9;
-  position: relative;
-  overflow: hidden;
-}
-
-/* Excalidraw-style whiteboard content */
-.whiteboard-content {
-  width: 100%;
-  height: 100%;
-  position: absolute;
-  inset: 0;
-}
-
-/* Avatar in bottom-right corner with circular outline */
-.mockup-avatar {
-  position: absolute;
-  bottom: 12px;
-  right: 12px;
-  width: 64px;
-  height: 64px;
-  border-radius: 50%;
-  overflow: hidden;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
-  border: 3px solid white;
-  outline: 2px solid #1e1e1e;
-  background: white;
-}
-
-.mockup-avatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: top center;
-  display: block;
+  .mobile-action-buttons {
+    flex-direction: column;
+  }
 }

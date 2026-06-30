@@ -66,11 +66,7 @@ Build output directory: dist
 Root directory: apps/whiteboard-recorder
 ```
 
-本项目带有 Cloudflare Pages Functions，用于移动端发送桌面打开链接。上线时需要在 Cloudflare Pages 里配置：
-
-```text
-RESEND_API_KEY
-```
+移动端当前是纯前端提示页，会提醒访问者在电脑浏览器打开网页版使用，不需要邮件服务或后端 API。
 
 本地也可以在子目录里直接部署：
 

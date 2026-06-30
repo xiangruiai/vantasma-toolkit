@@ -96,11 +96,6 @@ export function trackSettingsChanged(setting: string, value: string) {
   posthog.capture('settings_changed', { setting, value });
 }
 
-// Track mobile email sent
-export function trackMobileEmailSent(success: boolean) {
-  posthog.capture('mobile_email_sent', { success });
-}
-
 // Track welcome modal dismissed
 export function trackWelcomeModalDismissed() {
   posthog.capture('welcome_modal_dismissed');
