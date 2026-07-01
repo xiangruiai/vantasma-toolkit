@@ -1,107 +1,66 @@
 # 祥瑞白板录制工具
 
-> 万涂幻象出品的白板录制工作台，面向课程讲解、产品说明、异步沟通和视觉化演示。
+> 一个面向课程讲解、产品说明和异步沟通的网页端白板录制工具。
 
-祥瑞白板录制工具是一套录制优先的白板应用。它把白板、摄像头、素材库、提词器、幻灯片画幅和视频导出整合在一起，目标是让讲解型内容可以更简单、稳定、好看地完成。
+祥瑞白板录制工具把白板、摄像头、录制画幅、幻灯片、素材库和提词器放在同一个工作台里。它适合用来录制讲解视频、产品演示、课程片段、异步说明和知识卡片式内容。
 
-当前网页版基于 React + Vite 构建，白板编辑能力使用 `@excalidraw/excalidraw`。录制工作流、摄像头、提词器、画幅选择等功能逻辑受到张咋啦的白板录制工具 Excalicord 启发，并在此基础上改成面向中文讲解、课程录制和异步沟通的工作台。我们在它之上做了自己的中文化菜单、素材库面板、摄像头浮窗、录制画幅、提词器、快捷键和导出体验。
-
-本项目作为 `xiangruiai/vantasma-toolkit` 工具箱的一部分开源，源码目录为 `apps/whiteboard-recorder`。
-
-## 在线地址
-
-当前 Cloudflare Pages 地址：
-
-```text
-https://vantasma-whiteboard-recorder.pages.dev
-```
-
-计划绑定到自有域名：
-
-```text
-https://whiteboard.xiangruiai.com
-```
-
-现有个人主页仍然保留在：
-
-```text
-https://www.xiangruiai.com
-```
-
-域名绑定和部署步骤见 [DEPLOYMENT.md](./DEPLOYMENT.md)。
+本项目是 `xiangruiai/vantasma-toolkit` 的一部分，源码目录为 `apps/whiteboard-recorder`。
 
 ## 功能
 
-- 白板绘制与素材库
-- 白板录屏与 MP4 导出
-- 摄像头浮窗，支持位置、尺寸和形状调整
-- 录制画幅选择，支持 16:9、4:3、3:4、9:16、1:1 和自定义
-- 幻灯片式画幅管理
-- 提词器浮层
-- 中英文界面切换
-- 深色、浅色和跟随系统主题
+- 白板绘制：基于 Excalidraw，支持手绘风图形、文字、图片、画框和素材库。
+- 录制画幅：支持 16:9、4:3、3:4、9:16、1:1 和自定义画幅。
+- 幻灯片：按录制画幅组织白板内容，录制时可在幻灯片之间切换。
+- 摄像头：支持摄像头浮窗、位置调整、尺寸调整、圆形和方形显示。
+- 提词器：支持讲稿、逐词高亮、轻量模式和语音跟随。
+- 素材库：内置个人素材库和公共素材库入口，可把素材添加到白板。
+- 主题与语言：支持浅色、深色、跟随系统，以及中文 / English 切换。
+- 导出：在浏览器内完成录制并导出视频文件。
+- 移动端提示：手机访问时显示网页端使用提示，避免误以为需要安装 App。
 
-## 开发
+## 本地运行
 
 ```bash
-cd apps/whiteboard-recorder
+git clone https://github.com/xiangruiai/vantasma-toolkit.git
+cd vantasma-toolkit/apps/whiteboard-recorder
 npm install
 npm run dev
 ```
 
+开发服务器启动后，用电脑浏览器打开终端里显示的本地地址。摄像头、麦克风和录屏权限需要浏览器授权。
+
 ## 构建
 
 ```bash
-cd apps/whiteboard-recorder
 npm run build
 ```
 
-## 部署
-
-推荐部署到 Cloudflare Pages：
-
-```text
-Build command: npm ci && npm run build
-Build output directory: dist
-Root directory: apps/whiteboard-recorder
-```
-
-移动端当前是纯前端提示页，会提醒访问者在电脑浏览器打开网页版使用，不需要邮件服务或后端 API。
-
-本地也可以在子目录里直接部署：
-
-```bash
-cd apps/whiteboard-recorder
-npm run deploy:cloudflare
-```
-
-`public/_redirects` 已处理 SPA 回退，`public/_headers` 已加入基础安全与媒体权限策略。
-
-## 开源说明
-
-本项目公开源码，并尊重所使用开源项目的许可证。第三方来源、许可证和使用边界记录在 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。
-
-特别说明：
-
-- Excalidraw 是 MIT License，本项目使用它作为白板编辑内核，并保留来源说明。
-- mp4-muxer、ffmpeg.wasm、MediaPipe 等项目按各自许可证使用。
-- 张咋啦的 Excalicord 对白板录制功能逻辑和产品工作流给了我们直接启发。当前仓库从公开 fork 演化而来，发布时会持续保留来源说明，并逐步把产品实现收敛成祥瑞白板自己的系统。
+构建产物会输出到 `dist/`。
 
 ## 操作说明
 
-基础使用说明见 [public/docs/operation-guide.md](./public/docs/operation-guide.md)，应用内“关于”面板也会提供入口。
+操作说明见 [public/docs/operation-guide.md](./public/docs/operation-guide.md)，应用内的帮助入口也会展示同一套说明。
 
-## 关于万涂幻象
+常用流程：
 
-**万涂幻象** 是李祥瑞主理的飞书多维表格 + AI 落地社区，长期沉淀多维表格教程、模板、知识库、AI 工作流和业务自动化实践。
+1. 在白板上整理讲解内容。
+2. 添加或选择幻灯片画幅。
+3. 打开摄像头和提词器。
+4. 点击录制，选择画幅并开始录制。
+5. 结束录制后导出视频。
 
-| | |
-|---|---|
-| 个人主页 | https://www.xiangruiai.com |
-| 开源工具箱 | https://github.com/xiangruiai/vantasma-toolkit/tree/main/apps/whiteboard-recorder |
-| 开源知识库 | https://vantasma.feishu.cn/wiki/space/7574356946532925441 |
-| 联系邮箱 | li@xiangruiai.com |
+## 开源与致谢
 
-## License
+本项目公开源码，并尊重所使用开源项目的许可证。完整第三方来源、许可证和修改说明见 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。
 
-[MIT](./LICENSE) for original code authored for Xiangrui Whiteboard Recorder, with third-party components governed by their own licenses and notices.
+特别感谢：
+
+- [Excalidraw](https://github.com/excalidraw/excalidraw)：提供优秀的开源白板编辑能力。
+- [mp4-muxer](https://github.com/Vanilagy/mp4-muxer)：用于浏览器内 MP4 封装。
+- [MediaPipe Tasks Vision](https://developers.google.com/mediapipe)：用于浏览器侧视觉能力实验。
+- [smart-teleprompter](https://github.com/Voumellis/smart-teleprompter)：为提词器能力提供参考和基础。
+- [Excalicord](https://www.excalicord.com/)：对白板录制、画幅、摄像头和提词器工作流给了很重要的启发。
+
+## 许可证
+
+本项目中由祥瑞白板录制工具新增的代码使用 [MIT License](./LICENSE)。第三方组件按各自许可证使用。

@@ -1,14 +1,14 @@
 # vantasma-toolkit
 
-> 万涂幻象出品的个人工具合集 · **仅供个人学习与研究用途**
+> 万涂幻象开源工具箱。
 >
 > 含 1 个 CLI（vchat）+ 1 个 Web 应用（祥瑞白板录制工具）+ 11 个 Skill（按领域分 4 类）。
 
 ---
 
-## ⚠️ 免责声明 · Personal Learning Only
+## ⚠️ 使用边界
 
-**本仓库所有内容仅供个人学习与研究目的。**
+本仓库包含白板录制、内容生产、飞书办公、本地数据处理等工具。涉及本地数据读取、平台数据导出或自动化操作的能力，请只在自己的设备、自己的账号、自己拥有合法访问权的数据上使用。
 
 1. 工具只在使用者自己的设备 / 自己拥有合法访问权的数据上操作。**严禁**用于：
    - 未经他人同意访问、解析他人账号或数据
@@ -68,11 +68,18 @@ vantasma-toolkit/
 面向课程讲解、产品说明和异步沟通的白板录制工作台，集成白板、录制、摄像头、素材库、提词器和幻灯片画幅。
 
 - 源码目录：[`apps/whiteboard-recorder`](apps/whiteboard-recorder)
-- 计划域名：`https://whiteboard.xiangruiai.com`
-- 部署说明：[`apps/whiteboard-recorder/DEPLOYMENT.md`](apps/whiteboard-recorder/DEPLOYMENT.md)
+- 操作说明：[`apps/whiteboard-recorder/public/docs/operation-guide.md`](apps/whiteboard-recorder/public/docs/operation-guide.md)
 - 第三方来源说明：[`apps/whiteboard-recorder/THIRD_PARTY_NOTICES.md`](apps/whiteboard-recorder/THIRD_PARTY_NOTICES.md)
 
-本工具作为 `vantasma-toolkit` 的一部分开源，不再维护单独工具仓库。
+这是一个网页端白板录制工具，不需要桌面端安装。移动端访问时会提示在电脑浏览器中使用，移动端体验后续再完善。
+
+```bash
+cd apps/whiteboard-recorder
+npm install
+npm run dev
+```
+
+本工具作为 `vantasma-toolkit` 的一部分开源，不再维护单独工具仓库。白板编辑基于 Excalidraw，录制、摄像头、提词器和幻灯片工作流参考了开源生态与 Excalicord 的产品思路，具体来源和许可证说明见第三方来源说明。
 
 ---
 
