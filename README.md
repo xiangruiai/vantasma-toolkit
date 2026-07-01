@@ -68,6 +68,7 @@ vantasma-toolkit/
 面向课程讲解、产品说明和异步沟通的白板录制工作台，集成白板、录制、摄像头、素材库、提词器和幻灯片画幅。
 
 - 源码目录：[`apps/whiteboard-recorder`](apps/whiteboard-recorder)
+- 在线使用：[https://whiteboard.xiangruiai.com](https://whiteboard.xiangruiai.com)
 - 安装使用：[`apps/whiteboard-recorder/README.md`](apps/whiteboard-recorder/README.md)
 - 操作说明：[`apps/whiteboard-recorder/public/docs/operation-guide.md`](apps/whiteboard-recorder/public/docs/operation-guide.md)
 - 第三方来源说明：[`apps/whiteboard-recorder/THIRD_PARTY_NOTICES.md`](apps/whiteboard-recorder/THIRD_PARTY_NOTICES.md)

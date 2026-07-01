@@ -3,7 +3,7 @@
   "private": false,
   "version": "0.0.0",
   "description": "祥瑞白板录制工具，一个面向课程讲解和异步沟通的白板录制工作台。",
-  "homepage": "https://github.com/xiangruiai/vantasma-toolkit/tree/main/apps/whiteboard-recorder",
+  "homepage": "https://whiteboard.xiangruiai.com",
   "repository": {
     "type": "git",
     "url": "https://github.com/xiangruiai/vantasma-toolkit.git",

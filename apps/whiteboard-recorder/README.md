@@ -6,6 +6,8 @@
 
 本项目是 `xiangruiai/vantasma-toolkit` 的一部分，源码目录为 `apps/whiteboard-recorder`。
 
+在线使用：[https://whiteboard.xiangruiai.com](https://whiteboard.xiangruiai.com)
+
 ## 功能
 
 - 白板绘制：基于 Excalidraw，支持手绘风图形、文字、图片、画框和素材库。
