@@ -68,16 +68,29 @@ vantasma-toolkit/
 面向课程讲解、产品说明和异步沟通的白板录制工作台，集成白板、录制、摄像头、素材库、提词器和幻灯片画幅。
 
 - 源码目录：[`apps/whiteboard-recorder`](apps/whiteboard-recorder)
+- 安装使用：[`apps/whiteboard-recorder/README.md`](apps/whiteboard-recorder/README.md)
 - 操作说明：[`apps/whiteboard-recorder/public/docs/operation-guide.md`](apps/whiteboard-recorder/public/docs/operation-guide.md)
 - 第三方来源说明：[`apps/whiteboard-recorder/THIRD_PARTY_NOTICES.md`](apps/whiteboard-recorder/THIRD_PARTY_NOTICES.md)
 
 这是一个网页端白板录制工具，不需要桌面端安装。移动端访问时会提示在电脑浏览器中使用，移动端体验后续再完善。
 
 ```bash
-cd apps/whiteboard-recorder
+git clone https://github.com/xiangruiai/vantasma-toolkit.git
+cd vantasma-toolkit/apps/whiteboard-recorder
 npm install
 npm run dev
 ```
+
+常用命令：
+
+```bash
+cd apps/whiteboard-recorder
+npm run dev      # 本地开发
+npm run build    # 构建 dist/
+npm run preview  # 本地预览构建产物
+```
+
+部署时把 `apps/whiteboard-recorder` 作为项目根目录，构建命令用 `npm install && npm run build`，静态输出目录为 `dist`。摄像头、麦克风和录屏能力需要在 `localhost` 或 HTTPS 域名下使用。
 
 本工具作为 `vantasma-toolkit` 的一部分开源，不再维护单独工具仓库。白板编辑基于 Excalidraw，录制、摄像头、提词器和幻灯片工作流参考了开源生态与 Excalicord 的产品思路，具体来源和许可证说明见第三方来源说明。
 
