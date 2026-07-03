@@ -91,7 +91,7 @@ def find_quote_in_chat(text: str, sender_hint: str,
     segments = [s.strip() for s in re.split(r"\s*/\s*", text) if s.strip()]
     snippets = []
     for seg in segments:
-        clean = re.sub(r'[「」『』"\s]', "", seg)
+        clean = re.sub(r'[“”『』"\s]', "", seg)
         if len(clean) >= 4:
             snippets.append(clean[:12])
             if len(clean) >= 24:
@@ -102,7 +102,7 @@ def find_quote_in_chat(text: str, sender_hint: str,
         return []
     hits = []
     for ts, sender, content, ln in msgs:
-        content_clean = re.sub(r'[「」『』"\s]', "", content)
+        content_clean = re.sub(r'[“”『』"\s]', "", content)
         if any(sn in content_clean for sn in snippets):
             hits.append((ts, sender, ln))
     return hits
@@ -173,7 +173,7 @@ def main():
             in_group = any(sender_matches(snd, name) for snd in senders_in_range)
             if not in_group:
                 issues.append(
-                    f"节 {no} [{time_str}] cast「{name}」在时段内没找到发言"
+                    f"节 {no} [{time_str}] cast“{name}”在时段内没找到发言"
                 )
                 warn += 1
 
@@ -191,7 +191,7 @@ def main():
             if not hits:
                 issues.append(
                     f"节 {no} [{time_str}] quote 文字在原文找不到: "
-                    f"「{text[:30]}」by {who}"
+                    f"“{text[:30]}”by {who}"
                 )
                 err += 1
                 continue
@@ -210,7 +210,7 @@ def main():
                 issues.append(
                     f"节 {no} [{time_str}] quote sender 错位: "
                     f"story 写 '{who_core}'，原文是 '{actual_senders}' "
-                    f"line {hits[0][2]}「{text[:30]}」"
+                    f"line {hits[0][2]}“{text[:30]}”"
                 )
                 err += 1
             else:
@@ -218,7 +218,7 @@ def main():
                     sorted({ts_to_hhmm(ts) for ts, _, _ in hits}))
                 issues.append(
                     f"节 {no} [{time_str}] quote 时间跨节: "
-                    f"实际在 {actual_times}「{text[:30]}」"
+                    f"实际在 {actual_times}“{text[:30]}”"
                 )
                 warn += 1
 

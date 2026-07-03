@@ -74,4 +74,4 @@ fi
 
 echo ""
 echo "✅ 检查结束。全绿后把本目录拷到 ~/.claude/skills/ 并重启 Claude Code，"
-echo "   说「做 XX 群的活跃度表」即可触发。"
+echo "   说“做 XX 群的活跃度表”即可触发。"

@@ -66,7 +66,7 @@
 | 8 | wordCloud | 发言关键词云图 | `{"table_name":"发言记录汇总","count_all":true,"group_by":[{"field_name":"内容","mode":"integrated"}]}`（不要传 sort，CLI 校验 sort 必须带 order） |
 | 9 | bar | 发言排行榜 | SUM 总发言数, group_by 昵称 value desc, filter 总发言数>0 |
 
-- 组件 9 的理想形态是「排行榜（ranking）」类型，但 **ranking 无法经 API 创建**（CLI 白名单和 v3 blocks endpoint 都拒收），只能建完后在 UI 手动换。bar 降序在数据上完全等价
+- 组件 9 的理想形态是“排行榜（ranking）”类型，但 **ranking 无法经 API 创建**（CLI 白名单和 v3 blocks endpoint 都拒收），只能建完后在 UI 手动换。bar 降序在数据上完全等价
 - 布局（位置/大小）没有 API：创建完 `+dashboard-arrange` 一次智能排版，精调靠 UI
 - `+dashboard-create` 偶发报 800008006 内部错误但**其实已创建成功**：先 `+dashboard-list` 确认再决定重试，否则会撞名报错
 
@@ -91,6 +91,6 @@
 - vchat 导出 JSON 里 zstd 压缩内容已被 UTF-8 replace 损坏，**消息内容必须回解密库原始 BLOB 取**（`~/.vchat/data/decrypted/message/*.db` 的 `Msg_<md5(chatroom_id)>` 表，zstd magic `28 B5 2F FD`）
 - 本人消息 sender_name 是 "me" → 用 `GAB_SELF_NAME` 环境变量的名字替换
 - 群本身（chatroom id 作 sender）和 local_type=10000 系统消息不算发言
-- 入群事件三来源：①首条邀请通知 XML「群聊参与人还有」=建群初始名单 ②`"A"邀请"B"加入了群聊` ③`"X"通过扫描"Y"分享的二维码加入群聊`（社区群扫码占比可能近半，漏了会缺一大片进群时间）
+- 入群事件三来源：①首条邀请通知 XML“群聊参与人还有”=建群初始名单 ②`"A"邀请"B"加入了群聊` ③`"X"通过扫描"Y"分享的二维码加入群聊`（社区群扫码占比可能近半，漏了会缺一大片进群时间）
 - 移出事件：`你将"X"移出了群聊` / `"A"将"B"移出了群聊`；批量清退会共享同一秒时间戳
-- 有的成员微信昵称本身是空的，表里用「(无昵称)」占位
+- 有的成员微信昵称本身是空的，表里用“(无昵称)”占位

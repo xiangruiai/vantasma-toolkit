@@ -106,7 +106,7 @@ npm run preview  # 本地预览构建产物
 
 把下面这句话贴给你的 AI Agent（Claude Code / Cursor / aider 都行）：
 
-> **「帮我安装 https://github.com/xiangruiai/vantasma-toolkit 里的 vchat CLI（路径 cli/vchat）。按它 README 的步骤跑：clone → bash install.sh → 装 cryptography + zstandard → sudo vchat setup。完成后跑 vchat doctor 确认本地 db 全部解密。」**
+> **“帮我安装 https://github.com/xiangruiai/vantasma-toolkit 里的 vchat CLI（路径 cli/vchat）。按它 README 的步骤跑：clone → bash install.sh → 装 cryptography + zstandard → sudo vchat setup。完成后跑 vchat doctor 确认本地 db 全部解密。”**
 
 Agent 会自动跑完，需要你介入的只有：
 - 一次 `gh auth login`（如果没登 GitHub）
@@ -151,7 +151,7 @@ vchat --help                                    # 看全部 63 命令
 | `feishu-bitable-skill` | 飞书多维表格搭建（OpenClaw） | [README](skills/飞书办公/feishu-bitable-skill/README.md) |
 | `feishu-bitable-system-prompt` | 飞书多维表格 AI 提示词设计 | [README](skills/飞书办公/feishu-bitable-system-prompt/README.md) |
 | `feishu-proposal` | 飞书会议纪要 → 客户方案文档 | [README](skills/飞书办公/feishu-proposal/README.md) |
-| `daily-log` | **收工日志**：一句「收工」→ 飞书全链路足迹自动聚合成带链接、能 @ 人的日报文档（依赖 lark-cli） | [README](skills/飞书办公/daily-log/README.md) |
+| `daily-log` | **收工日志**：一句“收工”→ 飞书全链路足迹自动聚合成带链接、能 @ 人的日报文档（依赖 lark-cli） | [README](skills/飞书办公/daily-log/README.md) |
 | `group-activity-base` | **群活跃度多维表格**：微信群完整历史（谁活跃/谁潜水/进群退群时间/全量发言）→ 飞书三表 + 9 组件仪表盘，支持水位式增量更新（依赖 vchat + lark-cli） | [README](skills/飞书办公/group-activity-base/README.md) |
 
 ### 🎨 内容设计
@@ -204,7 +204,7 @@ Copyright © 2026 xiangruiai (李祥瑞 / 万涂幻象)
 
 ## 关于万涂幻象 · About Vantasma
 
-本项目来自 **万涂幻象多维表格社区** —— 民间最大的飞书多维表格生态社区，围绕「让 AI 真正落地」沉淀内容、社区、产品与系统。
+本项目来自 **万涂幻象多维表格社区** —— 民间最大的飞书多维表格生态社区，围绕“让 AI 真正落地”沉淀内容、社区、产品与系统。
 
 | | |
 |---|---|

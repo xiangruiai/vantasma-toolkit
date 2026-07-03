@@ -1,6 +1,6 @@
 ---
 name: gongzhonghao-typeset
-description: 公众号排版技能。用 agent 写完公众号 markdown 后，一键排成可粘贴的公众号 HTML。带实时控制面板：品牌名 / 主题色 / 字号 / 行高 / 图片样式 / 屏幕吸色 / 图片吸色 / 剪贴板智能粘贴，全部所见即所得。最后 ClipboardItem 复制富文本到剪贴板，粘到 mp.weixin.qq.com 即可发布。适用于用户说「起公众号」、「公众号排版」、「把这篇排版」、「转公众号 HTML」、「排版公众号」时触发。
+description: 公众号排版技能。用 agent 写完公众号 markdown 后，一键排成可粘贴的公众号 HTML。带实时控制面板：品牌名 / 主题色 / 字号 / 行高 / 图片样式 / 屏幕吸色 / 图片吸色 / 剪贴板智能粘贴，全部所见即所得。最后 ClipboardItem 复制富文本到剪贴板，粘到 mp.weixin.qq.com 即可发布。适用于用户说“起公众号”、“公众号排版”、“把这篇排版”、“转公众号 HTML”、“排版公众号”时触发。
 ---
 
 # 起公众号
@@ -27,7 +27,7 @@ ClipboardItem 复制富文本
 open templates/preview.html
 ```
 
-浏览器里看：左边公众号文章预览，右边主题控制面板。拖控件 / 拖色卡 / 吸色 → 实时切换。调到满意点「复制公众号 HTML」→ 粘 mp.weixin.qq.com。
+浏览器里看：左边公众号文章预览，右边主题控制面板。拖控件 / 拖色卡 / 吸色 → 实时切换。调到满意点“复制公众号 HTML”→ 粘 mp.weixin.qq.com。
 
 ## 控制面板能力
 
@@ -82,7 +82,7 @@ python3 cli.py "..." --theme my_theme.json
 **专注做排版差异化，不做链接抓取**。原因：
 - agent 已经能写公众号文章（用 gongzhonghao-writer skill 或直接对话产出 md），抓取层是冗余复杂度
 - 公众号文章抓取有反爬 + 平台政策变化，维护成本高
-- 真正稀缺的是「写完后排成精致品牌风、可微调、一键复制」这层
+- 真正稀缺的是“写完后排成精致品牌风、可微调、一键复制”这层
 
 排版层做四件事：
 1. **反复验证的 9 条公众号 HTML 输出规范**（用 section/span 不用 ul/li，加粗用 span 不用 strong，图片 max-width:100%，等等）—— 这是 wechat-editorial 200+ 篇公众号反复踩坑沉淀

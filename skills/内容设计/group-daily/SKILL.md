@@ -6,7 +6,7 @@ description: |
   6-8 张今日高光人物卡、可抄作业的 SOP 与 Q&A，以及底部数据条。
   本技能内嵌的设计准则来自《群日报形态横纵分析报告》（QFD 质量屋打分
   + Spotify Wrapped/网易云年报/Stripe Letter 等横向对比），明确摒弃
-  「智能纪要」范式，走「故事化年报」路线。
+  “智能纪要”范式，走“故事化年报”路线。
   当用户说"做群日报"、"群日报"、"给 XX 群做日报"、"XX 群今天聊了什么做个日报"、
   "整理一下今天 XX 群"时触发。
 ---
@@ -22,12 +22,12 @@ description: |
 
 用户说以下话时主动触发：
 
-- 「做群日报」「给 XX 群做日报」「XX 群今天聊了什么做个日报」
-- 「整理一下今天 XX 群的对话」
-- 「XX 群昨天聊了啥，做个总结」
-- 「再来一份群日报」（继续之前的群）
+- “做群日报”“给 XX 群做日报”“XX 群今天聊了什么做个日报”
+- “整理一下今天 XX 群的对话”
+- “XX 群昨天聊了啥，做个总结”
+- “再来一份群日报”（继续之前的群）
 
-如果用户只说「做日报」没指明群，主动追问群名。
+如果用户只说“做日报”没指明群，主动追问群名。
 
 ## 输入
 
@@ -103,7 +103,7 @@ vchat history "<群名>" -n 5000 --asc > /tmp/chat_log_<日期>_<群名>.txt
 - `-n` 视范围调整（一天 1000 足够，20 天群史用 5000-10000）
 - `--asc` 旧到新方便叙事
 - AI 用 Read 工具分块读这个文件
-- **vchat 模糊匹配**：群名匹配到的实际群可能跟你输的不一样。看 `chat_log` 第一行的「XXX 的消息记录」确认实际匹中的群名，不一致就用更精确的名字重拉。
+- **vchat 模糊匹配**：群名匹配到的实际群可能跟你输的不一样。看 `chat_log` 第一行的“XXX 的消息记录”确认实际匹中的群名，不一致就用更精确的名字重拉。
 
 **兜底**：MCP `get_chat_history`（小量场景下也快），返回直接看就好。
 
@@ -139,7 +139,7 @@ done > /tmp/voices_<日期>_<群名>.txt
 
 **节制**：
 
-- 优先转写时长 ≥ 5 秒的（短的「嗯」「OK」忽略）
+- 优先转写时长 ≥ 5 秒的（短的“嗯”“OK”忽略）
 - 当天语音 > 30 条时挑核心人物的
 - whisper 中文输出常是繁体，AI 引用时按上下文转简体并修订错字
 
@@ -148,7 +148,7 @@ done > /tmp/voices_<日期>_<群名>.txt
 1. MCP `mcp__wechat__transcribe_voice` — server 没装 whisper / 没重启时不可用
 2. `scripts/transcribe_voices.py` — 走 `decode_voice` 拿 wav + 系统 whisper CLI（功能完整、但依赖系统 whisper 安装）
 
-写故事时把语音转写当成「真实发言」用，在 quote 里加 `source: "voice"` 和 `duration_s` 字段（见 `references/story-schema.md`），渲染时会显示 🎙 角标。
+写故事时把语音转写当成“真实发言”用，在 quote 里加 `source: "voice"` 和 `duration_s` 字段（见 `references/story-schema.md`），渲染时会显示 🎙 角标。
 
 详细见 `references/vchat-cli.md` 和 `references/data-sources.md` § 四。
 
@@ -164,7 +164,7 @@ done > /tmp/voices_<日期>_<群名>.txt
 
 这是 v2 的核心升级。**只沉淀群文化，人物画像不沉淀，每次临时分析**。
 
-在动笔写故事前先看「这个群历史上怎么写」：
+在动笔写故事前先看“这个群历史上怎么写”：
 
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/context_helper.py check-style \
@@ -185,7 +185,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/context_helper.py check-style \
 - **opening**：100-200 字开场叙述，一句话钩子 + 故事概括
 - **lead_title**：可换行的主标题，凝结今天的核心
 - **timeline**：6-8 个时间故事节点，每个含 no/time/badge/cast/theme/story/quotes/output
-- **highlights**：6-8 张高光人物（不是发言量排名，是「今天没他故事就少一块」的人）
+- **highlights**：6-8 张高光人物（不是发言量排名，是“今天没他故事就少一块”的人）
 - **sops**：可抄作业的工作流（如有，从聊天记录里提炼出步骤）
 - **qas**：被多人回答的有价值问题（如有）
 - **footer_quote**：当天最有共鸣的一句话作为收尾
@@ -303,8 +303,8 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/context_helper.py path \
 
 **节制原则**：
 
-- styles 的「主流话题」「内部黑话」按重要度精选，不堆砌
-- 不要在 styles 里点名固化「X 是 Y 角色」，最多写「这个群通常有 X / Y / Z 几类角色」
+- styles 的“主流话题”“内部黑话”按重要度精选，不堆砌
+- 不要在 styles 里点名固化“X 是 Y 角色”，最多写“这个群通常有 X / Y / Z 几类角色”
 
 ### Step 8：归档
 

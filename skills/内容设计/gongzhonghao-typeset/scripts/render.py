@@ -10,7 +10,7 @@
   2. 加粗用 span 不用 strong（公众号对 strong 后跟全角字符强插换行）
   3. 图片 max-width:100% + height:auto（不用 width:100% 拉伸小图）
   4. H3 左侧主色竖条 + 17px 粗体
-  5. 超长 PNG（文件名含「全图/长图/scrollbox/longshot」）自动 scrollbox
+  5. 超长 PNG（文件名含“全图/长图/scrollbox/longshot”）自动 scrollbox
   6. 多行引用块用 <br> join 不用空格 join
   7. frontmatter 中文 key（标题/副标题/创建时间/标签）
 """
@@ -120,8 +120,8 @@ def inline(text, theme=None):
         text,
     )
     text = re.sub(
-        r'「([^」]+)」',
-        r'<span style="background:var(--c-btn-bg);color:var(--c-text-strong);padding:2px 10px;border-radius:6px;font-size:0.92em;font-weight:600;margin:0 2px;">「\1」</span>',
+        r'“([^”]+)”',
+        r'<span style="background:var(--c-btn-bg);color:var(--c-text-strong);padding:2px 10px;border-radius:6px;font-size:0.92em;font-weight:600;margin:0 2px;">“\1”</span>',
         text,
     )
     text = re.sub(

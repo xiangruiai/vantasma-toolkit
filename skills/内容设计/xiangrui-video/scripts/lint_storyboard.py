@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""storyboard 质量闸门：强制「图主文辅 / 反模板化」。
+"""storyboard 质量闸门：强制“图主文辅 / 反模板化”。
 
 铁律只写在 SKILL.md 里没有强制力——模型执行时会偷懒套最省事的纯文字版式
 (editorial / impact_text)，导致整片千篇一律、零图像级现场设计。本脚本把铁律
 变成 render.py 渲染前的硬关卡：不过就拒绝渲染。
 
-检测项（来自 SKILL.md「图主文辅」「招牌场景不跨片复用」「反模板化」三条铁律）：
+检测项（来自 SKILL.md“图主文辅”“招牌场景不跨片复用”“反模板化”三条铁律）：
   E1  纯文字版面（editorial / impact_text / concept_card 这类无图像主视觉的）总数 > MAX_TEXT(2) → 报错
   E2  连续 ≥ MAX_RUN(3) 镜同一 type（套同一版式） → 报错
   E3  全片零个图像级镜头（VISUAL=0） → 报错（这正是上一版 Token 篇的翻车形态）
@@ -21,9 +21,9 @@ import json
 import sys
 from collections import Counter
 
-# ---------- 呈现类型分类（决定一个 type 算不算「图像级现场设计」）----------
+# ---------- 呈现类型分类（决定一个 type 算不算“图像级现场设计”）----------
 # VISUAL = 图像级主视觉：真实素材 / 现场写的 HTML 动画 / 自己生成的插画 / 数据图。
-#          这些才是「图主文辅」里的「图」，每片应当占绝大多数。
+#          这些才是“图主文辅”里的“图”，每片应当占绝大多数。
 VISUAL = {
     "demo",         # 现场写 HTML 动画（Rough.js 手绘 / ECharts 数据图 / 数字滚动…），最自由最该用
     "whiteboard",   # seedream 白底插画
@@ -32,7 +32,7 @@ VISUAL = {
     "image_full",   # 全屏图
     "media",        # 多素材轮换
 }
-# SEMI = 半图像：有视觉结构但偏固定模板（auto 图解 / logo 章）。允许，但不算「现场设计」，
+# SEMI = 半图像：有视觉结构但偏固定模板（auto 图解 / logo 章）。允许，但不算“现场设计”，
 #        过多仍然单调——计入分布、参与连续同版式检测，但不计入纯文字红线。
 SEMI = {
     "diagram",      # flow / compare / list 自动图解卡（手绘 Rough 渲染）
@@ -48,7 +48,7 @@ TEXT = {
 EXEMPT = {"ending"}
 
 MAX_TEXT = 2     # 全片纯文字版面上限（祥瑞 2026-06-13 定）
-MAX_RUN = 3      # 连续同一 type 的上限（命中即「套版式」）
+MAX_RUN = 3      # 连续同一 type 的上限（命中即“套版式”）
 MIN_VISUAL_RATIO = 0.45  # 图像级镜头占比低于此值给 warning（图主文辅的软提示）
 
 
@@ -97,14 +97,14 @@ def lint(sb, max_text=MAX_TEXT, max_run=MAX_RUN):
     # ---- E0：未知 type ----
     unknown = [(i, t) for i, t, cat in rows if cat == "UNKNOWN"]
     for i, t in unknown:
-        errors.append(f"E0 镜 [{i}] 未知 type「{t}」，无法分类（拼写错误？）")
+        errors.append(f"E0 镜 [{i}] 未知 type“{t}”，无法分类（拼写错误？）")
 
     # ---- E1：纯文字版面超限 ----
     text_idx = [i for i, t, cat in rows if cat == "TEXT"]
     if len(text_idx) > max_text:
         offenders = "、".join(f"[{i}]{rows[i][1]}" for i in text_idx)
         errors.append(
-            f"E1 纯文字版面 {len(text_idx)} 镜 > 上限 {max_text} 镜——违反「图主文辅」。"
+            f"E1 纯文字版面 {len(text_idx)} 镜 > 上限 {max_text} 镜——违反“图主文辅”。"
             f"\n     命中：{offenders}"
             f"\n     改法：除留 ≤{max_text} 镜做节奏点缀，其余全部换成图像级现场设计"
             f"（demo 动画 / Rough 手绘 / ECharts 数据图 / seedream 生图 / broll 素材 / logo_card）。")
@@ -118,14 +118,14 @@ def lint(sb, max_text=MAX_TEXT, max_run=MAX_RUN):
             if run_len >= max_run:
                 seg = "、".join(f"[{j}]" for j in range(run_start, k))
                 errors.append(
-                    f"E2 连续 {run_len} 镜都是「{rows[run_start][1]}」（{seg}）——套同一版式。"
+                    f"E2 连续 {run_len} 镜都是“{rows[run_start][1]}”（{seg}）——套同一版式。"
                     f"\n     改法：同一个意思换种呈现，打散这段连续。")
             run_start = k
 
     # ---- E3：全片零图像级镜头 ----
     if vis == 0 and n > 0:
         errors.append(
-            "E3 全片 0 个图像级镜头（VISUAL=0）——这正是要根治的「零现场设计」翻车形态。"
+            "E3 全片 0 个图像级镜头（VISUAL=0）——这正是要根治的“零现场设计”翻车形态。"
             "\n     至少要有真实素材 / demo 动画 / 手绘图 / 生图撑起主视觉。")
 
     # ---- Warnings（不拦渲染）----

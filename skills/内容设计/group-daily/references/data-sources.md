@@ -160,12 +160,12 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/transcribe_voices.py \
 }
 ```
 
-AI 在 Step 3 写故事时，把语音转写当成「这个人的真实发言」用，引用时在 quote 里加 `source: "voice"` 字段（见 story-schema.md）。
+AI 在 Step 3 写故事时，把语音转写当成“这个人的真实发言”用，引用时在 quote 里加 `source: "voice"` 字段（见 story-schema.md）。
 
 ### 4.5 常见坑
 
-- **繁体输出**：whisper 中文模型默认偏繁体，转写出「沒置頂」「尊渡」这种。AI 引用时按上下文转成简体并修订错字。
-- **短语音被跳过**：`--min-duration 3` 过滤掉 < 3 秒的，避免「嗯」「啊」浪费 token。需要全转改成 `--min-duration 0`。
+- **繁体输出**：whisper 中文模型默认偏繁体，转写出“沒置頂”“尊渡”这种。AI 引用时按上下文转成简体并修订错字。
+- **短语音被跳过**：`--min-duration 3` 过滤掉 < 3 秒的，避免“嗯”“啊”浪费 token。需要全转改成 `--min-duration 0`。
 - **模型下载**：首次跑 whisper 会下载约 145MB 的 base 模型权重。第一次慢，之后秒出。
 - **群里没语音**：直接跳过整个 Step 1.5，不影响主流程。
 

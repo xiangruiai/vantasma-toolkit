@@ -121,7 +121,7 @@ python3 cli.py article.md
      ↓
 拖色卡 / 调字号 / 改品牌名（实时切换）
      ↓
-点「复制公众号 HTML」
+点“复制公众号 HTML”
      ↓
 粘 mp.weixin.qq.com
      ↓

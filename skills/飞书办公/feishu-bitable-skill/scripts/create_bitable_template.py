@@ -73,7 +73,7 @@ ADMIN_OPEN_ID = os.environ.get(
 
 # 知识库配置（可通过命令行参数覆盖）
 SPACE_ID = os.environ.get("FEISHU_WIKI_SPACE_ID", "7610609535908105159")
-PARENT_NODE = os.environ.get("FEISHU_WIKI_PARENT_NODE", "DDOLwWnYlijfsUkKuKTcg0bonng")  # 「模板」节点
+PARENT_NODE = os.environ.get("FEISHU_WIKI_PARENT_NODE", "DDOLwWnYlijfsUkKuKTcg0bonng")  # “模板”节点
 
 # 字段类型名称映射（用于 dry-run 显示）
 FIELD_TYPE_NAMES = {
@@ -204,7 +204,7 @@ class BitableTemplateBuilder:
 
     支持两种创建模式：
     - 独立模式：创建独立的多维表格应用
-    - 知识库模式（--wiki）：在知识库「模板」节点下创建
+    - 知识库模式（--wiki）：在知识库“模板”节点下创建
 
     支持多张数据表：第一张复用默认表，后续表通过 API 新建。
     """
@@ -573,15 +573,15 @@ class BitableTemplateBuilder:
                     md.append(f"| {rel['source']} | {rel['field']} | {rel['target']} | {rel['type']} | 点击\"+\" → 关联 → 选择\"{rel['target']}\" |")
                 md.append("")
                 md.append("**关联建立后的进阶操作**：")
-                md.append("- 在关联字段旁添加「查找引用」字段，可跨表引用目标表的任意字段")
-                md.append("- 在关联字段旁添加「汇总」字段，可对关联记录的数字字段求和/计数/平均")
+                md.append("- 在关联字段旁添加“查找引用”字段，可跨表引用目标表的任意字段")
+                md.append("- 在关联字段旁添加“汇总”字段，可对关联记录的数字字段求和/计数/平均")
             else:
-                md.append("- 根据业务需要，可手动添加跨表「关联」字段建立表间关系")
+                md.append("- 根据业务需要，可手动添加跨表“关联”字段建立表间关系")
             md.append("")
         else:
             md.append("## Step 5 建关系（单表系统，可跳过）")
             md.append("")
-            md.append("当前为单表系统。如后续新增数据表，可通过「关联」字段建立表间关系。")
+            md.append("当前为单表系统。如后续新增数据表，可通过“关联”字段建立表间关系。")
             md.append("")
 
         # ═══ Step 6 👁️ 配视图 ═══
@@ -664,7 +664,7 @@ class BitableTemplateBuilder:
         if person_fields:
             md.append("**行级权限（数据隔离）**：")
             for table_name, field_name in person_fields:
-                md.append(f"- {table_name}：绑定「{field_name}」字段 → \"与成员本人相关的记录\" → 每人只看自己负责的数据")
+                md.append(f"- {table_name}：绑定“{field_name}”字段 → \"与成员本人相关的记录\" → 每人只看自己负责的数据")
             md.append("")
 
         sensitive_fields = [
@@ -676,7 +676,7 @@ class BitableTemplateBuilder:
         if sensitive_fields:
             md.append("**列级权限（敏感字段保护）**：")
             for table_name, field_name in sensitive_fields:
-                md.append(f"- {table_name}.{field_name}：对普通成员设为「不可阅读」")
+                md.append(f"- {table_name}.{field_name}：对普通成员设为“不可阅读”")
             md.append("")
 
         md.append("**操作路径**：多维表格右上角 → 高级权限 → 开启 → 添加自定义角色")
@@ -1725,7 +1725,7 @@ class BitableTemplateBuilder:
 
             if vtype == "calendar":
                 print(f"   ⚠ {vc['view_name']} — 日历视图需手动创建（飞书 API 不支持 view_type=calendar）")
-                print(f"     操作：视图栏「+」→ 日历视图 → 选择日期字段")
+                print(f"     操作：视图栏“+”→ 日历视图 → 选择日期字段")
                 continue
 
             payload = {

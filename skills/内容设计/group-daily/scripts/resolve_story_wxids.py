@@ -7,7 +7,7 @@
 行为:
 1. 扫 story.json，收集 timeline[].cast[].name + highlights[].name 全部 name（去重）
 2. 调 vchat --json group-members 拉群全员
-3. 用「nick_name 完全相等 → remark 完全相等 → nick_name 子串包含」三档匹配
+3. 用“nick_name 完全相等 → remark 完全相等 → nick_name 子串包含”三档匹配
 4. 找到的 wxid 直接写回 story.json 的 cast[].wxid 和 highlights[].wxid
 5. 缺漏的 name：调 vchat contacts 全库搜，列出候选 wxid 让 AI 二次确认（stderr）
 6. 还缺的 → 退出码 2，stderr 报错；找全 → 退出码 0

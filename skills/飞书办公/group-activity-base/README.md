@@ -3,7 +3,7 @@
 > 把一个微信群从建群到现在的完整历史，变成一个飞书多维表格：
 > 谁活跃、谁潜水、谁什么时候进的群、谁被清退了、每天聊了多少 —— 外加一个仪表盘。
 
-一个 Claude Code Skill。对着 AI 说一句「做 XX 群的活跃度表」，几分钟后得到：
+一个 Claude Code Skill。对着 AI 说一句“做 XX 群的活跃度表”，几分钟后得到：
 
 ```
 XX群 · 群活跃度分析（飞书多维表格）
@@ -39,6 +39,16 @@ XX群 · 群活跃度分析（飞书多维表格）
 
 ## ✦ 安装
 
+### 让 Agent 自动安装（推荐）
+
+把这句话贴给你的 AI Agent（Claude Code / Cursor / aider 都行）：
+
+> **帮我安装 https://github.com/xiangruiai/vantasma-toolkit 里的 group-activity-base skill（路径 skills/飞书办公/group-activity-base）。按它的 README：clone 仓库 → 跑该目录的 install.sh（缺 vchat 就用仓库 cli/vchat/install.sh 装，缺 lark-cli 就 npm i -g @larksuite/cli，每一步先问我同意）→ 确认微信是 4.x 版本 → 把 skill 目录拷到 ~/.claude/skills/ → 提醒我设置 GAB_SELF_NAME 环境变量和完成 lark-cli auth 授权。**
+
+Agent 会自动跑完。需要你介入的只有：同意安装、一次 sudo 密码（vchat 解密）、lark-cli 的 OAuth 授权、还有告诉它你的显示名。
+
+### 手动安装
+
 三个依赖，缺一不可：
 
 ### 0. 先确认微信版本（重要）
@@ -49,7 +59,7 @@ vchat 依赖微信 macOS 客户端的本地数据库结构，**只支持微信 4
 defaults read /Applications/WeChat.app/Contents/Info.plist CFBundleShortVersionString
 ```
 
-微信升级后如果读不到新消息，重跑 `sudo vchat setup` 重新解密。详见 [`cli/vchat/README.md`](../../../cli/vchat/README.md) 的「微信版本兼容性」。
+微信升级后如果读不到新消息，重跑 `sudo vchat setup` 重新解密。详见 [`cli/vchat/README.md`](../../../cli/vchat/README.md) 的“微信版本兼容性”。
 
 ### 1. vchat（微信本地数据 CLI，本仓库自带）
 
@@ -88,15 +98,15 @@ export GAB_SELF_NAME="你的名字"   # 写进 ~/.zshrc 持久化
 cp -r group-activity-base ~/.claude/skills/
 ```
 
-重启 Claude Code，说「做 XX 群的活跃度表」即可触发。
+重启 Claude Code，说“做 XX 群的活跃度表”即可触发。
 
 ## ✦ 用法
 
 | 你说 | 它做 |
 |---|---|
-| 「做 XX 群的活跃度表」 | 从零建 Base：三张表 + 潜水视图 + 9 组件仪表盘，全量数据导入并自检 |
-| 「更新 XX 群的活跃度表」 | 水位式增量：只追加上次之后的新消息，成员表只动有变化的行，旧数据一条不碰 |
-| 「XX 群谁没发言」 | 直接读潜水名单视图给你答案 |
+| “做 XX 群的活跃度表” | 从零建 Base：三张表 + 潜水视图 + 9 组件仪表盘，全量数据导入并自检 |
+| “更新 XX 群的活跃度表” | 水位式增量：只追加上次之后的新消息，成员表只动有变化的行，旧数据一条不碰 |
+| “XX 群谁没发言” | 直接读潜水名单视图给你答案 |
 
 活跃标签阈值：核心活跃 ≥100 条 / 高活跃 ≥30 / 中活跃 ≥10 / 低活跃 ≥3 / 仅冒泡 1-2 / 潜水 0。想改就改 `scripts/extract_group_activity.py` 里的 `label_of`。
 
@@ -111,7 +121,7 @@ cp -r group-activity-base ~/.claude/skills/
 
 ## ✦ 已知坑（都帮你踩过了）
 
-见 [references/base-schema.md](references/base-schema.md) 的「lark-cli 实战坑点」：13 条，包括 @file 只认相对路径、批次文件必须 3 位编号否则导入顺序乱掉、batch-update 对假 record_id 也返回成功、调用不存在的子命令静默失败等。每一条都是真实翻车记录。
+见 [references/base-schema.md](references/base-schema.md) 的“lark-cli 实战坑点”：13 条，包括 @file 只认相对路径、批次文件必须 3 位编号否则导入顺序乱掉、batch-update 对假 record_id 也返回成功、调用不存在的子命令静默失败等。每一条都是真实翻车记录。
 
 ## ✦ 免责声明
 
