@@ -129,4 +129,20 @@ cp -r group-activity-base ~/.claude/skills/
 
 ## License
 
-MIT
+MIT。见 `LICENSE`。
+
+---
+
+## ✦ 关于作者
+
+本 skill 来自 **万涂幻象多维表格社区** —— 民间最大的飞书多维表格生态社区，围绕让 AI 真正落地沉淀内容、社区、产品与系统。更多工具与介绍见[仓库主页](../../../README.md)。
+
+| | |
+|---|---|
+| 🌐 个人主页 | https://www.xiangruiai.com |
+| 📚 开源知识库（飞书 Wiki · 311+ 篇） | https://vantasma.feishu.cn/wiki/space/7574356946532925441 |
+| ✉️ 联系 | li@xiangruiai.com |
+
+---
+
+**万涂幻象出品** · 作者 **祥瑞** · 个人网站 [www.xiangruiai.com](https://www.xiangruiai.com)
