@@ -2,7 +2,7 @@
 
 > 万涂幻象开源工具箱。
 >
-> 含 1 个 CLI（vchat）+ 1 个 Web 应用（祥瑞白板录制工具）+ 11 个 Skill（按领域分 4 类）。
+> 含 1 个 CLI（vchat）+ 1 个 Web 应用（祥瑞白板录制工具）+ 12 个 Skill（按领域分 4 类）。
 
 ---
 
@@ -43,12 +43,13 @@ vantasma-toolkit/
 │       ├── install.sh
 │       ├── README.md
 │       └── CHANGELOG.md
-└── skills/                              ← 11 个 Skill，按领域分 4 类
+└── skills/                              ← 12 个 Skill，按领域分 4 类
     ├── 飞书办公/
     │   ├── feishu-bitable-skill/        飞书多维表格搭建
     │   ├── feishu-bitable-system-prompt/ 多维表格 AI 系统提示词设计
     │   ├── feishu-proposal/             飞书客户方案自动生成
-    │   └── daily-log/                   收工日志 · 飞书全链路足迹聚合
+    │   ├── daily-log/                   收工日志 · 飞书全链路足迹聚合
+    │   └── group-activity-base/         微信群活跃度 → 飞书多维表格 + 仪表盘
     ├── 内容设计/
     │   ├── xiangrui-video/               知识科普视频全自动产线（主题/链接 → 成片）
     │   ├── gongzhonghao-typeset/        公众号排版 · md 一键转公众号 HTML
@@ -141,7 +142,7 @@ vchat --help                                    # 看全部 63 命令
 
 ## 3. Skills
 
-11 个 Skill 按领域分 4 类，分别归在 `skills/<领域>/` 下，可单独取用。
+12 个 Skill 按领域分 4 类，分别归在 `skills/<领域>/` 下，可单独取用。
 
 ### 🗂 飞书办公
 
@@ -151,6 +152,7 @@ vchat --help                                    # 看全部 63 命令
 | `feishu-bitable-system-prompt` | 飞书多维表格 AI 提示词设计 | [README](skills/飞书办公/feishu-bitable-system-prompt/README.md) |
 | `feishu-proposal` | 飞书会议纪要 → 客户方案文档 | [README](skills/飞书办公/feishu-proposal/README.md) |
 | `daily-log` | **收工日志**：一句「收工」→ 飞书全链路足迹自动聚合成带链接、能 @ 人的日报文档（依赖 lark-cli） | [README](skills/飞书办公/daily-log/README.md) |
+| `group-activity-base` | **群活跃度多维表格**：微信群完整历史（谁活跃/谁潜水/进群退群时间/全量发言）→ 飞书三表 + 9 组件仪表盘，支持水位式增量更新（依赖 vchat + lark-cli） | [README](skills/飞书办公/group-activity-base/README.md) |
 
 ### 🎨 内容设计
 
