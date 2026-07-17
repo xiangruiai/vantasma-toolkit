@@ -24,7 +24,7 @@ SOFTWARE.
 
 附加条款 · ADDITIONAL TERMS (PERSONAL LEARNING ONLY)
 
-本仓库（含 cli/ 和 skills/ 子目录所有内容）仅用于个人学习与研究用途
+本仓库（含 apps/ 和 skills/ 子目录所有内容）仅用于个人学习与研究用途
 (Personal Learning and Research Only)。
 
 1. 使用者必须仅在自己拥有合法访问权的数据上使用本仓库内任何工具，
@@ -41,10 +41,9 @@ SOFTWARE.
    持有人所有。本项目与腾讯、字节跳动、滴滴出行、Zetetic 等公司或
    开源项目均无任何关联，亦未获其授权或背书。
 
-4. 本仓库的 cli/vchat（前身 wxchat）涉及对加密本地数据库的逆向解密。
-   该实现仅参考 SQLCipher 公开设计文档（zetetic.net）与 Tencent WCDB
-   开源 README，未抄袭任何第三方解密工具源码。使用者在使用解密能力
-   时，须自行评估在所在司法管辖区的合法性。
+4. 本仓库不分发 vchat/微信本地数据解密 CLI。若某些 skill 文档提及
+   vchat 或兼容的微信本地数据访问工具，使用者须自行确保工具来源合法，
+   并自行评估在所在司法管辖区的合法性。
 
 5. 一旦下载、复制、修改、分发或以任何方式使用本仓库内容，即视为
    使用者已阅读、理解并完整接受 MIT 协议以及本附加条款。若不接受

@@ -354,7 +354,7 @@ story.json 是最珍贵的资产（比 HTML/PNG 更值钱），归档后可以�
 | 工具 | 路径 | 作用 |
 |---|---|---|
 | `wxrefresh` | `~/.local/bin/wxrefresh`（用户自装，包内不分发）| Step 0 强制刷新解密。内部调 `vchat decrypt`。NOPASSWD 配置见 `references/wxrefresh-setup.md` |
-| `vchat` | `~/.local/bin/vchat` → `~/Projects/vantasma-toolkit/cli/vchat/vchat` | 微信本地数据查询、解密、导出 |
+| `vchat` | `~/.local/bin/vchat`（私有依赖或兼容工具）| 微信本地数据查询、解密、导出 |
 
 ### scripts/
 

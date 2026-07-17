@@ -11,8 +11,8 @@ description: 微信群活跃度多维表格技能。把指定微信群从建群�
 
 **先读 [references/base-schema.md](references/base-schema.md)**：字段 schema、仪表盘规范、lark-cli 实战坑点（相对路径 @file、--yes 规则、批量更新语义、select 选项 not_found 等，都是实测踩过的）。
 
-**前置依赖**（安装见 README.md）。执行任务前先自检依赖：`vchat ls` 和 `lark-cli doctor` 任一失败时，**先明确询问用户是否同意自动安装，同意后再装**（vchat：`cd <仓库>/cli/vchat && ./install.sh`；lark-cli：`npm i -g @larksuite/cli` 然后引导 `lark-cli auth`），不要不打招呼就往用户机器上装东西。同时确认微信版本是 4.x（`defaults read /Applications/WeChat.app/Contents/Info.plist CFBundleShortVersionString`），3.x 直接告知不支持：
-- `vchat`（本仓库 `cli/vchat/`）：微信本地数据解密与查询，需先跑通 `vchat ls`
+**前置依赖**（安装见 README.md）。执行任务前先自检依赖：`vchat ls` 和 `lark-cli doctor` 任一失败时，**先明确询问用户是否同意自动安装，同意后再装**。`vchat` 不在本仓库开源，缺失时请让用户提供私有安装方式或兼容的本地微信数据访问工具；`lark-cli` 可用 `npm i -g @larksuite/cli` 安装，然后引导 `lark-cli auth`。不要不打招呼就往用户机器上装东西。同时确认微信版本是 4.x（`defaults read /Applications/WeChat.app/Contents/Info.plist CFBundleShortVersionString`），3.x 直接告知不支持：
+- `vchat`（私有依赖或兼容工具）：微信本地数据解密与查询，需先跑通 `vchat ls`
 - `lark-cli`（`npm i -g @larksuite/cli`）：飞书 CLI，需先完成 `lark-cli auth` 授权
 - Python `zstandard`：`pip3 install zstandard`
 - 环境变量 `GAB_SELF_NAME`：你自己的显示名（vchat 导出里本人是 "me"，用它替换）

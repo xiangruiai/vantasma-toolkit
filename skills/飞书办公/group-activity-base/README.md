@@ -26,7 +26,7 @@ XX群 · 群活跃度分析（飞书多维表格）
 
 **所有数据都来自你自己电脑上、你自己微信账号的本地缓存。** 不碰服务器，不需要网络抓取，不涉及任何第三方数据服务。
 
-- 聊天记录、群成员、系统消息（入群/移出通知）来自 macOS 微信 4.x 的本地 SQLCipher 数据库，由本仓库的 [`cli/vchat`](../../../cli/vchat/) 解密和查询
+- 聊天记录、群成员、系统消息（入群/移出通知）来自 macOS 微信 4.x 的本地 SQLCipher 数据库，由自备的 vchat 或兼容本地微信数据访问工具解密和查询。vchat 不在本仓库开源分发
 - 消息正文是 zstd 压缩的，脚本直接读解密库的原始字节解压（vchat 导出的 JSON 里压缩内容会被编码损坏，这是实测出来的坑）
 - 分析结果写到**你自己的飞书租户**里的多维表格，通过官方 `lark-cli` 的 OpenAPI
 
@@ -43,7 +43,7 @@ XX群 · 群活跃度分析（飞书多维表格）
 
 把这句话贴给你的 AI Agent（Claude Code / Cursor / aider 都行）：
 
-> **帮我安装 https://github.com/xiangruiai/vantasma-toolkit 里的 group-activity-base skill（路径 skills/飞书办公/group-activity-base）。按它的 README：clone 仓库 → 跑该目录的 install.sh（缺 vchat 就用仓库 cli/vchat/install.sh 装，缺 lark-cli 就 npm i -g @larksuite/cli，每一步先问我同意）→ 确认微信是 4.x 版本 → 把 skill 目录拷到 ~/.claude/skills/ → 提醒我设置 GAB_SELF_NAME 环境变量和完成 lark-cli auth 授权。**
+> **帮我安装 https://github.com/xiangruiai/vantasma-toolkit 里的 group-activity-base skill（路径 skills/飞书办公/group-activity-base）。按它的 README：clone 仓库 → 跑该目录的 install.sh（缺 vchat 就提示我提供私有安装方式或兼容工具，缺 lark-cli 就 npm i -g @larksuite/cli，每一步先问我同意）→ 确认微信是 4.x 版本 → 把 skill 目录拷到 ~/.claude/skills/ → 提醒我设置 GAB_SELF_NAME 环境变量和完成 lark-cli auth 授权。**
 
 Agent 会自动跑完。需要你介入的只有：同意安装、一次 sudo 密码（vchat 解密）、lark-cli 的 OAuth 授权、还有告诉它你的显示名。
 
@@ -59,17 +59,15 @@ vchat 依赖微信 macOS 客户端的本地数据库结构，**只支持微信 4
 defaults read /Applications/WeChat.app/Contents/Info.plist CFBundleShortVersionString
 ```
 
-微信升级后如果读不到新消息，重跑 `sudo vchat setup` 重新解密。详见 [`cli/vchat/README.md`](../../../cli/vchat/README.md) 的“微信版本兼容性”。
+微信升级后如果读不到新消息，按你自备的 vchat 或兼容工具说明重新解密。
 
-### 1. vchat（微信本地数据 CLI，本仓库自带）
+### 1. vchat 或兼容工具（自备）
 
 ```bash
-cd cli/vchat && ./install.sh
-# 跑通自检：
 vchat ls        # 能列出最近会话就 OK
 ```
 
-首次使用需要解密微信本地库，详细步骤（包括 SQLCipher key 提取原理、安全注意）见 [`cli/vchat/README.md`](../../../cli/vchat/README.md)。仅支持 macOS + 微信 4.x。
+首次使用需要解密微信本地库。vchat 不在本仓库开源分发；请使用你已有的私有安装方式或提供等价的本地微信数据访问工具。仅支持 macOS + 微信 4.x。
 
 ### 2. lark-cli（飞书官方 CLI）
 

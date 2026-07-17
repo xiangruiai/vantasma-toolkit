@@ -39,14 +39,10 @@ if command -v vchat >/dev/null 2>&1; then
     echo "  ✅ vchat 数据可读"
   else
     echo "  ⚠️  vchat 装了但读不到数据。首次使用需解密微信本地库："
-    echo "      sudo vchat setup     （原理与安全说明见 cli/vchat/README.md）"
+    echo "      sudo vchat setup     （按你的私有 vchat 或兼容工具说明执行）"
   fi
 else
-  if [ -f "$REPO_ROOT/cli/vchat/install.sh" ] && ask "  未安装 vchat，用本仓库 cli/vchat/install.sh 安装？"; then
-    (cd "$REPO_ROOT/cli/vchat" && ./install.sh)
-  else
-    echo "  ⏭  跳过。手动安装：cd <仓库根>/cli/vchat && ./install.sh"
-  fi
+  echo "  ⏭  未安装 vchat。本仓库不再分发 vchat，请使用私有安装方式或兼容的本地微信数据访问工具。"
 fi
 
 echo ""

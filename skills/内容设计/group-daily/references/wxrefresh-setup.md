@@ -27,7 +27,7 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 if [[ -z "$VCHAT_REAL" || ! -x "$VCHAT_REAL" ]]; then
-    echo "找不到 vchat。先按 cli/vchat/install.sh 装好。" >&2
+    echo "找不到 vchat。请先按你的私有 vchat 或兼容工具说明安装。" >&2
     exit 1
 fi
 
