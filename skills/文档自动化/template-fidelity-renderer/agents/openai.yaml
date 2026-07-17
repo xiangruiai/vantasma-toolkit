@@ -1,0 +1,4 @@
+interface:
+  display_name: "Template Fidelity Renderer"
+  short_description: "Fill DOCX templates with high-fidelity layout checks"
+  default_prompt: "Use $template-fidelity-renderer to fill this DOCX template from my data and produce DOCX/PDF outputs with fidelity, field-refresh, and drift reports."
