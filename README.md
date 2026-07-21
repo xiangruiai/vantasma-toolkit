@@ -2,7 +2,7 @@
 
 > 万涂幻象开源工具箱。
 >
-> 含 1 个 Web 应用（祥瑞白板录制工具）+ 13 个 Skill（按领域分 5 类）。
+> 含 1 个 Web 应用（祥瑞白板录制工具）+ 14 个 Skill（按领域分 5 类）。
 
 ---
 
@@ -34,12 +34,13 @@
 vantasma-toolkit/
 ├── apps/
 │   └── whiteboard-recorder/          ← 祥瑞白板录制工具（白板 + 录制 + 摄像头 + 素材库 + 提词器）
-└── skills/                              ← 13 个 Skill，按领域分 5 类
+└── skills/                              ← 14 个 Skill，按领域分 5 类
     ├── 文档自动化/
     │   └── template-fidelity-renderer/  高保真 DOCX 模板填充与验收
     ├── 飞书办公/
     │   ├── feishu-bitable-skill/        飞书多维表格搭建
     │   ├── feishu-bitable-system-prompt/ 多维表格 AI 系统提示词设计
+    │   ├── feishu-multi/                macOS 原生飞书双开
     │   ├── feishu-proposal/             飞书客户方案自动生成
     │   ├── daily-log/                   收工日志 · 飞书全链路足迹聚合
     │   └── group-activity-base/         微信群活跃度 → 飞书多维表格 + 仪表盘
@@ -93,7 +94,7 @@ npm run preview  # 本地预览构建产物
 
 ## 2. Skills
 
-13 个 Skill 按领域分 5 类，分别归在 `skills/<领域>/` 下，可单独取用。
+14 个 Skill 按领域分 5 类，分别归在 `skills/<领域>/` 下，可单独取用。
 
 ### 📄 文档自动化
 
@@ -107,6 +108,7 @@ npm run preview  # 本地预览构建产物
 |---|---|---|
 | `feishu-bitable-skill` | 飞书多维表格搭建（OpenClaw） | [README](skills/飞书办公/feishu-bitable-skill/README.md) |
 | `feishu-bitable-system-prompt` | 飞书多维表格 AI 提示词设计 | [README](skills/飞书办公/feishu-bitable-system-prompt/README.md) |
+| `feishu-multi` | **macOS 原生飞书双开**：两个客户端、两套登录态，支持版本检测、安全重建和独立数据目录，不使用 Lark 或网页版 | [README](skills/飞书办公/feishu-multi/README.md) |
 | `feishu-proposal` | 飞书会议纪要 → 客户方案文档 | [README](skills/飞书办公/feishu-proposal/README.md) |
 | `daily-log` | **收工日志**：一句“收工”→ 飞书全链路足迹自动聚合成带链接、能 @ 人的日报文档（依赖 lark-cli） | [README](skills/飞书办公/daily-log/README.md) |
 | `group-activity-base` | **群活跃度多维表格**：微信群完整历史（谁活跃/谁潜水/进群退群时间/全量发言）→ 飞书三表 + 9 组件仪表盘，支持水位式增量更新（依赖自备 vchat 或兼容的本地微信数据访问工具 + lark-cli；vchat 不在本仓库开源） | [README](skills/飞书办公/group-activity-base/README.md) |
