@@ -1,0 +1,4 @@
+interface:
+  display_name: "飞书原生双开"
+  short_description: "在 macOS 创建、启动与修复独立的原生飞书副本"
+  default_prompt: "使用 $feishu-multi 在这台 Mac 上创建并启动第二个原生飞书客户端。"
