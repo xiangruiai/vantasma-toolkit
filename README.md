@@ -2,7 +2,7 @@
 
 > 万涂幻象开源工具箱。
 >
-> 含 1 个 Web 应用（祥瑞白板录制工具）+ 14 个 Skill（按领域分 5 类）。
+> 含 1 个 Web 应用（祥瑞白板录制工具）+ 15 个 Skill（按领域分 6 类）。
 
 ---
 
@@ -34,7 +34,9 @@
 vantasma-toolkit/
 ├── apps/
 │   └── whiteboard-recorder/          ← 祥瑞白板录制工具（白板 + 录制 + 摄像头 + 素材库 + 提词器）
-└── skills/                              ← 14 个 Skill，按领域分 5 类
+└── skills/                              ← 15 个 Skill，按领域分 6 类
+    ├── 知识管理/
+    │   └── three-layer-memory/          三层个人记忆系统
     ├── 文档自动化/
     │   └── template-fidelity-renderer/  高保真 DOCX 模板填充与验收
     ├── 飞书办公/
@@ -94,7 +96,13 @@ npm run preview  # 本地预览构建产物
 
 ## 2. Skills
 
-14 个 Skill 按领域分 5 类，分别归在 `skills/<领域>/` 下，可单独取用。
+15 个 Skill 按领域分 6 类，分别归在 `skills/<领域>/` 下，可单独取用。
+
+### 🧠 知识管理
+
+| Skill | 用途 | 详情 |
+|---|---|---|
+| `three-layer-memory` | **三层个人记忆系统**：把画像、可复用程序和带日期历史安全写入 Markdown / Obsidian Vault，支持确认写入、来源回读、召回和体检 | [README](skills/知识管理/three-layer-memory/README.md) |
 
 ### 📄 文档自动化
 
