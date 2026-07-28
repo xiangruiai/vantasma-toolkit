@@ -1,0 +1,4 @@
+interface:
+  display_name: "三层记忆系统"
+  short_description: "一键初始化三层记忆，安全完成画像、程序和历史的写入、召回与整理"
+  default_prompt: "Use $three-layer-memory to initialize my three-layer memory system and show the write plan before making changes."
