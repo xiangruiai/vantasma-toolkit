@@ -1,0 +1,17 @@
+{
+  "name": "xiangrui-hud",
+  "description": "万涂幻象 · Claude Code 实时状态栏 HUD（翠影绿主题）：上下文健康度、工具活动、子智能体追踪、待办进度，带品牌标识 ❖。",
+  "version": "0.1.0",
+  "author": {
+    "name": "xiangruiai (李祥瑞 / 万涂幻象)",
+    "url": "https://github.com/xiangruiai"
+  },
+  "commands": [
+    "./commands/setup.md",
+    "./commands/configure.md"
+  ],
+  "homepage": "https://github.com/xiangruiai/vantasma-toolkit/tree/main/plugins/xiangrui-hud",
+  "repository": "https://github.com/xiangruiai/vantasma-toolkit",
+  "license": "MIT",
+  "keywords": ["hud", "monitoring", "statusline", "context", "tools", "agents", "todos", "claude-code", "xiangrui", "vantasma"]
+}

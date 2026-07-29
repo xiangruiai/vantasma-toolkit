@@ -1,0 +1,4 @@
+node_modules/
+# dist 是插件运行产物，Claude Code 安装不会本地构建，必须随仓库分发
+# （覆盖仓库根 .gitignore 的 dist/ 规则）
+!dist/
