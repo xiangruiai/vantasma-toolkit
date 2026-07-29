@@ -1,0 +1,47 @@
+{
+  "name": "xiangrui-hud",
+  "version": "0.1.0",
+  "description": "万涂幻象 · Claude Code 实时状态栏 HUD（翠影绿主题，含品牌标识）。Fork of jarrodwatts/claude-hud.",
+  "type": "module",
+  "main": "dist/index.js",
+  "files": [
+    "dist/",
+    "src/",
+    "commands/",
+    ".claude-plugin/"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "npm run build && node --test",
+    "test:coverage": "npm run build && c8 --reporter=text --reporter=lcov node --test",
+    "test:update-snapshots": "UPDATE_SNAPSHOTS=1 npm test",
+    "test:stdin": "npm run build && echo '{\"model\":{\"display_name\":\"Opus\"},\"context_window\":{\"current_usage\":{\"input_tokens\":45000},\"context_window_size\":200000},\"transcript_path\":\"/tmp/test.jsonl\"}' | node dist/index.js"
+  },
+  "keywords": [
+    "claude-code",
+    "statusline",
+    "hud",
+    "xiangrui",
+    "vantasma"
+  ],
+  "author": "xiangruiai (李祥瑞 / 万涂幻象)",
+  "contributors": [
+    "Jarrod Watts (原作者 · https://github.com/jarrodwatts/claude-hud)"
+  ],
+  "license": "MIT",
+  "homepage": "https://github.com/xiangruiai/vantasma-toolkit/tree/main/plugins/xiangrui-hud",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xiangruiai/vantasma-toolkit.git",
+    "directory": "plugins/xiangrui-hud"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "c8": "^11.0.0",
+    "typescript": "^6.0.2"
+  }
+}

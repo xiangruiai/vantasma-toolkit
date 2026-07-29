@@ -2,7 +2,7 @@
 
 > 万涂幻象开源工具箱。
 >
-> 含 1 个 Web 应用（祥瑞白板录制工具）+ 15 个 Skill（按领域分 6 类）。
+> 含 1 个 Web 应用（祥瑞白板录制工具）+ 1 个 Claude Code 插件（xiangrui-hud 状态栏）+ 15 个 Skill（按领域分 6 类）。
 
 ---
 
@@ -34,6 +34,8 @@
 vantasma-toolkit/
 ├── apps/
 │   └── whiteboard-recorder/          ← 祥瑞白板录制工具（白板 + 录制 + 摄像头 + 素材库 + 提词器）
+├── plugins/
+│   └── xiangrui-hud/                 ← Claude Code 实时状态栏 HUD（翠影绿主题，fork 自 claude-hud）
 └── skills/                              ← 15 个 Skill，按领域分 6 类
     ├── 知识管理/
     │   └── three-layer-memory/          三层个人记忆系统
@@ -94,7 +96,26 @@ npm run preview  # 本地预览构建产物
 
 ---
 
-## 2. Skills
+## 2. xiangrui-hud（Claude Code 状态栏插件）
+
+常驻 Claude Code 输入框下方的实时状态栏 HUD：模型、上下文健康度、项目与 git 分支、CLAUDE.md / 规则 / 钩子计数、工具活动、子智能体、待办进度。翠影绿主题，带万涂幻象品牌标识——首行翠绿 `❖`，右下角翠绿 `xiangrui-hud` wordmark。
+
+- 源码目录：[`plugins/xiangrui-hud`](plugins/xiangrui-hud)
+- 安装使用：[`plugins/xiangrui-hud/README.md`](plugins/xiangrui-hud/README.md)
+- 第三方来源说明：[`plugins/xiangrui-hud/THIRD_PARTY_NOTICES.md`](plugins/xiangrui-hud/THIRD_PARTY_NOTICES.md)
+
+在任意 Claude Code 会话里安装：
+
+```
+/plugin marketplace add xiangruiai/vantasma-toolkit
+/plugin install xiangrui-hud
+```
+
+本插件 fork 自 [jarrodwatts/claude-hud](https://github.com/jarrodwatts/claude-hud)（MIT），在其之上做了品牌化与翠影绿主题改造，完整改造范围见第三方来源说明。
+
+---
+
+## 3. Skills
 
 15 个 Skill 按领域分 6 类，分别归在 `skills/<领域>/` 下，可单独取用。
 
