@@ -61,3 +61,16 @@ npm run test:stdin # 用示例 stdin 打印一次状态栏
 MIT。版权归 Jarrod Watts（上游原作者）与 xiangruiai（李祥瑞 / 万涂幻象）共同所有，见 [LICENSE](LICENSE)。
 
 Claude、Claude Code 名称归 Anthropic 所有，本项目与其无隶属关系。
+
+---
+
+## 关于万涂幻象
+
+**万涂幻象是一个面向真实业务场景的企业 AI 落地实践社区。**
+
+从真实业务现场出发，我们连接一线业务实践者、能力贡献者和企业团队，共同发现问题、定义场景、验证方案、交付结果，并把有效经验沉淀为可复用的案例、方法和行业 Know-how。
+
+- [社区与知识库](https://vantasma.feishu.cn/wiki/MC1nwBft0izODokXe4acHKjZnsh)
+- [万涂幻象开源工具箱](https://github.com/xiangruiai/vantasma-toolkit)
+- [公开工作台](https://www.xiangruiai.com)
+- 联系：li@xiangruiai.com

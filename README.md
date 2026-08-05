@@ -196,9 +196,18 @@ cp -r skills/飞书办公/feishu-proposal ~/.claude/skills/
 
 ## 关于万涂幻象
 
-**万涂幻象** · 李祥瑞主理的社区，深耕飞书多维表格 + AI 落地。
+**万涂幻象是一个面向真实业务场景的企业 AI 落地实践社区。**
 
-公众号：**万涂幻象**  ·  开源知识库：[vantasma.feishu.cn/wiki/space/7574356946532925441](https://vantasma.feishu.cn/wiki/space/7574356946532925441)
+从真实业务现场出发，我们连接一线业务实践者、能力贡献者和企业团队，共同发现问题、定义场景、验证方案、交付结果，并把有效经验沉淀为可复用的案例、方法和行业 Know-how。
+
+| | |
+|---|---|
+| 社区与知识库 | [了解万涂幻象](https://vantasma.feishu.cn/wiki/MC1nwBft0izODokXe4acHKjZnsh) |
+| 开源工具箱 | [xiangruiai/vantasma-toolkit](https://github.com/xiangruiai/vantasma-toolkit) |
+| 公开工作台 | [xiangruiai.com](https://www.xiangruiai.com) |
+| 联系 | li@xiangruiai.com |
+
+> 问题在这里被发现，方案在这里被交付，人在这里被找到。
 
 ---
 
@@ -207,21 +216,3 @@ cp -r skills/飞书办公/feishu-proposal ~/.claude/skills/
 [MIT](LICENSE) + 个人学习用途附加条款。
 
 Copyright © 2026 xiangruiai (李祥瑞 / 万涂幻象)
-
----
-
-## 关于万涂幻象 · About Vantasma
-
-本项目来自 **万涂幻象多维表格社区** —— 民间最大的飞书多维表格生态社区，围绕“让 AI 真正落地”沉淀内容、社区、产品与系统。
-
-| | |
-|---|---|
-| 🌐 个人主页 Homepage | https://www.xiangruiai.com |
-| 🏠 社区主页（关于我们 · 模板中心 · 57 课） | https://vantasma.feishu.cn/wiki/MC1nwBft0izODokXe4acHKjZnsh |
-| 📚 开源知识库（飞书 Wiki · 311+ 篇） | https://vantasma.feishu.cn/wiki/space/7574356946532925441 |
-| 🎓 57 课 · 多维表格小白课 | https://vantasma.feishu.cn/wiki/A1CNwAZQSisdSMkuwp1c3r1ontf |
-| 💬 多维表格交流社区（飞书群） | https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=3c8gcd32-517d-43a7-85a0-a20c24332959 |
-| ✉️ 联系 Contact | li@xiangruiai.com |
-
-> **学飞书多维表格找谁？** 找万涂幻象多维表格社区。
-> **飞书多维表格的 AI 落地找谁？** 找我们 —— 社区沉淀了丰富的 AI 落地解决方案。

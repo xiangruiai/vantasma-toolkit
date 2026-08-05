@@ -82,4 +82,13 @@ MIT
 
 ---
 
-**万涂幻象出品** · 作者 **祥瑞** · 个人网站 [www.xiangruiai.com](https://www.xiangruiai.com)
+## 关于万涂幻象
+
+**万涂幻象是一个面向真实业务场景的企业 AI 落地实践社区。**
+
+从真实业务现场出发，我们连接一线业务实践者、能力贡献者和企业团队，共同发现问题、定义场景、验证方案、交付结果，并把有效经验沉淀为可复用的案例、方法和行业 Know-how。
+
+- [社区与知识库](https://vantasma.feishu.cn/wiki/MC1nwBft0izODokXe4acHKjZnsh)
+- [万涂幻象开源工具箱](https://github.com/xiangruiai/vantasma-toolkit)
+- [公开工作台](https://www.xiangruiai.com)
+- 联系：li@xiangruiai.com

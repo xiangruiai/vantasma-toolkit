@@ -38,3 +38,16 @@ python3 scripts/render_pipeline.py \
 这个 Skill 的目标是尽可能保留原模板格式，但不承诺所有输入都能 100% 自动完成。缺字体、复杂域代码、目录刷新、页面溢出、PDF 视觉差异，都必须通过报告和人工预览确认。
 
 详细流程见 [SKILL.md](SKILL.md)。
+
+---
+
+## 关于万涂幻象
+
+**万涂幻象是一个面向真实业务场景的企业 AI 落地实践社区。**
+
+从真实业务现场出发，我们连接一线业务实践者、能力贡献者和企业团队，共同发现问题、定义场景、验证方案、交付结果，并把有效经验沉淀为可复用的案例、方法和行业 Know-how。
+
+- [社区与知识库](https://vantasma.feishu.cn/wiki/MC1nwBft0izODokXe4acHKjZnsh)
+- [万涂幻象开源工具箱](https://github.com/xiangruiai/vantasma-toolkit)
+- [公开工作台](https://www.xiangruiai.com)
+- 联系：li@xiangruiai.com

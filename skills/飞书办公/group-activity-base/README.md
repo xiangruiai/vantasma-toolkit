@@ -131,16 +131,13 @@ MIT。见 `LICENSE`。
 
 ---
 
-## ✦ 关于作者
+## 关于万涂幻象
 
-本 skill 来自 **万涂幻象多维表格社区** —— 民间最大的飞书多维表格生态社区，围绕让 AI 真正落地沉淀内容、社区、产品与系统。更多工具与介绍见[仓库主页](../../../README.md)。
+**万涂幻象是一个面向真实业务场景的企业 AI 落地实践社区。**
 
-| | |
-|---|---|
-| 🌐 个人主页 | https://www.xiangruiai.com |
-| 📚 开源知识库（飞书 Wiki · 311+ 篇） | https://vantasma.feishu.cn/wiki/space/7574356946532925441 |
-| ✉️ 联系 | li@xiangruiai.com |
+从真实业务现场出发，我们连接一线业务实践者、能力贡献者和企业团队，共同发现问题、定义场景、验证方案、交付结果，并把有效经验沉淀为可复用的案例、方法和行业 Know-how。
 
----
-
-**万涂幻象出品** · 作者 **祥瑞** · 个人网站 [www.xiangruiai.com](https://www.xiangruiai.com)
+- [社区与知识库](https://vantasma.feishu.cn/wiki/MC1nwBft0izODokXe4acHKjZnsh)
+- [万涂幻象开源工具箱](https://github.com/xiangruiai/vantasma-toolkit)
+- [公开工作台](https://www.xiangruiai.com)
+- 联系：li@xiangruiai.com
