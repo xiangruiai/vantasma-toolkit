@@ -1,0 +1,44 @@
+{
+  "name": "xiangrui-taskboard-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "bin": {
+    "taskctl": "./cli/taskctl.mjs"
+  },
+  "scripts": {
+    "codex": "node scripts/codex-injector.mjs --launch --watch --open",
+    "codex:inject": "node scripts/codex-injector.mjs --watch",
+    "codex:daemon": "node scripts/codex-injector.mjs --daemon --open",
+    "codex:refresh": "node scripts/codex-injector.mjs --refresh",
+    "dev": "node scripts/dev.mjs",
+    "dev:server": "node --watch server/index.mjs --dev",
+    "dev:web": "vite --config web/vite.config.ts",
+    "build": "vite build --config web/vite.config.ts && node scripts/codex-injector.mjs --refresh-if-running",
+    "typecheck": "tsc -p web/tsconfig.json --noEmit",
+    "start": "node server/index.mjs",
+    "taskctl": "node cli/taskctl.mjs",
+    "test": "node --test",
+    "check": "npm run typecheck && npm run build && npm test"
+  },
+  "dependencies": {
+    "@lobehub/icons-static-svg": "^1.94.0",
+    "@xyflow/react": "^12.11.2",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "miniflare": "^4.20260722.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5",
+    "wrangler": "^4.114.0"
+  }
+}
