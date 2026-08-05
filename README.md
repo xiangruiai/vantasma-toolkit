@@ -122,7 +122,6 @@ npm run preview  # 本地预览构建产物
 
 - 插件目录：[`plugins/xiangrui-taskboard`](plugins/xiangrui-taskboard)
 - 安装使用：[`plugins/xiangrui-taskboard/README.md`](plugins/xiangrui-taskboard/README.md)
-- 微信赞赏：[support.xiangruiai.com/xiangrui](https://support.xiangruiai.com/xiangrui/)
 
 ```bash
 codex plugin marketplace add xiangruiai/vantasma-toolkit --ref main
@@ -216,3 +215,9 @@ cp -r skills/飞书办公/feishu-proposal ~/.claude/skills/
 [MIT](LICENSE) + 个人学习用途附加条款。
 
 Copyright © 2026 xiangruiai (李祥瑞 / 万涂幻象)
+
+---
+
+## 微信赞赏
+
+祥瑞工具箱里的 Skill、插件和应用均可免费使用。如果这些工具帮到了你，欢迎[微信赞赏祥瑞工具箱](https://support.xiangruiai.com/xiangrui/)，支持域名、服务器和持续维护。赞赏完全自愿，不解锁任何功能。

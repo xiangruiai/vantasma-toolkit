@@ -41,9 +41,11 @@ node plugins/xiangrui-taskboard/scripts/taskboard.mjs inject --port 9231
 
 CDP 端口只能绑定在本机回环地址，并且只应在运行可信本地代码时开启。
 
-## 赞赏
+## 微信赞赏
 
-直接告诉 Agent“我想赞赏 10 元”，它会调用服务端微信支付接口并返回本次订单的支付链接。金额支持 1 至 2000 元，支付完全自愿，也可以随时跳过。公共说明页是 [support.xiangruiai.com/xiangrui](https://support.xiangruiai.com/xiangrui/)，Agent 不会强制把你跳转过去。
+这个项目永久免费使用。如果它帮到了你，欢迎[请祥瑞喝杯咖啡](https://support.xiangruiai.com/xiangrui/)，鼓励他继续维护并开源更多实用工具。赞赏完全自愿，不解锁任何功能。
+
+如果已经安装插件，也可以直接告诉 Agent“我想赞赏 10 元”，它会调用服务端微信支付接口并返回本次订单的支付链接。金额支持 1 至 2000 元，也可以随时跳过。
 
 ## License
 
