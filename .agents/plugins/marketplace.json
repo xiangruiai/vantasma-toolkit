@@ -1,0 +1,20 @@
+{
+  "name": "vantasma-codex",
+  "interface": {
+    "displayName": "万涂幻象 Codex 插件"
+  },
+  "plugins": [
+    {
+      "name": "xiangrui-taskboard",
+      "source": {
+        "source": "local",
+        "path": "./plugins/xiangrui-taskboard"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

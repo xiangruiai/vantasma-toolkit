@@ -2,7 +2,7 @@
 
 > 万涂幻象开源工具箱。
 >
-> 含 1 个 Web 应用（祥瑞白板录制工具）+ 1 个 Claude Code 插件（xiangrui-hud 状态栏）+ 15 个 Skill（按领域分 6 类）。
+> 含 1 个 Web 应用（祥瑞白板录制工具）+ 1 个 Codex 插件（祥瑞任务面板）+ 1 个 Claude Code 插件（xiangrui-hud 状态栏）+ 15 个 Skill（按领域分 6 类）。
 
 ---
 
@@ -35,6 +35,7 @@ vantasma-toolkit/
 ├── apps/
 │   └── whiteboard-recorder/          ← 祥瑞白板录制工具（白板 + 录制 + 摄像头 + 素材库 + 提词器）
 ├── plugins/
+│   ├── xiangrui-taskboard/           ← 祥瑞任务面板 Codex 插件（看板 + Skill + taskctl）
 │   └── xiangrui-hud/                 ← Claude Code 实时状态栏 HUD（翠影绿主题，fork 自 claude-hud）
 └── skills/                              ← 15 个 Skill，按领域分 6 类
     ├── 知识管理/
@@ -115,7 +116,24 @@ npm run preview  # 本地预览构建产物
 
 ---
 
-## 3. Skills
+## 3. 祥瑞任务面板（Codex 插件）
+
+面向 Codex 的本地任务面板，把项目、议题、评论、依赖关系、工作流和 Agent 执行状态放进同一块看板。插件自带已经构建好的运行时、`manage-taskboard` Skill 和 `taskctl`，安装后不需要再次执行 `npm install`。首次打开后可选择让 Agent 直接生成微信支付赞赏链接，也可以跳过，所有功能均免费使用。
+
+- 插件目录：[`plugins/xiangrui-taskboard`](plugins/xiangrui-taskboard)
+- 安装使用：[`plugins/xiangrui-taskboard/README.md`](plugins/xiangrui-taskboard/README.md)
+- 微信赞赏：[support.xiangruiai.com/xiangrui-taskboard](https://support.xiangruiai.com/xiangrui-taskboard/)
+
+```bash
+codex plugin marketplace add xiangruiai/vantasma-toolkit --ref main
+codex plugin add xiangrui-taskboard@vantasma-codex
+```
+
+安装后重启 Codex，在新任务中说“打开祥瑞任务面板”即可启动本地看板。
+
+---
+
+## 4. Skills
 
 15 个 Skill 按领域分 6 类，分别归在 `skills/<领域>/` 下，可单独取用。
 

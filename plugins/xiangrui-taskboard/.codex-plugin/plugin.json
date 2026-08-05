@@ -1,0 +1,30 @@
+{
+  "name": "xiangrui-taskboard",
+  "version": "0.1.0",
+  "description": "把祥瑞任务面板带进 Codex，用看板管理项目、议题、评论、关系和 Agent 执行状态。",
+  "author": {
+    "name": "xiangruiai（李祥瑞 / 万涂幻象）",
+    "email": "li@xiangruiai.com",
+    "url": "https://github.com/xiangruiai"
+  },
+  "homepage": "https://support.xiangruiai.com/xiangrui-taskboard/",
+  "repository": "https://github.com/xiangruiai/vantasma-toolkit/tree/main/plugins/xiangrui-taskboard",
+  "license": "MIT",
+  "keywords": ["codex", "taskboard", "kanban", "agent", "xiangrui", "vantasma"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "祥瑞任务面板",
+    "shortDescription": "在 Codex 里用任务面板推进项目",
+    "longDescription": "万涂幻象的 Codex 任务面板插件。提供本地看板、项目与议题管理、评论和关系、Agent 执行交接，以及 taskctl 命令行工作流。",
+    "developerName": "万涂幻象",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "websiteURL": "https://support.xiangruiai.com/xiangrui-taskboard/",
+    "defaultPrompt": [
+      "打开祥瑞任务面板。",
+      "查看任务面板里待处理的事项。",
+      "我想赞赏祥瑞任务面板 10 元。"
+    ],
+    "brandColor": "#00A870"
+  }
+}

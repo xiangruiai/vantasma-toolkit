@@ -1,0 +1,38 @@
+#!/bin/zsh
+set -euo pipefail
+
+readonly XIANGRUI_REPO="$(cd "$(dirname "$0")/.." && pwd)"
+readonly XIANGRUI_NODE="$(command -v node)"
+readonly CODEX_APP="/Applications/ChatGPT.app"
+readonly CODEX_BUNDLE_ID="com.openai.codex"
+readonly CDP_PORT="9231"
+
+codex_is_running() {
+  local running
+  running="$(/usr/bin/osascript -e 'application id "com.openai.codex" is running' 2>/dev/null)" || return 1
+  [[ "$running" == "true" ]]
+}
+
+if [[ ! -x "$XIANGRUI_NODE" ]]; then
+  /usr/bin/osascript -e 'display alert "xiangrui Codex 启动失败" message "需要 Node.js 22.5 或更高版本" as critical'
+  exit 1
+fi
+
+if [[ ! -d "$CODEX_APP" ]]; then
+  /usr/bin/osascript -e 'display alert "xiangrui Codex 启动失败" message "找不到 /Applications/ChatGPT.app" as critical'
+  exit 1
+fi
+
+if codex_is_running; then
+  if ! /usr/bin/osascript <<'APPLESCRIPT' >/dev/null
+display dialog "需要先退出当前 Codex，才能以任务面板模式重新打开。未发送的输入可能丢失。" with title "打开 xiangrui Codex" buttons {"取消", "退出并打开"} default button "退出并打开" cancel button "取消" with icon caution
+APPLESCRIPT
+  then
+    exit 0
+  fi
+  /usr/bin/osascript -e 'tell application id "com.openai.codex" to quit'
+fi
+
+cd "$XIANGRUI_REPO"
+CODEX_TASKBOARD_HOST=127.0.0.1 \
+  "$XIANGRUI_NODE" scripts/codex-injector.mjs --launch --watch --open --port "$CDP_PORT"
