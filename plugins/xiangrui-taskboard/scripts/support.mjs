@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { spawn } from "node:child_process";
+
 const apiOrigin = (process.env.XIANGRUI_SUPPORT_API_ORIGIN || "https://www.xiangruiai.com")
   .replace(/\/+$/, "");
 
@@ -42,23 +44,42 @@ async function request(url, init) {
 }
 
 async function create(argv) {
-  const { yuan, total } = parseAmount(option(argv, "--amount"));
+  const { yuan } = parseAmount(option(argv, "--amount"));
   const project = parseProject(option(argv, "--project"));
-  const result = await request(`${apiOrigin}/api/wechat-pay/orders`, {
-    method: "POST",
-    body: JSON.stringify({ total, project }),
-  });
-  if (!result.codeUrl || !result.outTradeNo || !result.expiresAt) {
-    throw new Error("支付服务返回的订单信息不完整");
-  }
+  const amount = yuan.toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
+  const checkoutUrl = `${apiOrigin}/xiangrui/?${new URLSearchParams({
+    project,
+    amount,
+    checkout: "1",
+  })}`;
   return {
     ok: true,
     amountYuan: yuan.toFixed(2),
     project,
-    orderNo: result.outTradeNo,
-    paymentUrl: result.codeUrl,
-    expiresAt: result.expiresAt,
+    checkoutUrl,
+    paymentUrl: checkoutUrl,
+    expiresAfterOpen: "15 minutes",
   };
+}
+
+async function openCheckout(argv) {
+  const result = await create(argv);
+  const command = process.platform === "darwin"
+    ? ["open", [result.checkoutUrl]]
+    : process.platform === "win32"
+      ? ["rundll32", ["url.dll,FileProtocolHandler", result.checkoutUrl]]
+      : ["xdg-open", [result.checkoutUrl]];
+
+  await new Promise((resolve, reject) => {
+    const child = spawn(command[0], command[1], { stdio: "ignore" });
+    child.once("error", reject);
+    child.once("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`无法打开支付页面（退出码 ${code}）`));
+    });
+  });
+
+  return { ...result, opened: true };
 }
 
 async function status(argv) {
@@ -81,8 +102,9 @@ async function main() {
   const [command, ...argv] = process.argv.slice(2);
   let result;
   if (command === "create") result = await create(argv);
+  else if (command === "open") result = await openCheckout(argv);
   else if (command === "status") result = await status(argv);
-  else throw new Error("用法：support.mjs create --amount <元> [--project <标识>] | status --order <订单号>");
+  else throw new Error("用法：support.mjs open|create --amount <元> [--project <标识>] | status --order <订单号>");
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 

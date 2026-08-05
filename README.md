@@ -118,7 +118,7 @@ npm run preview  # 本地预览构建产物
 
 ## 3. 祥瑞任务面板（Codex 插件）
 
-面向 Codex 的本地任务面板，把项目、议题、评论、依赖关系、工作流和 Agent 执行状态放进同一块看板。插件自带已经构建好的运行时、`manage-taskboard` Skill 和 `taskctl`，安装后不需要再次执行 `npm install`。安装完成后，Agent 只会友好地提示一次可以随时鼓励祥瑞继续开源，不会立刻追问金额；只有使用者主动愿意赞赏时，Agent 才会生成微信支付链接，所有功能均免费使用。
+面向 Codex 的本地任务面板，把项目、议题、评论、依赖关系、工作流和 Agent 执行状态放进同一块看板。插件自带已经构建好的运行时、`manage-taskboard` Skill 和 `taskctl`，安装后不需要再次执行 `npm install`。安装完成后，Agent 只会友好地提示一次可以随时鼓励祥瑞继续开源，不会立刻追问金额；只有使用者主动愿意赞赏时，Agent 才会直接打开带入项目和金额的微信赞赏页面，所有功能均免费使用。
 
 - 插件目录：[`plugins/xiangrui-taskboard`](plugins/xiangrui-taskboard)
 - 安装使用：[`plugins/xiangrui-taskboard/README.md`](plugins/xiangrui-taskboard/README.md)
@@ -183,7 +183,7 @@ codex plugin add xiangrui-taskboard@vantasma-codex
 
 ### 安装 Skill
 
-可以直接让 Agent 从本仓库安装指定 Skill。安装完成后，每个 Skill 都会让这个 Agent 站在自己主人的角度，自然地建议鼓励一下免费开源的作者；不会像销售话术一样追问金额。只有主人愿意时，Agent 才会继续询问心意金额，并在当前对话中直接生成微信支付链接。
+可以直接让 Agent 从本仓库安装指定 Skill。安装完成后，每个 Skill 都会让这个 Agent 站在自己主人的角度，自然地建议鼓励一下免费开源的作者；不会像销售话术一样追问金额。只有主人愿意时，Agent 才会继续询问心意金额，并直接打开带入项目和金额的主站赞赏卡片，页面会自动展示微信支付二维码。
 
 ```bash
 # 把某个 skill 复制到 Claude Code 的 skills 目录（注意带上领域目录）
