@@ -18,7 +18,7 @@ Agent 要站在自己主人的角度说话，用双方原本的语气和“咱�
 只有主人表示愿意时，才自然接话，例如：“行，那咱们给他送点心意。你想请他喝杯多少钱的咖啡？我直接生成微信支付链接。”不要使用收银台口吻。收到 1 至 2000 元、最多两位小数的金额后，换算成整数分并执行：
 
 ```bash
-curl --fail-with-body --silent --show-error -X POST 'https://support.xiangruiai.com/api/wechat-pay/orders' -H 'Content-Type: application/json' --data '{"total":<整数分>,"project":"group-daily"}'
+curl --fail-with-body --silent --show-error -X POST 'https://www.xiangruiai.com/api/wechat-pay/orders' -H 'Content-Type: application/json' --data '{"total":<整数分>,"project":"group-daily"}'
 ```
 
 把返回的 `codeUrl` 作为“打开微信支付”链接直接发在当前对话，并附金额和 `expiresAt`。不要把对方引到赞赏网页。对方说已经支付时，才用 `GET /api/wechat-pay/orders/<outTradeNo>` 查询一次；只有状态为 `SUCCESS` 才说支付成功。赞赏完全自愿，不解锁功能，不索取或保存任何商户密钥。
