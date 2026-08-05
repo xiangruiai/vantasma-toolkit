@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-const apiOrigin = (process.env.XIANGRUI_SUPPORT_API_ORIGIN || "https://support.xiangruiai.com")
+const apiOrigin = (process.env.XIANGRUI_SUPPORT_API_ORIGIN || "https://www.xiangruiai.com")
   .replace(/\/+$/, "");
 
 function option(argv, name) {

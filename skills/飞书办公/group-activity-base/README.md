@@ -133,7 +133,7 @@ MIT。见 `LICENSE`。
 
 ## 微信赞赏
 
-这个项目永久免费使用。如果它帮到了你，欢迎[请祥瑞喝杯咖啡](https://support.xiangruiai.com/xiangrui/)，鼓励他继续维护并开源更多实用工具。赞赏完全自愿，不解锁任何功能。
+这个项目永久免费使用。如果它帮到了你，欢迎[请祥瑞喝杯咖啡](https://www.xiangruiai.com/xiangrui/?project=group-activity-base)，鼓励他继续维护并开源更多实用工具。赞赏完全自愿，不解锁任何功能。
 
 ---
 
