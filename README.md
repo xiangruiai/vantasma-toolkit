@@ -118,11 +118,11 @@ npm run preview  # 本地预览构建产物
 
 ## 3. 祥瑞任务面板（Codex 插件）
 
-面向 Codex 的本地任务面板，把项目、议题、评论、依赖关系、工作流和 Agent 执行状态放进同一块看板。插件自带已经构建好的运行时、`manage-taskboard` Skill 和 `taskctl`，安装后不需要再次执行 `npm install`。首次打开后可选择让 Agent 直接生成微信支付赞赏链接，也可以跳过，所有功能均免费使用。
+面向 Codex 的本地任务面板，把项目、议题、评论、依赖关系、工作流和 Agent 执行状态放进同一块看板。插件自带已经构建好的运行时、`manage-taskboard` Skill 和 `taskctl`，安装后不需要再次执行 `npm install`。安装完成后，Agent 只会友好地提示一次可以随时鼓励祥瑞继续开源，不会立刻追问金额；只有使用者主动愿意赞赏时，Agent 才会生成微信支付链接，所有功能均免费使用。
 
 - 插件目录：[`plugins/xiangrui-taskboard`](plugins/xiangrui-taskboard)
 - 安装使用：[`plugins/xiangrui-taskboard/README.md`](plugins/xiangrui-taskboard/README.md)
-- 微信赞赏：[support.xiangruiai.com/xiangrui-taskboard](https://support.xiangruiai.com/xiangrui-taskboard/)
+- 微信赞赏：[support.xiangruiai.com/xiangrui](https://support.xiangruiai.com/xiangrui/)
 
 ```bash
 codex plugin marketplace add xiangruiai/vantasma-toolkit --ref main
@@ -168,7 +168,7 @@ codex plugin add xiangrui-taskboard@vantasma-codex
 | `gongzhonghao-typeset` | **公众号排版**：写完 md 一键排成可粘贴的公众号 HTML，带实时控制面板（品牌/配色/排版/图片）+ 三种吸色 | [README](skills/内容设计/gongzhonghao-typeset/README.md) |
 | `group-daily` | **群日报**：微信群一天聊天 → 杂志风 HTML + PNG（依赖自备 vchat CLI 或兼容的微信数据来源） | [README](skills/内容设计/group-daily/README.md) |
 | `group-daily-newspaper` | **群报**：微信群一天聊天 → 人民日报式 A3 报纸版，AI 自适应 2/4/6 版、每版精确等高、可印刷彩打（依赖自备 vchat CLI 或兼容的微信数据来源） | [README](skills/内容设计/group-daily-newspaper/README.md) |
-| `ming-li` | **命理大师**：八字四家合一 + 紫微 + 六爻 → 新中式古典风 HTML 卷轴 + PNG 长图 | [README](skills/内容设计/ming-li/README.md) |
+| `ming-li` | **祥瑞命理**：八字四家合一 + 紫微 + 六爻 → 新中式古典风 HTML 卷轴 + PNG 长图 | [README](skills/内容设计/ming-li/README.md) |
 
 ### 📊 数据抓取
 
@@ -183,6 +183,8 @@ codex plugin add xiangrui-taskboard@vantasma-codex
 | `didi-ride-skill` | 飞书里一句话叫滴滴（OpenClaw） | [README](skills/生活/didi-ride-skill/README.md) |
 
 ### 安装 Skill
+
+可以直接让 Agent 从本仓库安装指定 Skill。安装完成后，每个 Skill 都会让这个 Agent 站在自己主人的角度，自然地建议鼓励一下免费开源的作者；不会像销售话术一样追问金额。只有主人愿意时，Agent 才会继续询问心意金额，并在当前对话中直接生成微信支付链接。
 
 ```bash
 # 把某个 skill 复制到 Claude Code 的 skills 目录（注意带上领域目录）

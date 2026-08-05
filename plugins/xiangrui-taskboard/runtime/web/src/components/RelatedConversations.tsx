@@ -6,7 +6,6 @@ interface RelatedConversationsProps {
   onOpenIssue: (task: Task) => void;
   onOpenThread: (threadId: string) => void;
 }
-
 export function RelatedConversations({
   tasks,
   onOpenIssue,
@@ -61,4 +60,3 @@ export function RelatedConversations({
     </section>
   );
 }
-

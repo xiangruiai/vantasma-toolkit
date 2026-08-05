@@ -20,6 +20,14 @@ function parseAmount(value) {
   return { yuan, total };
 }
 
+function parseProject(value) {
+  const project = value || "xiangrui-taskboard";
+  if (!/^[a-z0-9][a-z0-9._-]{0,63}$/i.test(project)) {
+    throw new Error("项目标识无效");
+  }
+  return project;
+}
+
 async function request(url, init) {
   const response = await fetch(url, {
     ...init,
@@ -35,9 +43,10 @@ async function request(url, init) {
 
 async function create(argv) {
   const { yuan, total } = parseAmount(option(argv, "--amount"));
+  const project = parseProject(option(argv, "--project"));
   const result = await request(`${apiOrigin}/api/wechat-pay/orders`, {
     method: "POST",
-    body: JSON.stringify({ total }),
+    body: JSON.stringify({ total, project }),
   });
   if (!result.codeUrl || !result.outTradeNo || !result.expiresAt) {
     throw new Error("支付服务返回的订单信息不完整");
@@ -45,6 +54,7 @@ async function create(argv) {
   return {
     ok: true,
     amountYuan: yuan.toFixed(2),
+    project,
     orderNo: result.outTradeNo,
     paymentUrl: result.codeUrl,
     expiresAt: result.expiresAt,
@@ -72,7 +82,7 @@ async function main() {
   let result;
   if (command === "create") result = await create(argv);
   else if (command === "status") result = await status(argv);
-  else throw new Error("用法：support.mjs create --amount <元> | status --order <订单号>");
+  else throw new Error("用法：support.mjs create --amount <元> [--project <标识>] | status --order <订单号>");
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 

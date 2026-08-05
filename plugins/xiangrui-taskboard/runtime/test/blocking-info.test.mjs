@@ -31,4 +31,3 @@ test("blocked tasks use structured exact blocking information throughout the UI"
   assert.match(dialog, /内容将原样保存/);
   assert.match(dialog, /记录填写人和时间/);
 });
-
