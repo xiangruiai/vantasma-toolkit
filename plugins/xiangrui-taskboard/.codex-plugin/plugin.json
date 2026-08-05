@@ -7,7 +7,7 @@
     "email": "li@xiangruiai.com",
     "url": "https://github.com/xiangruiai"
   },
-  "homepage": "https://support.xiangruiai.com/xiangrui-taskboard/",
+  "homepage": "https://www.xiangruiai.com/xiangrui/?project=xiangrui-taskboard",
   "repository": "https://github.com/xiangruiai/vantasma-toolkit/tree/main/plugins/xiangrui-taskboard",
   "license": "MIT",
   "keywords": ["codex", "taskboard", "kanban", "agent", "xiangrui", "vantasma"],
@@ -19,7 +19,7 @@
     "developerName": "万涂幻象",
     "category": "Productivity",
     "capabilities": ["Interactive", "Read", "Write"],
-    "websiteURL": "https://support.xiangruiai.com/xiangrui-taskboard/",
+    "websiteURL": "https://www.xiangruiai.com/xiangrui/?project=xiangrui-taskboard",
     "defaultPrompt": [
       "打开祥瑞任务面板。",
       "查看任务面板里待处理的事项。",
