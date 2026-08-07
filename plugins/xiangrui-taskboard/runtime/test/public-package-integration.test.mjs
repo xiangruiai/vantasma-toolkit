@@ -101,6 +101,7 @@ test("public runtime sync detects missing and changed capabilities", async () =>
   ]);
   assert.ok(TASKBOARD_RUNTIME_PATHS.includes("inject/codex-taskboard.user.js"));
   assert.ok(TASKBOARD_RUNTIME_PATHS.includes("web/src/components/ProjectNavigator.tsx"));
+  assert.ok(TASKBOARD_RUNTIME_PATHS.includes("web/src/projectIdentity.mjs"));
   assert.ok(TASKBOARD_RUNTIME_PATHS.includes("scripts/codex-injector.mjs"));
 });
 
