@@ -79,7 +79,25 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       },
     });
   }
-  const body = (await response.json().catch(() => ({}))) as T & ApiErrorBody;
+  let body: T & ApiErrorBody;
+  if (response.status === 204) {
+    body = {} as T & ApiErrorBody;
+  } else {
+    try {
+      body = await response.json() as T & ApiErrorBody;
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") throw error;
+      if (response.ok) {
+        throw new ApiError(response.status, {
+          error: {
+            code: "INVALID_RESPONSE",
+            message: "Taskboard 服务返回了无效数据，请重试。",
+          },
+        });
+      }
+      body = {} as T & ApiErrorBody;
+    }
+  }
 
   if (!response.ok) throw new ApiError(response.status, body);
   return body;

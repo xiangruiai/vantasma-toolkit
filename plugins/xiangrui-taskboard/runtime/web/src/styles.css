@@ -1690,11 +1690,61 @@ kbd {
 
 .related-conversations-list {
   width: min(820px, 100%);
-  margin: 0 auto;
   overflow: hidden;
   border: var(--border-hairline) solid var(--border);
   border-radius: 9px;
   background: var(--surface);
+}
+
+.related-conversations-sections {
+  display: flex;
+  width: min(820px, 100%);
+  gap: 22px;
+  margin: 0 auto;
+  flex-direction: column;
+}
+
+.related-conversations-group {
+  display: flex;
+  gap: 8px;
+  flex-direction: column;
+}
+
+.related-conversations-group-header {
+  display: flex;
+  align-items: center;
+  min-height: 18px;
+  gap: 7px;
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+.related-conversations-group-header > strong {
+  color: var(--text-secondary);
+  font-weight: 560;
+}
+
+.related-conversations-group-header > span:last-child {
+  font-variant-numeric: tabular-nums;
+}
+
+.related-conversations-group-note {
+  margin: -4px 0 0;
+  color: var(--text-tertiary);
+  font-size: 9px;
+}
+
+.running-conversation-indicator {
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid color-mix(in srgb, var(--status-progress) 28%, transparent);
+  border-top-color: var(--status-progress);
+  border-radius: 999px;
+  animation: running-conversation-spin 800ms linear infinite;
+}
+
+@keyframes running-conversation-spin {
+  to { transform: rotate(360deg); }
 }
 
 .related-conversation-row {
@@ -1748,6 +1798,31 @@ kbd {
   font-weight: 540;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.related-conversation-summary {
+  display: flex;
+  min-width: 0;
+  gap: 2px;
+  flex-direction: column;
+}
+
+.related-conversation-summary > span {
+  color: var(--status-progress);
+  font-size: 9px;
+}
+
+.related-conversation-summary > strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 540;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.related-conversation-row.is-running {
+  background: color-mix(in srgb, var(--status-progress) 3%, var(--surface));
 }
 
 .related-conversation-open {

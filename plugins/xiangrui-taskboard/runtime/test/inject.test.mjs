@@ -16,7 +16,7 @@ const taskDetail = await readFile(
 
 test("injection is an idempotent IIFE guarded by its current source hash", () => {
   assert.match(source, /^\(\(\) => \{/);
-  assert.match(source, /const VERSION = "0\.6\.9"/);
+  assert.match(source, /const VERSION = "0\.6\.11"/);
   assert.match(source, /const SOURCE_HASH = window\.__CODEX_TASKBOARD_SOURCE_HASH__/);
   assert.match(source, /const SENTINEL_KEY = "__codexTaskboardInjection__"/);
   assert.match(source, /previous\?\.sourceHash === SOURCE_HASH/);
@@ -255,7 +255,7 @@ test("issues open an unsent native Codex composer in the exact workspace with a 
   assert.match(webApp, /type: "taskboard:create-thread"/);
   assert.match(
     webApp,
-    /type: "taskboard:open-thread",\s*payload: \{\s*threadId,\s*identifier: sourceTask\?\.identifier,\s*title: sourceTask\?\.title/,
+    /type: "taskboard:open-thread",\s*payload: \{\s*threadId,\s*taskId: sourceTask\?\.id,\s*projectId: sourceTask\?\.projectId,\s*identifier: sourceTask\?\.identifier,\s*title: sourceTask\?\.title/,
   );
 });
 
@@ -271,6 +271,53 @@ test("a saved issue comment can be handed to Codex immediately without changing 
   assert.match(webApp, /autoSubmit: options\?\.autoSubmit === true/);
   assert.match(source, /const autoSubmit = payload\?\.autoSubmit === true/);
   assert.match(source, /requestHostTaskComposerPrefill\(\{[\s\S]*?autoSubmit,/);
+});
+
+test("new issue and comment handoffs open the native conversation and keep a board return tab", () => {
+  const createThreadSource = source.slice(
+    source.indexOf("async function createThreadForTask"),
+    source.indexOf("function buildAutomationHostPayload"),
+  );
+
+  assert.match(webApp, /openTaskInThread\(saved, \{ autoSubmit: true \}\)/);
+  assert.match(
+    taskDetail,
+    /onOpenInThread\(taskForHandoff, \{\s*autoSubmit: true,\s*replyToCommentId: nextComment\.id/,
+  );
+  assert.match(source, /let pendingBoardReturnTask = null/);
+  assert.match(
+    createThreadSource,
+    /registerBoardReturnTask\(payload\);[\s\S]*?closeTaskboard\(false\);[\s\S]*?path: "\/"/,
+  );
+  assert.doesNotMatch(createThreadSource, /if \(!autoSubmit\) closeTaskboard\(false\)/);
+  assert.match(
+    source,
+    /tabs\.hidden = !active && !boardReturnTask && conversationTabs\.length === 0/,
+  );
+});
+
+test("the return tab identifies and opens the linked Taskboard issue", () => {
+  assert.match(
+    webApp,
+    /taskId: task\.id,\s*projectId: task\.projectId,\s*identifier: task\.identifier,\s*title: task\.title/,
+  );
+  assert.match(webApp, /type: "taskboard:linked-task"/);
+  assert.match(source, /const BOARD_RETURN_TASKS_STORAGE_KEY/);
+  assert.match(source, /message\.type === "taskboard:linked-task"/);
+  assert.match(source, /url\.searchParams\.set\("project", activeBoardTaskTarget\.projectId\)/);
+  assert.match(source, /url\.searchParams\.set\("issue", activeBoardTaskTarget\.identifier\)/);
+  assert.match(
+    source,
+    /const boardLabel = \[boardReturnTask\?\.identifier, boardReturnTask\?\.title\]/,
+  );
+  assert.match(
+    source,
+    /boardButton\.addEventListener\("click", \(\) => openTaskboardForTask\(boardReturnTask\)\)/,
+  );
+  assert.doesNotMatch(
+    source,
+    /boardButton\.innerHTML = '[^']*<span>看板<\/span>'/,
+  );
 });
 
 test("the standalone web page opens linked Codex tasks through the app deep link", () => {
@@ -320,6 +367,89 @@ test("host context captures all Codex projects even when the sidebar section is 
   assert.match(source, /replace\(\/\^\(\?:local\|cloud\):\/i, ""\)/);
   assert.match(source, /function findTasksSection\(\)/);
 });
+
+test("host context reports genuine running Codex threads with their project", () => {
+  const functionStart = source.indexOf("function readRunningCodexThreads");
+  const functionEnd = source.indexOf("\n\n  function findProjectsSection", functionStart);
+  assert.notEqual(functionStart, -1, "running thread reader is missing");
+  assert.notEqual(functionEnd, -1, "running thread reader boundary is missing");
+
+  const functionSource = source.slice(functionStart, functionEnd);
+  const readRunningCodexThreads = vm.runInNewContext(`(${functionSource})`, {
+    boardReturnTasksByThreadId: {
+      "thread-linked": {
+        taskId: "task-7",
+        projectId: "dashi-taskboard",
+        identifier: "DASHITASKBOA-7",
+        title: "制作任务面板",
+      },
+    },
+    document: {
+      querySelectorAll() {
+        return [
+          fakeThreadRow({
+            threadId: "local:thread-running",
+            title: "整理甲方案例方案",
+            projectId: "libtv",
+            running: true,
+          }),
+          fakeThreadRow({
+            threadId: "local:thread-stopped",
+            title: "已经停止的对话",
+            projectId: "libtv",
+            running: false,
+          }),
+          fakeThreadRow({
+            threadId: "local:thread-linked",
+            title: "制作任务面板",
+            projectId: null,
+            running: true,
+          }),
+        ];
+      },
+    },
+    normalizeThreadId(value) {
+      return String(value || "").trim().replace(/^(?:local|cloud):/i, "");
+    },
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(readRunningCodexThreads())), [
+    {
+      threadId: "thread-running",
+      projectId: "libtv",
+      title: "整理甲方案例方案",
+    },
+    {
+      threadId: "thread-linked",
+      projectId: "dashi-taskboard",
+      title: "制作任务面板",
+      linkedTaskId: "task-7",
+    },
+  ]);
+  assert.match(source, /runningThreads: readRunningCodexThreads\(\)/);
+});
+
+function fakeThreadRow({ threadId, title, projectId, running }) {
+  return {
+    getAttribute(name) {
+      return {
+        "data-app-action-sidebar-thread-id": threadId,
+        "data-app-action-sidebar-thread-title": title,
+      }[name] ?? null;
+    },
+    querySelector(selector) {
+      return selector === ".animate-spin" && running ? {} : null;
+    },
+    closest(selector) {
+      if (selector !== "[data-app-action-sidebar-project-list-id]" || !projectId) return null;
+      return {
+        getAttribute(name) {
+          return name === "data-app-action-sidebar-project-list-id" ? projectId : null;
+        },
+      };
+    },
+  };
+}
 
 test("cleanup removes observers, listeners, timers and owned DOM", () => {
   assert.match(source, /observer\?\.disconnect\(\)/);

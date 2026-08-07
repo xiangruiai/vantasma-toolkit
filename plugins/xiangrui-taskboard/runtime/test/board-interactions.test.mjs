@@ -11,6 +11,18 @@ const editorSource = await readFile(new URL("../web/src/components/TaskEditor.ts
 const labelPickerSource = await readFile(new URL("../web/src/components/LabelPicker.tsx", import.meta.url), "utf8");
 const contextMenuSource = await readFile(new URL("../web/src/components/TaskContextMenu.tsx", import.meta.url), "utf8");
 const cardSource = await readFile(new URL("../web/src/components/TaskCard.tsx", import.meta.url), "utf8");
+const projectNavigatorSource = await readFile(
+  new URL("../web/src/components/ProjectNavigator.tsx", import.meta.url),
+  "utf8",
+);
+const issueNavigatorSource = await readFile(
+  new URL("../web/src/components/IssueNavigator.tsx", import.meta.url),
+  "utf8",
+);
+const relatedConversationsSource = await readFile(
+  new URL("../web/src/components/RelatedConversations.tsx", import.meta.url),
+  "utf8",
+);
 const filterSource = await readFile(new URL("../web/src/taskFilters.ts", import.meta.url), "utf8");
 const typesSource = await readFile(new URL("../web/src/types.ts", import.meta.url), "utf8");
 
@@ -150,6 +162,44 @@ test("issues expose processing conversations without manual binding", () => {
   assert.doesNotMatch(detailSource, /placeholder="绑定分支/);
   assert.doesNotMatch(contextMenuSource, /打开关联 Codex 对话/);
   assert.match(contextMenuSource, /onOpenInThread/);
+});
+
+test("task-shaped navigation opens issue details while untracked threads stay explicit conversations", () => {
+  assert.match(typesSource, /export interface RunningCodexThread/);
+  assert.match(typesSource, /runningThreads\?: RunningCodexThread\[\]/);
+  assert.match(appSource, /const liveRunningThreads = useMemo/);
+  assert.match(appSource, /thread\.projectId === selectedProjectId/);
+  assert.match(appSource, /!thread\.linkedTaskId/);
+  assert.match(appSource, /!persistedThreadIds\.has\(thread\.threadId\)/);
+
+  assert.match(cardSource, /onClick=\{\(\) => onEdit\(task\)\}/);
+  assert.match(issueNavigatorSource, /onClick=\{\(\) => onSelect\(task\)\}/);
+  assert.match(detailSource, /onOpenTask=\{onOpenTask\}/);
+  assert.match(appSource, /onEdit=\{openTaskDetail\}/);
+  assert.match(appSource, /onOpenIssue=\{openTaskDetail\}/);
+
+  assert.doesNotMatch(boardColumnSource, /RunningCodexThread|live-codex-task|runningThreads/);
+  assert.doesNotMatch(appSource, /status === "in_progress" \? liveRunningThreads : \[\]/);
+  assert.doesNotMatch(styles, /\.live-codex-task/);
+
+  assert.match(relatedConversationsSource, /runningThreads: RunningCodexThread\[\]/);
+  assert.match(relatedConversationsSource, /运行中的未关联对话/);
+  assert.match(relatedConversationsSource, /onOpenThread\(thread\.threadId\)/);
+  assert.match(appSource, /<RelatedConversations[\s\S]*?runningThreads=\{liveRunningThreads\}/);
+  assert.match(appSource, /const conversationTaskCount = useMemo\([\s\S]*?liveRunningThreads\.length/);
+
+  assert.match(projectNavigatorSource, /runningConversationCount: number/);
+  assert.match(projectNavigatorSource, /有运行中对话/);
+  assert.match(projectNavigatorSource, /\$\{project\.runningConversationCount\} 个运行中对话/);
+  assert.doesNotMatch(appSource, /inProgressCount:[\s\S]{0,160}?liveRunningCountByProject/);
+  assert.match(
+    projectNavigatorSource,
+    /project\.persisted && project\.issueCount === 0 && project\.inProgressCount === 0 && project\.runningConversationCount === 0/,
+  );
+  assert.match(
+    projectNavigatorSource,
+    /!project\.persisted && project\.inProgressCount === 0 && project\.runningConversationCount === 0/,
+  );
 });
 
 test("workflow data is preserved while unfinished workflow controls stay hidden", () => {

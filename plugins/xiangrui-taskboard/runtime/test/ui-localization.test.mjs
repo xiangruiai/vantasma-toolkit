@@ -11,7 +11,7 @@ const [appSource, editorSource, labelPickerSource] = await Promise.all([
 ]);
 
 test("taskboard-facing prompts use natural Chinese copy", () => {
-  assert.match(editorSource, /placeholder="议题标题"/);
+  assert.match(editorSource, /placeholder=\{task \? "议题标题" : "目标：要完成什么？"\}/);
   assert.match(editorSource, /placeholder="添加描述…"/);
   assert.match(labelPickerSource, /placeholder="添加标签…"/);
 

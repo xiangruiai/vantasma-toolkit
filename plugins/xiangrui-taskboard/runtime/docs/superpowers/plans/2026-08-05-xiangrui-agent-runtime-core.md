@@ -628,7 +628,7 @@ Daemon 使用全局 WebSocket，连接 `http` 转 `ws`、`https` 转 `wss`。断
 Server 使用 47824，执行：
 
 ```bash
-npm run runtime:setup -- --server http://127.0.0.1:47824 --name "MacBook-Pro" --workspace /Users/lixiangrui/Projects
+npm run runtime:setup -- --server http://127.0.0.1:47824 --name "MacBook-Pro" --workspace "$HOME/Projects"
 npm run runtime:start
 ```
 

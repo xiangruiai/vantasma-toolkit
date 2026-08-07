@@ -108,7 +108,7 @@ function normalizedWorkspacePath(value?: string | null): string | null {
 }
 ```
 
-计算 `workspacePath` 后，如果它与 `hostContext.workspacePath` 规范化后相同，优先使用 `hostContext.projectId` 作为 `codexProjectId`。其次才使用 Taskboard/Codex 同 ID 或设备保存的路径映射。这样 Taskboard 项目 ID 为 `xiangrui-taskboard`、Codex Project ID 为原生 UUID 时仍可启用自动化。
+计算 `workspacePath` 后，如果它与 `hostContext.workspacePath` 规范化后相同，优先使用 `hostContext.projectId` 作为 `codexProjectId`。其次才使用 Taskboard/Codex 同 ID 或设备保存的路径映射。这样 Taskboard 项目 ID 为 `dashi-taskboard`、Codex Project ID 为原生 UUID 时仍可启用自动化。
 
 - [ ] **Step 2: 让入口显示真实状态**
 
@@ -238,7 +238,7 @@ npm run build
 
 - [ ] **Step 4: 记录交付并进入整体验收**
 
-重新读取 `XIANGRUITASK-2` 和全部评论，添加包含关键改动、验证结果与剩余风险的结果评论，再使用最新 version 将其移动到 `in_review`。不移动到 `done`，等待祥瑞最终验收。
+重新读取 `DASHITASKBOA-2` 和全部评论，添加包含关键改动、验证结果与剩余风险的结果评论，再使用最新 version 将其移动到 `in_review`。不移动到 `done`，等待祥瑞最终验收。
 
 - [ ] **Step 5: 保留业务文件的共享工作区状态**
 

@@ -58,6 +58,7 @@ function parseArgs(argv) {
     attachExisting: false,
     startupToken: null,
     daemon: false,
+    supervise: false,
     screenshot: null,
     appPath: "/Applications/ChatGPT.app",
   };
@@ -77,6 +78,7 @@ function parseArgs(argv) {
       }
     }
     else if (arg === "--daemon") options.daemon = true;
+    else if (arg === "--supervise") options.supervise = true;
     else if (arg === "--port") {
       options.port = Number(argv[++index]);
       options.portExplicit = true;
@@ -313,6 +315,7 @@ async function codexTargets(port) {
       target.type === "page" &&
       target.webSocketDebuggerUrl &&
       !target.url?.includes("initialRoute=%2Fglobal-dictation") &&
+      !target.url?.includes("initialRoute=%2Favatar-overlay") &&
       (target.url?.startsWith("app://") || target.title === "Codex"),
   );
 }
@@ -382,10 +385,43 @@ function startResidentInjector(
   const child = spawn(process.execPath, args, {
     cwd: projectRoot,
     detached: true,
-    stdio: "ignore",
+    stdio: ["ignore", "inherit", "inherit"],
   });
   child.unref();
   return { pid: child.pid, started: true };
+}
+
+async function superviseResidentInjector(port) {
+  let waitingForCodex = false;
+  while (true) {
+    let rendererAvailable = false;
+    try {
+      rendererAvailable = await isReachable(`http://127.0.0.1:${port}/json/version`)
+        && (await codexTargets(port)).length > 0;
+    } catch {}
+
+    if (rendererAvailable) {
+      waitingForCodex = false;
+      if (residentInjectorPids(port).length === 0) {
+        const launcher = startResidentInjector(port, false, true);
+        console.log(JSON.stringify({
+          event: "resident-injector-started",
+          port,
+          pid: launcher.pid,
+          at: new Date().toISOString(),
+        }));
+      }
+    } else if (!waitingForCodex) {
+      waitingForCodex = true;
+      console.log(JSON.stringify({
+        event: "waiting-for-codex",
+        port,
+        at: new Date().toISOString(),
+      }));
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+  }
 }
 
 async function stopResidentInjector(pid) {
@@ -793,6 +829,118 @@ async function restoreQuotaPolicies(cdp) {
   }
 }
 
+async function exposeNativeTaskComposerViaCdp(cdp, executionContextId) {
+  await cdp.send("Runtime.evaluate", {
+    expression: `(() => {
+      const hiddenAttribute = "data-codex-taskboard-native-hidden";
+      const handoffAttribute = "data-codex-taskboard-native-handoff";
+      document.querySelectorAll('[' + hiddenAttribute + '="true"]').forEach((node) => {
+        node.setAttribute(handoffAttribute, "true");
+        node.removeAttribute(hiddenAttribute);
+      });
+      return true;
+    })()`,
+    contextId: executionContextId,
+    returnByValue: true,
+  });
+}
+
+async function restoreNativeTaskComposerViaCdp(cdp, executionContextId) {
+  await cdp.send("Runtime.evaluate", {
+    expression: `(() => {
+      const hiddenAttribute = "data-codex-taskboard-native-hidden";
+      const handoffAttribute = "data-codex-taskboard-native-handoff";
+      const taskboardOpen = document.documentElement.hasAttribute("data-codex-taskboard-open");
+      document.querySelectorAll('[' + handoffAttribute + '="true"]').forEach((node) => {
+        if (taskboardOpen) node.setAttribute(hiddenAttribute, "true");
+        node.removeAttribute(handoffAttribute);
+      });
+      return true;
+    })()`,
+    contextId: executionContextId,
+    returnByValue: true,
+  });
+}
+
+async function focusTaskComposerForInputViaCdp(
+  cdp,
+  executionContextId,
+  { instruction = "", selectAll = false } = {},
+) {
+  const focused = await cdp.send("Runtime.evaluate", {
+    expression: `(() => {
+      const instruction = ${JSON.stringify(instruction)};
+      const hiddenAttribute = "data-codex-taskboard-native-hidden";
+      const hiddenNodes = Array.from(document.querySelectorAll(
+        '[' + hiddenAttribute + '="true"]'
+      ));
+      hiddenNodes.forEach((node) => node.removeAttribute(hiddenAttribute));
+      try {
+        document.getElementById("codex-taskboard-frame")?.blur();
+        const editor = Array.from(document.querySelectorAll(
+          '[data-codex-composer="true"][contenteditable="true"]'
+        )).find((candidate) => (
+          candidate.getClientRects().length > 0
+          && (!instruction || (candidate.textContent || "").includes(instruction))
+        ));
+        if (!editor) return false;
+        editor.focus();
+        if (document.activeElement !== editor) return false;
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(editor);
+        if (!${selectAll}) range.collapse(false);
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        return document.activeElement === editor;
+      } finally {
+        hiddenNodes.forEach((node) => node.setAttribute(hiddenAttribute, "true"));
+      }
+    })()`,
+    contextId: executionContextId,
+    returnByValue: true,
+  });
+  if (focused.result.value !== true) {
+    throw new Error("Codex 原生输入框当前无法接收内容，任务面板评论未被修改");
+  }
+}
+
+async function clickTaskComposerSubmitViaCdp(cdp, executionContextId, instruction) {
+  const clicked = await cdp.send("Runtime.evaluate", {
+    expression: `(() => {
+      const instruction = ${JSON.stringify(instruction)};
+      const hiddenAttribute = "data-codex-taskboard-native-hidden";
+      const hiddenNodes = Array.from(document.querySelectorAll(
+        '[' + hiddenAttribute + '="true"]'
+      ));
+      hiddenNodes.forEach((node) => node.removeAttribute(hiddenAttribute));
+      try {
+        const editor = Array.from(document.querySelectorAll(
+          '[data-codex-composer="true"][contenteditable="true"]'
+        )).find((candidate) => (
+          candidate.getClientRects().length > 0
+          && (candidate.textContent || "").includes(instruction)
+        ));
+        if (!editor) return false;
+        const composer = editor.closest('[data-composer-layout]') || editor.parentElement;
+        const submit = composer?.querySelector(
+          'button[aria-label="发送"], button[aria-label="Send"]'
+        );
+        if (!submit || submit.disabled) return false;
+        submit.click();
+        return true;
+      } finally {
+        hiddenNodes.forEach((node) => node.setAttribute(hiddenAttribute, "true"));
+      }
+    })()`,
+    contextId: executionContextId,
+    returnByValue: true,
+  });
+  if (clicked.result.value !== true) {
+    throw new Error("Codex 原生发送按钮当前不可用，评论已保留但没有发送");
+  }
+}
+
 async function finishPreparedTaskComposerViaCdp(
   cdp,
   executionContextId,
@@ -801,46 +949,7 @@ async function finishPreparedTaskComposerViaCdp(
 ) {
   if (!autoSubmit) return { prefilled: true, submitted: false };
 
-  const focused = await cdp.send("Runtime.evaluate", {
-    expression: `(() => {
-      const instruction = ${JSON.stringify(instruction)};
-      const editor = Array.from(document.querySelectorAll(
-        '[data-codex-composer="true"][contenteditable="true"]'
-      )).find((candidate) => (
-        candidate.getClientRects().length > 0
-        && (candidate.textContent || "").includes(instruction)
-      ));
-      if (!editor) return false;
-      editor.focus();
-      const selection = window.getSelection();
-      const range = document.createRange();
-      range.selectNodeContents(editor);
-      range.collapse(false);
-      selection?.removeAllRanges();
-      selection?.addRange(range);
-      return true;
-    })()`,
-    contextId: executionContextId,
-    returnByValue: true,
-  });
-  if (focused.result.value !== true) {
-    throw new Error("Codex 对话内容尚未准备完成，评论已保留但没有发送");
-  }
-
-  await cdp.send("Input.dispatchKeyEvent", {
-    type: "keyDown",
-    key: "Enter",
-    code: "Enter",
-    windowsVirtualKeyCode: 13,
-    nativeVirtualKeyCode: 13,
-  });
-  await cdp.send("Input.dispatchKeyEvent", {
-    type: "keyUp",
-    key: "Enter",
-    code: "Enter",
-    windowsVirtualKeyCode: 13,
-    nativeVirtualKeyCode: 13,
-  });
+  await clickTaskComposerSubmitViaCdp(cdp, executionContextId, instruction);
 
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
@@ -863,7 +972,7 @@ async function finishPreparedTaskComposerViaCdp(
   throw new Error("Codex 没有确认接收该议题，评论已保留");
 }
 
-async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
+async function prefillTaskComposerContentsViaCdp(cdp, executionContextId, request) {
   const {
     instruction,
     skillDisplayName,
@@ -871,8 +980,8 @@ async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
     skillPath,
     autoSubmit = false,
   } = request;
-  const deadline = Date.now() + 8_000;
-  while (Date.now() < deadline) {
+  const editorDeadline = Date.now() + 8_000;
+  while (Date.now() < editorDeadline) {
     const prepared = await cdp.send("Runtime.evaluate", {
       expression: `(() => {
         const instruction = ${JSON.stringify(instruction)};
@@ -914,12 +1023,14 @@ async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
       );
     }
 
-    await cdp.send("Input.insertText", { text: "$" });
+    await focusTaskComposerForInputViaCdp(cdp, executionContextId, { selectAll: true });
+    await cdp.send("Input.insertText", { text: `$${skillName}` });
     break;
   }
 
   let selectedSkill = false;
-  while (Date.now() < deadline) {
+  const skillSelectionDeadline = Date.now() + 15_000;
+  while (Date.now() < skillSelectionDeadline) {
     const selection = await cdp.send("Runtime.evaluate", {
       expression: `(() => {
         const displayName = ${JSON.stringify(skillDisplayName)};
@@ -945,11 +1056,12 @@ async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
     await new Promise((resolve) => setTimeout(resolve, 80));
   }
   if (!selectedSkill) {
-    throw new Error(`Timed out while selecting the ${skillDisplayName} Skill`);
+    throw new Error(`Codex 中没有找到路径匹配的 ${skillDisplayName} Skill，请刷新后重试`);
   }
 
   let mentionReady = false;
-  while (Date.now() < deadline) {
+  const mentionDeadline = Date.now() + 5_000;
+  while (Date.now() < mentionDeadline) {
     const mention = await cdp.send("Runtime.evaluate", {
       expression: `(() => {
         const skillName = ${JSON.stringify(skillName)};
@@ -970,7 +1082,7 @@ async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
     });
     if (mention.result.value?.ready) {
       if (!mention.result.value.pathMatches) {
-        throw new Error(`Codex selected a different ${skillDisplayName} Skill`);
+        throw new Error(`Codex 选中了另一个 ${skillDisplayName} Skill，请检查是否重复安装`);
       }
       mentionReady = true;
       break;
@@ -978,11 +1090,12 @@ async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
     await new Promise((resolve) => setTimeout(resolve, 80));
   }
   if (!mentionReady) {
-    throw new Error(`Timed out while creating the ${skillDisplayName} Skill mention`);
+    throw new Error(`Codex 没有生成 ${skillDisplayName} Skill 引用，请重试`);
   }
 
-  await cdp.send("Input.insertText", { text: instruction });
-  while (Date.now() < deadline) {
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  const instructionDeadline = Date.now() + 5_000;
+  while (Date.now() < instructionDeadline) {
     const verified = await cdp.send("Runtime.evaluate", {
       expression: `(() => {
         const instruction = ${JSON.stringify(instruction)};
@@ -1009,9 +1122,20 @@ async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
         autoSubmit,
       );
     }
-    await new Promise((resolve) => setTimeout(resolve, 80));
+    await focusTaskComposerForInputViaCdp(cdp, executionContextId);
+    await cdp.send("Input.insertText", { text: instruction });
+    await new Promise((resolve) => setTimeout(resolve, 120));
   }
-  throw new Error("Timed out while writing the issue instruction into the Codex composer");
+  throw new Error("Codex 没有把议题要求写入对话输入框，请重试");
+}
+
+async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
+  await exposeNativeTaskComposerViaCdp(cdp, executionContextId);
+  try {
+    return await prefillTaskComposerContentsViaCdp(cdp, executionContextId, request);
+  } finally {
+    await restoreNativeTaskComposerViaCdp(cdp, executionContextId);
+  }
 }
 
 async function sendHostResponse(cdp, executionContextId, response) {
@@ -1290,6 +1414,11 @@ ${runtimeSource}`,
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const cdpVersionUrl = `http://127.0.0.1:${options.port}/json/version`;
+
+  if (options.supervise) {
+    await superviseResidentInjector(options.port);
+    return;
+  }
 
   if (options.daemon) {
     let port = options.port;

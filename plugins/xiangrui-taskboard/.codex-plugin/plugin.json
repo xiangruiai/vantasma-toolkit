@@ -1,6 +1,6 @@
 {
   "name": "xiangrui-taskboard",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "把祥瑞任务面板带进 Codex，用看板管理项目、议题、评论、关系和 Agent 执行状态。",
   "author": {
     "name": "xiangruiai（李祥瑞 / 万涂幻象）",
@@ -15,7 +15,7 @@
   "interface": {
     "displayName": "祥瑞任务面板",
     "shortDescription": "在 Codex 里用任务面板推进项目",
-    "longDescription": "万涂幻象的 Codex 任务面板插件。提供本地看板、项目与议题管理、评论和关系、Agent 执行交接，以及 taskctl 命令行工作流。",
+    "longDescription": "万涂幻象的 Codex 任务面板插件。提供项目看板、真实运行中任务、任务与对话跳转、准确阻塞信息、Agent 执行交接，以及 macOS 左侧边栏一键集成。",
     "developerName": "万涂幻象",
     "category": "Productivity",
     "capabilities": ["Interactive", "Read", "Write"],

@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "0.6.9";
+  const VERSION = "0.6.11";
   const SOURCE_HASH = window.__CODEX_TASKBOARD_SOURCE_HASH__;
   const SENTINEL_KEY = "__codexTaskboardInjection__";
   const DEFAULT_TASKBOARD_URL = "http://127.0.0.1:47823/?host=codex";
@@ -13,6 +13,7 @@
   const NO_DRAG_RIGHT_ID = "codex-taskboard-no-drag-right";
   const STATUS_ID = "codex-taskboard-status";
   const WORKSPACE_TABS_ID = "codex-taskboard-workspace-tabs";
+  const BOARD_RETURN_TASKS_STORAGE_KEY = "codex-taskboard.returnTasks.v1";
   const STYLE_ID = "codex-taskboard-inject-style";
   const OWNED_ATTRIBUTE = "data-codex-taskboard-owned";
   const HIDDEN_ATTRIBUTE = "data-codex-taskboard-native-hidden";
@@ -73,6 +74,9 @@
   let mutedNativeSelections = new Map();
   let openGeneration = 0;
   let pendingThreadCreation = null;
+  let pendingBoardReturnTask = null;
+  let activeBoardTaskTarget = null;
+  let boardReturnTasksByThreadId = readBoardReturnTasks();
   let lastNativeThreadId = "";
   let conversationTabs = [];
   let active = false;
@@ -86,6 +90,55 @@
     return String(value || "").trim().replace(/^(?:local|cloud):/i, "");
   }
 
+  function normalizeBoardReturnTask(payload) {
+    if (!payload || typeof payload !== "object") return null;
+    const taskId = typeof payload.taskId === "string" ? payload.taskId.trim() : "";
+    const projectId = typeof payload.projectId === "string" ? payload.projectId.trim() : "";
+    const identifier = typeof payload.identifier === "string" ? payload.identifier.trim() : "";
+    const title = typeof payload.title === "string" ? payload.title.trim() : "";
+    if (!taskId || !projectId || !identifier) return null;
+    return { taskId, projectId, identifier, title };
+  }
+
+  function readBoardReturnTasks() {
+    try {
+      const stored = JSON.parse(window.sessionStorage.getItem(BOARD_RETURN_TASKS_STORAGE_KEY) || "{}");
+      if (!stored || typeof stored !== "object" || Array.isArray(stored)) return {};
+      return Object.fromEntries(Object.entries(stored).flatMap(([threadId, value]) => {
+        const task = normalizeBoardReturnTask(value);
+        const normalizedThreadId = normalizeThreadId(threadId);
+        return task && normalizedThreadId ? [[normalizedThreadId, task]] : [];
+      }));
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function persistBoardReturnTasks() {
+    try {
+      window.sessionStorage.setItem(
+        BOARD_RETURN_TASKS_STORAGE_KEY,
+        JSON.stringify(boardReturnTasksByThreadId),
+      );
+    } catch (_) {}
+  }
+
+  function registerBoardReturnTask(payload) {
+    const task = normalizeBoardReturnTask(payload);
+    if (!task) return null;
+    const threadId = normalizeThreadId(payload.threadId);
+    if (threadId) {
+      boardReturnTasksByThreadId = { ...boardReturnTasksByThreadId, [threadId]: task };
+      if (pendingBoardReturnTask?.taskId === task.taskId) pendingBoardReturnTask = null;
+      persistBoardReturnTasks();
+    } else {
+      pendingBoardReturnTask = task;
+    }
+    workspaceTabsSignature = "";
+    renderWorkspaceTabs();
+    return task;
+  }
+
   function resolveTaskboardUrl() {
     const configured = typeof window.__CODEX_TASKBOARD_URL__ === "string"
       ? window.__CODEX_TASKBOARD_URL__.trim()
@@ -96,6 +149,13 @@
         throw new Error("Unsupported taskboard URL protocol");
       }
       if (!url.searchParams.has("host")) url.searchParams.set("host", "codex");
+      if (activeBoardTaskTarget) {
+        url.searchParams.set("project", activeBoardTaskTarget.projectId);
+        url.searchParams.set("issue", activeBoardTaskTarget.identifier);
+      } else {
+        url.searchParams.delete("project");
+        url.searchParams.delete("issue");
+      }
       return url;
     } catch (_) {
       return new URL(DEFAULT_TASKBOARD_URL);
@@ -363,6 +423,7 @@
     button.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
+      activeBoardTaskTarget = null;
       openTaskboard();
     });
     return button;
@@ -482,32 +543,50 @@
   function renderWorkspaceTabs() {
     const tabs = ensureWorkspaceTabs();
     if (!tabs) return;
-    const activeThreadId = active
+    const routeThreadId = active
       ? ""
       : normalizeThreadId(activeThreadRow()?.getAttribute("data-app-action-sidebar-thread-id"))
-        || normalizeThreadId(threadIdFromLocation())
-        || lastNativeThreadId;
+        || normalizeThreadId(threadIdFromLocation());
+    const activeThreadId = routeThreadId || lastNativeThreadId;
+    const boardReturnTask = active
+      ? activeBoardTaskTarget
+      : boardReturnTasksByThreadId[routeThreadId] || pendingBoardReturnTask;
     const signature = JSON.stringify({
       active,
       activeThreadId,
+      boardReturnTask,
       conversationTabs,
     });
     if (workspaceTabsSignature === signature) return;
     workspaceTabsSignature = signature;
-    tabs.hidden = !active && conversationTabs.length === 0;
+    tabs.hidden = !active && !boardReturnTask && conversationTabs.length === 0;
 
-    const boardTab = document.createElement("div");
-    boardTab.className = "codex-taskboard-workspace-tab";
-    boardTab.dataset.active = String(active);
-    const boardButton = document.createElement("button");
-    boardButton.type = "button";
-    boardButton.className = "codex-taskboard-workspace-tab-main";
-    boardButton.setAttribute("aria-label", "打开看板");
-    boardButton.innerHTML = '<span class="codex-taskboard-workspace-tab-dot" aria-hidden="true"></span><span>看板</span>';
-    boardButton.addEventListener("click", openTaskboard);
-    boardTab.appendChild(boardButton);
-
-    const nodes = [boardTab];
+    const nodes = [];
+    if (active || boardReturnTask) {
+      const boardTab = document.createElement("div");
+      boardTab.className = "codex-taskboard-workspace-tab";
+      boardTab.dataset.active = String(active);
+      const boardButton = document.createElement("button");
+      boardButton.type = "button";
+      boardButton.className = "codex-taskboard-workspace-tab-main";
+      const boardLabel = [boardReturnTask?.identifier, boardReturnTask?.title]
+        .filter(Boolean)
+        .join(" · ") || "任务面板";
+      boardButton.title = boardLabel;
+      boardButton.setAttribute(
+        "aria-label",
+        boardReturnTask ? `打开任务 ${boardLabel}` : "打开任务面板",
+      );
+      const boardDot = document.createElement("span");
+      boardDot.className = "codex-taskboard-workspace-tab-dot";
+      boardDot.setAttribute("aria-hidden", "true");
+      const boardText = document.createElement("span");
+      boardText.textContent = boardLabel;
+      boardButton.append(boardDot, boardText);
+      boardButton.addEventListener("click", () => openTaskboardForTask(boardReturnTask));
+      boardTab.appendChild(boardButton);
+      nodes.push(boardTab);
+    }
     conversationTabs.forEach((tab) => {
       const tabNode = document.createElement("div");
       tabNode.className = "codex-taskboard-workspace-tab";
@@ -584,6 +663,34 @@
         if (!id || !name || seen.has(id)) return [];
         seen.add(id);
         return [{ id, name }];
+      });
+  }
+
+  function readRunningCodexThreads() {
+    const seen = new Set();
+    return Array.from(document.querySelectorAll("[data-app-action-sidebar-thread-id]"))
+      .flatMap((row) => {
+        if (!row.querySelector(".animate-spin")) return [];
+        const threadId = normalizeThreadId(
+          row.getAttribute("data-app-action-sidebar-thread-id"),
+        );
+        if (!threadId || seen.has(threadId)) return [];
+        const linkedTask = boardReturnTasksByThreadId[threadId] || null;
+        const projectId = row.closest("[data-app-action-sidebar-project-list-id]")
+          ?.getAttribute("data-app-action-sidebar-project-list-id")
+          ?.trim() || linkedTask?.projectId || "";
+        const title = row.getAttribute("data-app-action-sidebar-thread-title")?.trim()
+          || row.getAttribute("aria-label")?.trim()
+          || row.textContent?.replace(/\s+/g, " ").trim()
+          || "Codex 正在执行";
+        if (!projectId) return [];
+        seen.add(threadId);
+        return [{
+          threadId,
+          projectId,
+          title,
+          ...(linkedTask?.taskId ? { linkedTaskId: linkedTask.taskId } : {}),
+        }];
       });
   }
 
@@ -735,6 +842,7 @@
     const payload = {
       theme: currentTheme(),
       projects,
+      runningThreads: readRunningCodexThreads(),
       user: readCodexUser() ?? undefined,
       titlebarLeftInset: titlebarLeftInset(),
       sidebarCollapsed: nativeSidebarCollapsed(),
@@ -783,6 +891,7 @@
     const threadId = typeof payload === "string" ? payload : payload?.threadId;
     if (typeof threadId !== "string" || !threadId.trim()) return;
     registerConversationTab(typeof payload === "string" ? { threadId } : payload);
+    if (typeof payload === "object") registerBoardReturnTask(payload);
     const normalizedThreadId = normalizeThreadId(threadId);
     lastNativeThreadId = normalizedThreadId;
     const row = findThreadRow(normalizedThreadId);
@@ -873,6 +982,7 @@
       || pendingThreadCreation
     ) return;
     pendingThreadCreation = taskId;
+    registerBoardReturnTask(payload);
     try {
       const bridge = window.electronBridge;
       if (!bridge || typeof bridge.sendMessageFromView !== "function") {
@@ -903,6 +1013,7 @@
         if (selectProject) await new Promise((resolve) => window.setTimeout(resolve, 120));
       }
 
+      workspaceTabsSignature = "";
       closeTaskboard(false);
       await dispatchHostMessage({
         type: "navigate-to-route",
@@ -1009,6 +1120,10 @@
     }
     if (message.type === "taskboard:open-thread") {
       void openThread(message.payload);
+      return;
+    }
+    if (message.type === "taskboard:linked-task") {
+      registerBoardReturnTask(message.payload);
       return;
     }
     if (message.type === "taskboard:expand-sidebar") {
@@ -1353,6 +1468,12 @@
     hostContextSnapshot = null;
   }
 
+  function openTaskboardForTask(task) {
+    activeBoardTaskTarget = normalizeBoardReturnTask(task);
+    workspaceTabsSignature = "";
+    openTaskboard();
+  }
+
   function openTaskboard() {
     if (destroyed) return;
     if (!active) {
@@ -1447,6 +1568,8 @@
     });
     hostRequests.clear();
     pendingThreadCreation = null;
+    pendingBoardReturnTask = null;
+    activeBoardTaskTarget = null;
     document.removeEventListener("DOMContentLoaded", mount);
     document.removeEventListener("click", onDocumentClick, true);
     window.removeEventListener("message", onFrameMessage);
