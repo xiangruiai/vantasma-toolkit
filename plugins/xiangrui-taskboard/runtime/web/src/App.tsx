@@ -46,6 +46,7 @@ import {
   actorForAssigneeTarget,
   assigneeTargetForActor,
 } from "./actors";
+import { reloadIfTaskboardBuildStale } from "./build-recovery";
 import { BoardColumn, STATUS_DETAILS } from "./components/BoardColumn";
 import { AiChat } from "./components/AiChat";
 import { BlockTaskDialog } from "./components/BlockTaskDialog";
@@ -590,6 +591,8 @@ export function App() {
   const pendingAutomationRequestsRef = useRef(new Map<string, PendingAutomationRequest>());
   const automationRequestInFlightRef = useRef(false);
   const projectAutomationsRef = useRef(projectAutomations);
+  const buildCheckInFlightRef = useRef(false);
+  const lastBuildCheckAtRef = useRef(0);
 
   const setAnnouncement = useCallback((message: string) => {
     setUndoNotice(null);
@@ -1079,6 +1082,14 @@ export function App() {
       }
 
       if (message.type !== "taskboard:host-context" || !message.payload) return;
+      const now = Date.now();
+      if (!buildCheckInFlightRef.current && now - lastBuildCheckAtRef.current >= 5_000) {
+        buildCheckInFlightRef.current = true;
+        lastBuildCheckAtRef.current = now;
+        void reloadIfTaskboardBuildStale()
+          .catch(() => false)
+          .finally(() => { buildCheckInFlightRef.current = false; });
+      }
       const payload = message.payload as HostContext;
       setHostContext(payload);
       setCurrentUserActor(payload.user);
