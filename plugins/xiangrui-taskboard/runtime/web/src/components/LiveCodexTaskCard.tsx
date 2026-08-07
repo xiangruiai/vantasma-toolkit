@@ -3,7 +3,7 @@ import { LinearIcon } from "./LinearIcon";
 
 interface LiveCodexTaskCardProps {
   thread: RunningCodexThread;
-  onOpen: (thread: RunningCodexThread) => void;
+  onOpen: (threadId: string) => void;
 }
 
 export function LiveCodexTaskCard({ thread, onOpen }: LiveCodexTaskCardProps) {
@@ -16,8 +16,8 @@ export function LiveCodexTaskCard({ thread, onOpen }: LiveCodexTaskCardProps) {
       <button
         className="task-card-open"
         type="button"
-        aria-label={`查看正在执行的任务：${thread.title}`}
-        onClick={() => onOpen(thread)}
+        aria-label={`打开正在执行的 Codex 对话：${thread.title}`}
+        onClick={() => onOpen(thread.threadId)}
       />
 
       <div className="card-topline">

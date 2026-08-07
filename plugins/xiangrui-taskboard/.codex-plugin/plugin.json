@@ -1,6 +1,6 @@
 {
   "name": "xiangrui-taskboard",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "把祥瑞任务面板带进 Codex，用看板管理项目、议题、评论、关系和 Agent 执行状态。",
   "author": {
     "name": "xiangruiai（李祥瑞 / 万涂幻象）",

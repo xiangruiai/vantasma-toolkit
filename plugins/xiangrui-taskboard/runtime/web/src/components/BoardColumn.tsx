@@ -42,7 +42,7 @@ interface BoardColumnProps {
   onDragEnter: (status: TaskStatus) => void;
   onDrop: (status: TaskStatus, taskId: string, beforeTaskId: string | null) => void;
   onOpenThread: (threadId: string) => void;
-  onOpenRunningTask: (thread: RunningCodexThread) => void;
+  onOpenRunningTask: (threadId: string) => void;
 }
 
 export function BoardColumn({

@@ -11,6 +11,10 @@ const editorSource = await readFile(new URL("../web/src/components/TaskEditor.ts
 const labelPickerSource = await readFile(new URL("../web/src/components/LabelPicker.tsx", import.meta.url), "utf8");
 const contextMenuSource = await readFile(new URL("../web/src/components/TaskContextMenu.tsx", import.meta.url), "utf8");
 const cardSource = await readFile(new URL("../web/src/components/TaskCard.tsx", import.meta.url), "utf8");
+const liveCardSource = await readFile(
+  new URL("../web/src/components/LiveCodexTaskCard.tsx", import.meta.url),
+  "utf8",
+);
 const projectNavigatorSource = await readFile(
   new URL("../web/src/components/ProjectNavigator.tsx", import.meta.url),
   "utf8",
@@ -164,7 +168,7 @@ test("issues expose processing conversations without manual binding", () => {
   assert.match(contextMenuSource, /onOpenInThread/);
 });
 
-test("verified untracked Codex work appears as a live task in the in-progress column", () => {
+test("verified untracked Codex work opens its real conversation without a fake task detail", () => {
   assert.match(typesSource, /export interface RunningCodexThread/);
   assert.match(typesSource, /runningThreads\?: RunningCodexThread\[\]/);
   assert.match(appSource, /const liveRunningThreads = useMemo/);
@@ -186,7 +190,9 @@ test("verified untracked Codex work appears as a live task in the in-progress co
   assert.match(boardColumnSource, /<LiveCodexTaskCard/);
   assert.match(boardColumnSource, /tasks\.length \+ runningThreads\.length/);
   assert.match(appSource, /status === "in_progress" \? liveRunningThreads : \[\]/);
-  assert.match(appSource, /onOpenRunningTask=\{openRunningTaskDetail\}/);
+  assert.match(boardColumnSource, /onOpenRunningTask: \(threadId: string\) => void/);
+  assert.match(liveCardSource, /onClick=\{\(\) => onOpen\(thread\.threadId\)\}/);
+  assert.match(appSource, /onOpenRunningTask=\{openThread\}/);
   assert.match(styles, /\.live-codex-task/);
   assert.match(
     appSource,
@@ -197,10 +203,8 @@ test("verified untracked Codex work appears as a live task in the in-progress co
     /status === "in_progress"[\s\S]{0,120}?liveRunningThreads\.length > 0/,
   );
 
-  assert.match(appSource, /type WorkspacePane = "board" \| "issue" \| "running-task" \| "conversations"/);
-  assert.match(appSource, /const \[detailRunningThreadId, setDetailRunningThreadId\]/);
-  assert.match(appSource, /<LiveCodexTaskDetail/);
-  assert.match(appSource, /onOpenThread=\{openThread\}/);
+  assert.doesNotMatch(appSource, /LiveCodexTaskDetail|running-task|detailRunningThreadId|openRunningTaskDetail/);
+  assert.doesNotMatch(styles, /\.live-codex-task-detail/);
 
   assert.match(relatedConversationsSource, /runningThreads: RunningCodexThread\[\]/);
   assert.match(relatedConversationsSource, /运行中的未关联对话/);

@@ -55,7 +55,6 @@ import {
   type PendingInlineImage,
 } from "./components/InlineMediaComposer";
 import { LinearIcon, LinearStatusIcon } from "./components/LinearIcon";
-import { LiveCodexTaskDetail } from "./components/LiveCodexTaskDetail";
 import { ProjectNavigator } from "./components/ProjectNavigator";
 import { ProjectAutomationMenu } from "./components/ProjectAutomationMenu";
 import { RelatedConversations } from "./components/RelatedConversations";
@@ -101,7 +100,7 @@ import { createRevisionPoller, getRevisionPollingInterval } from "./revisionPoll
 type ConnectionState = "connecting" | "live" | "reconnecting";
 type Theme = "light" | "dark";
 type BoardView = "issues" | "workflow";
-type WorkspacePane = "board" | "issue" | "running-task" | "conversations";
+type WorkspacePane = "board" | "issue" | "conversations";
 const SHOW_WORKFLOW_BOARD_ENTRY = false;
 
 const WorkflowBoard = lazy(() => import("./components/WorkflowBoard").then((module) => ({
@@ -555,7 +554,6 @@ export function App() {
   const [detailTaskIdentifier, setDetailTaskIdentifier] = useState<string | null>(
     () => readIssueIdentifier(window.location.search),
   );
-  const [detailRunningThreadId, setDetailRunningThreadId] = useState<string | null>(null);
   const [workspacePane, setWorkspacePane] = useState<WorkspacePane>(
     () => readIssueIdentifier(window.location.search) ? "issue" : "board",
   );
@@ -981,7 +979,6 @@ export function App() {
   function openTaskDetail(task: Pick<Task, "identifier" | "projectId">) {
     closeContextMenu();
     setProjectMenuOpen(false);
-    setDetailRunningThreadId(null);
     setLatestActivityTarget(
       workspacePane === "board" && boardView === "issues" ? task.identifier : null,
     );
@@ -1002,7 +999,6 @@ export function App() {
 
   function closeTaskDetail() {
     setLatestActivityTarget(null);
-    setDetailRunningThreadId(null);
     setWorkspacePane("board");
     const url = buildIssueUrl(window.location.href, selectedProjectId || null, null);
     window.history.replaceState(window.history.state, "", url);
@@ -1010,7 +1006,6 @@ export function App() {
 
   function selectWorkspacePane(pane: WorkspacePane) {
     if (pane === "issue" && !detailTaskIdentifier) return;
-    if (pane === "running-task" && !detailRunningThreadId) return;
     setWorkspacePane(pane);
     const issueIdentifier = pane === "issue" ? detailTaskIdentifier : null;
     const url = buildIssueUrl(window.location.href, selectedProjectId || null, issueIdentifier);
@@ -1032,7 +1027,6 @@ export function App() {
       const url = new URL(window.location.href);
       const routeProjectId = url.searchParams.get("project") ?? "";
       const routeIssueIdentifier = readIssueIdentifier(url.search);
-      setDetailRunningThreadId(null);
       setDetailTaskIdentifier(routeIssueIdentifier);
       setWorkspacePane(routeIssueIdentifier ? "issue" : "board");
       if (routeProjectId === selectedProjectId) return;
@@ -1501,16 +1495,6 @@ export function App() {
     ));
   }, [hostContext?.runningThreads, identityResolver, persistedThreadIds, selectedProjectId]);
 
-  const detailRunningThread = detailRunningThreadId
-    ? liveRunningThreads.find((thread) => thread.threadId === detailRunningThreadId) ?? null
-    : null;
-
-  useEffect(() => {
-    if (workspacePane !== "running-task" || !detailRunningThreadId || detailRunningThread) return;
-    setDetailRunningThreadId(null);
-    setWorkspacePane("board");
-  }, [detailRunningThread, detailRunningThreadId, workspacePane]);
-
   const conversationTaskCount = useMemo(
     () => tasks.filter((task) => task.threadId).length + liveRunningThreads.length,
     [liveRunningThreads.length, tasks],
@@ -1526,17 +1510,6 @@ export function App() {
       ...TASK_STATUSES.filter((status) => !hasVisibleTask(status)),
     ];
   }, [liveRunningThreads.length, tasksByStatus]);
-
-  function openRunningTaskDetail(thread: RunningCodexThread) {
-    closeContextMenu();
-    setProjectMenuOpen(false);
-    setLatestActivityTarget(null);
-    setDetailTaskIdentifier(null);
-    setDetailRunningThreadId(thread.threadId);
-    setWorkspacePane("running-task");
-    const url = buildIssueUrl(window.location.href, selectedProjectId || null, null);
-    window.history.replaceState(window.history.state, "", url);
-  }
 
   function selectBoardView(view: BoardView) {
     closeContextMenu();
@@ -1980,7 +1953,6 @@ export function App() {
     closeContextMenu();
     setProjectMenuOpen(false);
     setDetailTaskIdentifier(null);
-    setDetailRunningThreadId(null);
     setWorkspacePane("board");
     setProjectNavigatorOpen(true);
     setBoardView("issues");
@@ -1999,7 +1971,6 @@ export function App() {
     closeContextMenu();
     setProjectMenuOpen(false);
     setDetailTaskIdentifier(null);
-    setDetailRunningThreadId(null);
     setWorkspacePane("board");
     setSelectedProjectId("");
     window.localStorage.removeItem(LAST_PROJECT_KEY);
@@ -2296,20 +2267,6 @@ export function App() {
                 <strong>{detailTask.title}</strong>
               </button>
             )}
-            {detailRunningThread && (
-              <button
-                className={`workspace-tab workspace-tab-issue${workspacePane === "running-task" ? " active" : ""}`}
-                type="button"
-                role="tab"
-                aria-selected={workspacePane === "running-task"}
-                onClick={() => selectWorkspacePane("running-task")}
-                title={`正在执行 ${detailRunningThread.title}`}
-              >
-                <LinearStatusIcon status="in_progress" />
-                <span>进行中</span>
-                <strong>{detailRunningThread.title}</strong>
-              </button>
-            )}
             <button
               className={`workspace-tab${workspacePane === "conversations" ? " active" : ""}`}
               type="button"
@@ -2512,12 +2469,6 @@ export function App() {
             onError={setActionError}
             onAnnounce={setAnnouncement}
           />
-        ) : workspacePane === "running-task" && detailRunningThread && selectedProject ? (
-          <LiveCodexTaskDetail
-            thread={detailRunningThread}
-            projectName={selectedProject.name}
-            onOpenThread={openThread}
-          />
         ) : workspacePane === "conversations" ? (
           <RelatedConversations
             tasks={tasks}
@@ -2603,7 +2554,7 @@ export function App() {
                   onDragEnter={setDropTarget}
                   onDrop={finishTaskDrop}
                   onOpenThread={openThread}
-                  onOpenRunningTask={openRunningTaskDetail}
+                  onOpenRunningTask={openThread}
                 />
               ))}
             </div>
