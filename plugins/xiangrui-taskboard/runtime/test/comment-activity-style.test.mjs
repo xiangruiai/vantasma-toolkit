@@ -29,7 +29,7 @@ test("comment body renders document formatting at Linear typography", () => {
 });
 
 test("comment composer aligns with the full comment floor width", () => {
-  assert.match(styles, /\.comment-composer\s*\{[^}]*margin:\s*18px 8px 0;/s);
+  assert.match(styles, /\.comment-composer\s*\{[^}]*margin:\s*18px 0 0;/s);
   assert.match(
     styles,
     /\.comment-composer\s*\{[^}]*background:\s*var\(--surface\);[^}]*box-shadow:\s*var\(--card-shadow\);/s,

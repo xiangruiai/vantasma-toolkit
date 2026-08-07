@@ -255,7 +255,7 @@ test("issues open an unsent native Codex composer in the exact workspace with a 
   assert.match(webApp, /type: "taskboard:create-thread"/);
   assert.match(
     webApp,
-    /type: "taskboard:open-thread",\s*payload: \{\s*threadId,\s*taskId: sourceTask\?\.id,\s*projectId: sourceTask\?\.projectId,\s*identifier: sourceTask\?\.identifier,\s*title: sourceTask\?\.title/,
+    /type: "taskboard:open-thread",\s*payload: \{\s*threadId,\s*taskId: sourceTask\?\.id,\s*projectId: returnProjectId,\s*projectName: returnProjectName,\s*identifier: sourceTask\?\.identifier,\s*title: sourceTask\?\.title/,
   );
 });
 
@@ -308,7 +308,7 @@ test("the return tab identifies and opens the linked Taskboard issue", () => {
   assert.match(source, /url\.searchParams\.set\("issue", activeBoardTaskTarget\.identifier\)/);
   assert.match(
     source,
-    /const boardLabel = \[boardReturnTask\?\.identifier, boardReturnTask\?\.title\]/,
+    /const boardLabel = boardReturnTask\?\.identifier[\s\S]*?boardReturnTask\?\.projectName/,
   );
   assert.match(
     source,
@@ -318,6 +318,47 @@ test("the return tab identifies and opens the linked Taskboard issue", () => {
     source,
     /boardButton\.innerHTML = '[^']*<span>看板<\/span>'/,
   );
+});
+
+test("an unlinked live Codex task keeps a project-level Taskboard return target", () => {
+  const normalizeStart = source.indexOf("function normalizeBoardReturnTask");
+  const normalizeEnd = source.indexOf("\n\n  function readBoardReturnTasks", normalizeStart);
+  assert.notEqual(normalizeStart, -1, "board return target normalizer is missing");
+  assert.notEqual(normalizeEnd, -1, "board return target normalizer boundary is missing");
+  const normalizeBoardReturnTask = vm.runInNewContext(`(${source.slice(normalizeStart, normalizeEnd)})`);
+
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(normalizeBoardReturnTask({
+      projectId: "libtv",
+      projectName: "libtv",
+      threadId: "thread-live",
+      title: "整理甲方案例方案",
+    }))),
+    { projectId: "libtv", projectName: "libtv" },
+  );
+
+  const resolveSource = source.slice(
+    source.indexOf("function resolveTaskboardUrl"),
+    source.indexOf("\n\n  function isLocalTaskboardOrigin"),
+  );
+  assert.match(resolveSource, /url\.searchParams\.set\("project", activeBoardTaskTarget\.projectId\)/);
+  assert.match(resolveSource, /if \(activeBoardTaskTarget\.identifier\)/);
+  assert.match(resolveSource, /else \{\s*url\.searchParams\.delete\("issue"\)/);
+
+  const renderSource = source.slice(
+    source.indexOf("function renderWorkspaceTabs"),
+    source.indexOf("\n\n  function currentTheme"),
+  );
+  assert.match(renderSource, /boardReturnTask\?\.projectName/);
+  assert.match(renderSource, /看板/);
+
+  const openThreadSource = webApp.slice(
+    webApp.indexOf("function openThread(threadId: string)"),
+    webApp.indexOf("\n\n  function expandCodexSidebar"),
+  );
+  assert.match(openThreadSource, /hostContext\?\.runningThreads/);
+  assert.match(openThreadSource, /projectId:/);
+  assert.match(openThreadSource, /projectName:/);
 });
 
 test("the standalone web page opens linked Codex tasks through the app deep link", () => {
@@ -427,6 +468,84 @@ test("host context reports genuine running Codex threads with their project", ()
     },
   ]);
   assert.match(source, /runningThreads: readRunningCodexThreads\(\)/);
+});
+
+test("unchanged Codex host context is not reposted on every renderer mutation", () => {
+  assert.match(source, /let lastPostedHostContextSignature = ""/);
+  const postHostContextSource = source.slice(
+    source.indexOf("function postHostContext"),
+    source.indexOf("\n\n  function findThreadRow"),
+  );
+  assert.match(postHostContextSource, /const signature = JSON\.stringify\(payload\)/);
+  assert.match(postHostContextSource, /if \(!force && signature === lastPostedHostContextSignature\) return/);
+  assert.match(postHostContextSource, /lastPostedHostContextSignature = signature/);
+  const frameLoadSource = source.slice(
+    source.indexOf("function loadTaskboardFrame"),
+    source.indexOf("\n\n  function reloadFrame"),
+  );
+  assert.match(frameLoadSource, /lastPostedHostContextSignature = ""/);
+});
+
+test("the iframe ready handshake always receives host context after an early load message", () => {
+  const postHostContextSource = source.slice(
+    source.indexOf("function postHostContext"),
+    source.indexOf("\n\n  function findThreadRow"),
+  );
+  assert.match(postHostContextSource, /function postHostContext\(force = false\)/);
+  assert.match(postHostContextSource, /if \(!force && signature === lastPostedHostContextSignature\) return/);
+
+  const frameMessageSource = source.slice(
+    source.indexOf("function onFrameMessage"),
+    source.indexOf("\n\n  function updateDragRegion"),
+  );
+  assert.match(
+    frameMessageSource,
+    /message\.type === "taskboard:ready"[\s\S]*?postHostContext\(true\)/,
+  );
+});
+
+test("collapsing the native Codex sidebar does not erase known running tasks", () => {
+  const functionStart = source.indexOf("function mergeHostContexts");
+  const functionEnd = source.indexOf("\n\n  function postHostContext", functionStart);
+  assert.notEqual(functionStart, -1, "host context merger is missing");
+  assert.notEqual(functionEnd, -1, "host context merger boundary is missing");
+
+  const functionSource = source.slice(functionStart, functionEnd);
+  const mergeHostContexts = vm.runInNewContext(`(${functionSource})`);
+  const previous = {
+    theme: "dark",
+    projects: [{ id: "libtv", name: "libtv" }],
+    runningThreads: [{
+      threadId: "thread-running",
+      projectId: "libtv",
+      title: "整理甲方案例方案",
+    }],
+    user: { type: "user", id: "xiangrui", name: "祥瑞" },
+    projectId: "libtv",
+    threadId: "thread-running",
+    sidebarCollapsed: false,
+  };
+
+  const collapsed = mergeHostContexts(previous, {
+    theme: "dark",
+    projects: [],
+    runningThreads: [],
+    sidebarCollapsed: true,
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(collapsed)), {
+    ...previous,
+    sidebarCollapsed: true,
+  });
+
+  const expandedAndStopped = mergeHostContexts(collapsed, {
+    theme: "dark",
+    projects: [{ id: "libtv", name: "libtv" }],
+    runningThreads: [],
+    projectId: "libtv",
+    threadId: "thread-running",
+    sidebarCollapsed: false,
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(expandedAndStopped.runningThreads)), []);
 });
 
 function fakeThreadRow({ threadId, title, projectId, running }) {

@@ -231,6 +231,18 @@ test("verified untracked Codex work opens its real conversation without a fake t
   );
 });
 
+test("clicking the current project always returns to that project's board", () => {
+  assert.match(
+    projectNavigatorSource,
+    /onClick=\{\(\) => onSelect\(project\)\}/,
+  );
+  assert.doesNotMatch(projectNavigatorSource, /if \(!isActive\) onSelect\(project\)/);
+  assert.match(
+    appSource,
+    /function changeProject\(projectId: string\)[\s\S]*?setDetailTaskIdentifier\(null\);[\s\S]*?setWorkspacePane\("board"\);[\s\S]*?setBoardView\("issues"\)/,
+  );
+});
+
 test("workflow data is preserved while unfinished workflow controls stay hidden", () => {
   assert.match(typesSource, /export interface Task \{[\s\S]*?workflowId: string \| null/);
   assert.match(typesSource, /export interface TaskDraft \{[\s\S]*?workflowId: string \| null/);

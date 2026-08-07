@@ -1868,13 +1868,26 @@ export function App() {
 
   function openThread(threadId: string) {
     if (embedded && window.parent !== window) {
-      const sourceTask = tasks.find((task) => task.threadId === threadId) ?? detailTask;
+      const sourceTask = tasks.find((task) => task.threadId === threadId) ?? null;
+      const runningThread = hostContext?.runningThreads?.find(
+        (thread) => thread.threadId === threadId,
+      ) ?? null;
+      const runningProjectId = runningThread
+        ? identityResolver.canonicalProjectId(runningThread.projectId) ?? runningThread.projectId
+        : null;
+      const returnProjectId = (
+        sourceTask?.projectId ?? runningProjectId ?? selectedProjectId
+      ) || undefined;
+      const returnProjectName = sourceTask
+        ? selectedProject?.name
+        : projectChoices.find((project) => project.id === returnProjectId)?.name;
       window.parent.postMessage({
         type: "taskboard:open-thread",
         payload: {
           threadId,
           taskId: sourceTask?.id,
-          projectId: sourceTask?.projectId,
+          projectId: returnProjectId,
+          projectName: returnProjectName,
           identifier: sourceTask?.identifier,
           title: sourceTask?.title,
         },

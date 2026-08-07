@@ -11,11 +11,13 @@ const styles = await readFile(new URL("../web/src/components/workflow.css", impo
 const globalStyles = await readFile(new URL("../web/src/styles.css", import.meta.url), "utf8");
 const controlFlow = await readFile(new URL("../shared/workflow-control-flow.mjs", import.meta.url), "utf8");
 
-test("workflow editing is a constrained vertical execution sequence instead of a free canvas", () => {
+test("workflow editing keeps a constrained sequence and only nested plan items are draggable", () => {
   assert.match(board, /normalizeWorkflowSnapshot/);
   assert.match(board, /deriveWorkflowLayout/);
   assert.match(board, /insertWorkflowNode/);
-  assert.match(board, /moveWorkflowNode/);
+  assert.doesNotMatch(board, /moveWorkflowNode/);
+  assert.match(board, /if \(!node\.parentId\) return/);
+  assert.match(board, /reorderPlanItem\(session\.parentId, node\.id/);
   assert.match(board, /edgeTypes=\{EDGE_TYPES\}/);
   assert.match(board, /nodeOrigin=\{TOP_CENTER_ORIGIN\}/);
   assert.match(board, /nodesConnectable=\{false\}/);
@@ -206,7 +208,7 @@ test("condition branch pickers use recursive sequence refs and allow nested cond
   assert.doesNotMatch(board, /item\.data\.kind !== "condition"/);
 });
 
-test("deleting a condition removes its subtree, while conditions move as one subtree and cannot duplicate", () => {
+test("deleting a condition removes its subtree and conditions cannot duplicate", () => {
   assert.match(
     board,
     /deleteWorkflowNode\(flow, nodeId\)[\s\S]*?deleted\.removedNodeIds/,
@@ -215,10 +217,7 @@ test("deleting a condition removes its subtree, while conditions move as one sub
     board,
     /source\.data\.kind === "condition"\) return/,
   );
-  assert.match(
-    board,
-    /moveWorkflowNode\([\s\S]*?session\.sequenceRef/,
-  );
+  assert.doesNotMatch(board, /moveWorkflowNode/);
 });
 
 test("condition fields expose only meaningful operators and value controls", () => {
