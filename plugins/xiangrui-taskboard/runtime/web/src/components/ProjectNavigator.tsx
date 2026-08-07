@@ -3,6 +3,7 @@ import { LinearIcon } from "./LinearIcon";
 export interface ProjectNavigatorProject {
   id: string;
   name: string;
+  workspacePath: string | null;
   issueCount: number;
   inProgressCount: number;
   runningConversationCount: number;

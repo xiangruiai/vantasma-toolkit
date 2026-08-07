@@ -64,6 +64,7 @@ import { TaskEditor } from "./components/TaskEditor";
 import { TaskFilterMenu } from "./components/TaskFilterMenu";
 import { buildIssueUrl, readIssueIdentifier } from "./issueRoute";
 import { DEFAULT_LABELS } from "./labels";
+import { createProjectIdentityResolver } from "./projectIdentity.mjs";
 import {
   EMPTY_TASK_FILTERS,
   matchesTaskFilters,
@@ -125,6 +126,7 @@ interface BlockingRequest {
 interface ProjectChoice {
   id: string;
   name: string;
+  workspacePath: string | null;
   issueCount: number;
   inProgressCount: number;
   runningConversationCount: number;
@@ -613,6 +615,20 @@ export function App() {
     });
   }, []);
 
+  const identityResolver = useMemo(() => createProjectIdentityResolver({
+    persistedProjects: projects,
+    codexProjects: hostContext?.projects ?? [],
+    workspacePaths: deviceWorkspacePaths,
+    currentCodexProjectId: hostContext?.projectId ?? null,
+    currentWorkspacePath: hostContext?.workspacePath ?? null,
+  }), [
+    deviceWorkspacePaths,
+    hostContext?.projectId,
+    hostContext?.projects,
+    hostContext?.workspacePath,
+    projects,
+  ]);
+
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
   const currentUser = hostContext?.user ?? DEFAULT_USER_ACTOR;
   const selectedDeviceWorkspacePath = deviceWorkspacePaths[selectedProjectId];
@@ -688,44 +704,58 @@ export function App() {
     const liveConversationCountByProject = new Map<string, number>();
     for (const thread of hostContext?.runningThreads ?? []) {
       if (thread.linkedTaskId || persistedThreadIds.has(thread.threadId)) continue;
+      const projectId = identityResolver.canonicalProjectId(thread.projectId) ?? thread.projectId;
       liveConversationCountByProject.set(
-        thread.projectId,
-        (liveConversationCountByProject.get(thread.projectId) ?? 0) + 1,
+        projectId,
+        (liveConversationCountByProject.get(projectId) ?? 0) + 1,
       );
     }
     const seen = new Set<string>();
     const choices: ProjectChoice[] = [];
     for (const project of hostContext?.projects ?? []) {
-      if (!project.id || !project.name || seen.has(project.id)) continue;
-      seen.add(project.id);
+      if (!project.id || !project.name) continue;
+      const projectId = identityResolver.canonicalProjectId(project.id) ?? project.id;
+      if (seen.has(projectId)) continue;
+      const persistedProject = persistedById.get(projectId);
+      seen.add(projectId);
       choices.push({
-        id: project.id,
-        name: persistedById.get(project.id)?.name ?? project.name,
-        issueCount: persistedById.get(project.id)?.issueCount ?? 0,
-        inProgressCount: persistedById.get(project.id)?.inProgressCount ?? 0,
-        runningConversationCount: liveConversationCountByProject.get(project.id) ?? 0,
-        doneCount: persistedById.get(project.id)?.doneCount ?? 0,
+        id: projectId,
+        name: persistedProject?.name ?? project.name,
+        workspacePath: identityResolver.workspacePathFor(projectId),
+        issueCount: persistedProject?.issueCount ?? 0,
+        inProgressCount: persistedProject?.inProgressCount ?? 0,
+        runningConversationCount: liveConversationCountByProject.get(projectId) ?? 0,
+        doneCount: persistedProject?.doneCount ?? 0,
         inCodex: true,
-        persisted: persistedById.has(project.id),
+        persisted: Boolean(persistedProject),
       });
     }
     for (const project of projects) {
+      if (!identityResolver.isCanonicalPersistedProject(project.id)) continue;
       if (seen.has(project.id)) continue;
       choices.push({
         id: project.id,
         name: project.name,
+        workspacePath: identityResolver.workspacePathFor(project.id),
         issueCount: project.issueCount,
         inProgressCount: project.inProgressCount,
         runningConversationCount: liveConversationCountByProject.get(project.id) ?? 0,
         doneCount: project.doneCount,
-        inCodex: false,
+        inCodex: identityResolver.hasCodexProject(project.id),
         persisted: true,
       });
     }
     return choices.sort((left, right) => (
       Number(favoriteProjectIds.has(right.id)) - Number(favoriteProjectIds.has(left.id))
     ));
-  }, [favoriteProjectIds, hostContext?.projects, hostContext?.runningThreads, persistedThreadIds, projects]);
+  }, [
+    favoriteProjectIds,
+    hostContext?.projects,
+    hostContext?.runningThreads,
+    identityResolver,
+    persistedThreadIds,
+    projects,
+  ]);
   const projectsWithIssues = useMemo(
     () => projectChoices.filter((project) => project.issueCount > 0),
     [projectChoices],
@@ -1153,6 +1183,11 @@ export function App() {
         getTaskboardMetadata(signal),
         listDeviceWorkspaces(signal),
       ]);
+      const mergedWorkspacePaths = { ...readDeviceWorkspacePaths(), ...workspaces };
+      const identityResolver = createProjectIdentityResolver({
+        persistedProjects: nextProjects,
+        workspacePaths: mergedWorkspacePaths,
+      });
       setTaskboardMetadata((current) => (
         current
         && current.mode === metadata.mode
@@ -1175,9 +1210,22 @@ export function App() {
       setSelectedProjectId((current) => {
         const fromQuery = new URLSearchParams(window.location.search).get("project");
         const remembered = window.localStorage.getItem(LAST_PROJECT_KEY);
-        if (fromQuery && nextProjects.some((project) => project.id === fromQuery)) return fromQuery;
-        if (current && nextProjects.some((project) => project.id === current)) return current;
-        if (remembered && nextProjects.some((project) => project.id === remembered)) return remembered;
+        const canonicalPersistedId = (candidateId: string | null) => {
+          if (!candidateId) return null;
+          const canonicalId = identityResolver.canonicalProjectId(candidateId);
+          return canonicalId && nextProjects.some((project) => project.id === canonicalId)
+            ? canonicalId
+            : null;
+        };
+        const selectedId = canonicalPersistedId(fromQuery)
+          ?? canonicalPersistedId(current)
+          ?? canonicalPersistedId(remembered);
+        if (selectedId) {
+          window.localStorage.setItem(LAST_PROJECT_KEY, selectedId);
+          const url = buildIssueUrl(window.location.href, selectedId, readIssueIdentifier(window.location.search));
+          window.history.replaceState(null, "", url);
+          return selectedId;
+        }
         return "";
       });
     } catch (error) {
@@ -2340,9 +2388,9 @@ export function App() {
                             <label className="project-card-directory">
                               <LinearIcon name="folder" />
                               <input
-                                key={deviceWorkspacePaths[project.id] ?? ""}
+                                key={project.workspacePath ?? ""}
                                 type="text"
-                                defaultValue={deviceWorkspacePaths[project.id] ?? ""}
+                                defaultValue={project.workspacePath ?? ""}
                                 placeholder="设置此设备的项目目录"
                                 aria-label={`${project.name} 在此设备上的项目目录`}
                                 onBlur={(event) => rememberDeviceWorkspacePath(project.id, event.currentTarget.value)}

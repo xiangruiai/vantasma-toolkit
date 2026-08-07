@@ -47,6 +47,7 @@ export const TASKBOARD_RUNTIME_PATHS = Object.freeze([
   "web/src/components/ProjectNavigator.tsx",
   "web/src/components/RelatedConversations.tsx",
   "web/src/components/TaskboardSelect.tsx",
+  "web/src/projectIdentity.mjs",
 ]);
 
 async function walkFiles(root, relativeRoot) {

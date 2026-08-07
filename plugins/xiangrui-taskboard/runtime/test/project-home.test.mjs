@@ -18,6 +18,14 @@ test("the project home merges live Codex projects with persisted Taskboard proje
   assert.match(apiSource, /export async function createProject/);
 });
 
+test("the project home resolves Codex project aliases by workspace before rendering or selecting", () => {
+  assert.match(appSource, /createProjectIdentityResolver/);
+  assert.match(appSource, /identityResolver\.canonicalProjectId\(project\.id\)/);
+  assert.match(appSource, /identityResolver\.isCanonicalPersistedProject\(project\.id\)/);
+  assert.match(appSource, /identityResolver\.canonicalProjectId\(thread\.projectId\)/);
+  assert.match(appSource, /identityResolver\.canonicalProjectId\(candidateId\)/);
+});
+
 test("each device stores an independent workspace path for every project", () => {
   assert.match(appSource, /const DEVICE_WORKSPACE_PATHS_KEY = "taskboard\.deviceWorkspacePaths\.v1"/);
   assert.match(appSource, /function readDeviceWorkspacePaths\(\)/);
