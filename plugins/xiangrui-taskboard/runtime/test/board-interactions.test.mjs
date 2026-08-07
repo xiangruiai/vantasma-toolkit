@@ -164,11 +164,14 @@ test("issues expose processing conversations without manual binding", () => {
   assert.match(contextMenuSource, /onOpenInThread/);
 });
 
-test("task-shaped navigation opens issue details while untracked threads stay explicit conversations", () => {
+test("verified untracked Codex work appears as a live task in the in-progress column", () => {
   assert.match(typesSource, /export interface RunningCodexThread/);
   assert.match(typesSource, /runningThreads\?: RunningCodexThread\[\]/);
   assert.match(appSource, /const liveRunningThreads = useMemo/);
-  assert.match(appSource, /thread\.projectId === selectedProjectId/);
+  assert.match(
+    appSource,
+    /identityResolver\.canonicalProjectId\(thread\.projectId\) === selectedProjectId/,
+  );
   assert.match(appSource, /!thread\.linkedTaskId/);
   assert.match(appSource, /!persistedThreadIds\.has\(thread\.threadId\)/);
 
@@ -178,20 +181,42 @@ test("task-shaped navigation opens issue details while untracked threads stay ex
   assert.match(appSource, /onEdit=\{openTaskDetail\}/);
   assert.match(appSource, /onOpenIssue=\{openTaskDetail\}/);
 
-  assert.doesNotMatch(boardColumnSource, /RunningCodexThread|live-codex-task|runningThreads/);
-  assert.doesNotMatch(appSource, /status === "in_progress" \? liveRunningThreads : \[\]/);
-  assert.doesNotMatch(styles, /\.live-codex-task/);
+  assert.match(boardColumnSource, /RunningCodexThread/);
+  assert.match(boardColumnSource, /runningThreads: RunningCodexThread\[\]/);
+  assert.match(boardColumnSource, /<LiveCodexTaskCard/);
+  assert.match(boardColumnSource, /tasks\.length \+ runningThreads\.length/);
+  assert.match(appSource, /status === "in_progress" \? liveRunningThreads : \[\]/);
+  assert.match(appSource, /onOpenRunningTask=\{openRunningTaskDetail\}/);
+  assert.match(styles, /\.live-codex-task/);
+  assert.match(
+    appSource,
+    /tasks\.length === 0 && liveRunningThreads\.length === 0/,
+  );
+  assert.match(
+    appSource,
+    /status === "in_progress"[\s\S]{0,120}?liveRunningThreads\.length > 0/,
+  );
+
+  assert.match(appSource, /type WorkspacePane = "board" \| "issue" \| "running-task" \| "conversations"/);
+  assert.match(appSource, /const \[detailRunningThreadId, setDetailRunningThreadId\]/);
+  assert.match(appSource, /<LiveCodexTaskDetail/);
+  assert.match(appSource, /onOpenThread=\{openThread\}/);
 
   assert.match(relatedConversationsSource, /runningThreads: RunningCodexThread\[\]/);
   assert.match(relatedConversationsSource, /运行中的未关联对话/);
   assert.match(relatedConversationsSource, /onOpenThread\(thread\.threadId\)/);
+  assert.match(relatedConversationsSource, /同步显示在看板的“进行中”列/);
+  assert.doesNotMatch(relatedConversationsSource, /不会计入“进行中”任务/);
   assert.match(appSource, /<RelatedConversations[\s\S]*?runningThreads=\{liveRunningThreads\}/);
   assert.match(appSource, /const conversationTaskCount = useMemo\([\s\S]*?liveRunningThreads\.length/);
 
   assert.match(projectNavigatorSource, /runningConversationCount: number/);
-  assert.match(projectNavigatorSource, /有运行中对话/);
-  assert.match(projectNavigatorSource, /\$\{project\.runningConversationCount\} 个运行中对话/);
-  assert.doesNotMatch(appSource, /inProgressCount:[\s\S]{0,160}?liveRunningCountByProject/);
+  assert.match(
+    projectNavigatorSource,
+    /project\.inProgressCount \+ project\.runningConversationCount > 0/,
+  );
+  assert.match(projectNavigatorSource, /\$\{activeCount\} 项执行中/);
+  assert.doesNotMatch(projectNavigatorSource, /有运行中对话/);
   assert.match(
     projectNavigatorSource,
     /project\.persisted && project\.issueCount === 0 && project\.inProgressCount === 0 && project\.runningConversationCount === 0/,

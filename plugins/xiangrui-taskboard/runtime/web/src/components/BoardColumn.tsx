@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import type { DragEvent } from "react";
-import type { Task, TaskStatus } from "../types";
+import type { RunningCodexThread, Task, TaskStatus } from "../types";
 import { LinearIcon, LinearStatusIcon } from "./LinearIcon";
+import { LiveCodexTaskCard } from "./LiveCodexTaskCard";
 import { TaskCard } from "./TaskCard";
 
 export const STATUS_DETAILS: Record<
@@ -25,6 +26,7 @@ interface BoardColumnProps {
   status: TaskStatus;
   statusIndex: number;
   tasks: Task[];
+  runningThreads: RunningCodexThread[];
   isDropTarget: boolean;
   draggedTaskId: string | null;
   draggedTaskHeight: number;
@@ -40,12 +42,14 @@ interface BoardColumnProps {
   onDragEnter: (status: TaskStatus) => void;
   onDrop: (status: TaskStatus, taskId: string, beforeTaskId: string | null) => void;
   onOpenThread: (threadId: string) => void;
+  onOpenRunningTask: (thread: RunningCodexThread) => void;
 }
 
 export function BoardColumn({
   status,
   statusIndex,
   tasks,
+  runningThreads,
   isDropTarget,
   draggedTaskId,
   draggedTaskHeight,
@@ -61,6 +65,7 @@ export function BoardColumn({
   onDragEnter,
   onDrop,
   onOpenThread,
+  onOpenRunningTask,
 }: BoardColumnProps) {
   const details = STATUS_DETAILS[status];
   const [dropBeforeTaskId, setDropBeforeTaskId] = useState<string | null | undefined>();
@@ -129,7 +134,9 @@ export function BoardColumn({
             <StatusIcon status={status} />
           </span>
           <h2 id={`column-${status}`}>{details.label}</h2>
-          <span className="task-count" aria-label={`${tasks.length} 项`}>{tasks.length}</span>
+          <span className="task-count" aria-label={`${tasks.length + runningThreads.length} 项`}>
+            {tasks.length + runningThreads.length}
+          </span>
         </div>
         <div className="column-actions">
           <button
@@ -145,6 +152,13 @@ export function BoardColumn({
       </header>
 
       <div className="column-list">
+        {runningThreads.map((thread) => (
+          <LiveCodexTaskCard
+            key={thread.threadId}
+            thread={thread}
+            onOpen={onOpenRunningTask}
+          />
+        ))}
         {tasks.map((task) => {
           const dragShift = getTaskDragShift(task);
           return (

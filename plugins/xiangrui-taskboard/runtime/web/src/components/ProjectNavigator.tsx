@@ -31,22 +31,16 @@ export function ProjectNavigator({
     {
       id: "running",
       label: "正在执行",
-      projects: projects.filter((project) => project.inProgressCount > 0),
+      projects: projects.filter((project) => (
+        project.inProgressCount + project.runningConversationCount > 0
+      )),
     },
     {
       id: "with-issues",
       label: "已有议题",
       projects: projects.filter((project) => (
         project.issueCount > 0
-        && project.inProgressCount === 0
-        && project.runningConversationCount === 0
-      )),
-    },
-    {
-      id: "running-conversations",
-      label: "有运行中对话",
-      projects: projects.filter((project) => (
-        project.inProgressCount === 0 && project.runningConversationCount > 0
+        && project.inProgressCount + project.runningConversationCount === 0
       )),
     },
     {
@@ -93,21 +87,18 @@ export function ProjectNavigator({
               {group.projects.map((project) => {
                 const isActive = project.id === selectedProjectId;
                 const isOpening = project.id === openingProjectId;
+                const activeCount = project.inProgressCount + project.runningConversationCount;
                 const completionPercent = project.issueCount > 0
                   ? Math.round((project.doneCount / project.issueCount) * 100)
                   : 0;
                 const progressSummary = !project.persisted
-                  ? project.runningConversationCount > 0
-                    ? `${project.runningConversationCount} 个运行中对话 · 点击启用任务面板`
+                  ? activeCount > 0
+                    ? `${activeCount} 项执行中 · 点击查看`
                     : "未启用任务面板 · 点击启用"
-                  : project.inProgressCount > 0
+                  : activeCount > 0
                     ? project.issueCount > 0
-                      ? `${project.inProgressCount} 项执行中 · 已完成 ${project.doneCount}/${project.issueCount}`
-                      : `${project.inProgressCount} 项执行中 · 暂无持久议题`
-                    : project.runningConversationCount > 0
-                      ? project.issueCount > 0
-                        ? `${project.runningConversationCount} 个运行中对话 · ${project.issueCount} 个议题`
-                        : `${project.runningConversationCount} 个运行中对话 · 暂无议题`
+                      ? `${activeCount} 项执行中 · 已完成 ${project.doneCount}/${project.issueCount}`
+                      : `${activeCount} 项执行中 · 实时任务`
                     : project.issueCount > 0
                       ? `${project.issueCount} 个议题 · 已完成 ${project.doneCount}/${project.issueCount}`
                       : "任务面板已启用 · 暂无议题";
@@ -115,7 +106,7 @@ export function ProjectNavigator({
                   <button
                     type="button"
                     key={project.id}
-                    className={`project-navigator-item${isActive ? " is-active" : ""}${project.inProgressCount > 0 ? " is-running" : ""}${project.runningConversationCount > 0 ? " has-running-conversations" : ""}`}
+                    className={`project-navigator-item${isActive ? " is-active" : ""}${activeCount > 0 ? " is-running" : ""}`}
                     aria-current={isActive ? "page" : undefined}
                     disabled={openingProjectId !== null}
                     onClick={() => {

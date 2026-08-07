@@ -78,7 +78,7 @@ export function RelatedConversations({
                 <span>{runningThreads.length}</span>
               </header>
               <p className="related-conversations-group-note">
-                这些是 Codex 对话，不是任务面板议题，不会计入“进行中”任务。
+                执行期间会同步显示在看板的“进行中”列，这里用于直接打开原 Codex 对话。
               </p>
               <div className="related-conversations-list">
                 {runningThreads.map((thread) => (

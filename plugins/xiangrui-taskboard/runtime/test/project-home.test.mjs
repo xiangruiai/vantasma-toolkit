@@ -49,11 +49,19 @@ test("project selection is remembered until the user explicitly returns home", (
   assert.match(styles, /\.project-home-button \{[\s\S]*?width: auto/);
 });
 
-test("the home uses the same restrained surface language as the issue board", () => {
+test("the home treats verified running Codex work as active project work", () => {
   assert.match(appSource, /<section className="project-home">/);
-  assert.match(appSource, /title: "已有议题", projects: projectsWithIssues/);
-  assert.match(appSource, /title: "尚未添加议题", projects: projectsWithoutIssues/);
-  assert.match(appSource, /project\.issueCount > 0/);
+  assert.match(appSource, /title: "已有任务", projects: projectsWithIssues/);
+  assert.match(appSource, /title: "暂无任务", projects: projectsWithoutIssues/);
+  assert.match(
+    appSource,
+    /project\.issueCount > 0 \|\| project\.runningConversationCount > 0/,
+  );
+  assert.match(
+    appSource,
+    /project\.issueCount === 0 && project\.runningConversationCount === 0/,
+  );
+  assert.match(appSource, /\$\{project\.runningConversationCount\} 项执行中/);
   assert.match(styles, /\.project-grid \{[\s\S]*?grid-template-columns:/);
   assert.match(styles, /\.project-card \{[\s\S]*?border: var\(--border-hairline\)/);
 });
