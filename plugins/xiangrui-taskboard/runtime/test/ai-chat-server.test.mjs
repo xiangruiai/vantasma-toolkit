@@ -134,14 +134,14 @@ test("loopback AI API freezes server-owned origin and rejects injected execution
 
     const invalidSkill = await request(fixture.baseUrl, `/api/local/ai/threads/${threadId}/turns`, {
       method: "POST",
-      body: { message: "hello", skillIds: ["invented-skill"] },
+      body: { message: "hello\uFFFC", skillIds: ["invented-skill"] },
     });
     assert.equal(invalidSkill.response.status, 400);
     assert.equal(invalidSkill.body.error.code, "INVALID_SKILL");
 
     const turn = await request(fixture.baseUrl, `/api/local/ai/threads/${threadId}/turns`, {
       method: "POST",
-      body: { message: "hello", skillIds: ["real-skill"] },
+      body: { message: "hello\uFFFC", skillIds: ["real-skill"] },
     });
     assert.equal(turn.response.status, 202);
     assert.equal(turn.body.run.threadId, threadId);

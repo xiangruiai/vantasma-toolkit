@@ -71,6 +71,8 @@
   let reattachTimer = null;
   let lastFocusedElement = null;
   let hostContextSnapshot = null;
+  let lastPostedHostContext = null;
+  let lastPostedHostContextSignature = "";
   let mutedNativeSelections = new Map();
   let openGeneration = 0;
   let pendingThreadCreation = null;
@@ -96,8 +98,12 @@
     const projectId = typeof payload.projectId === "string" ? payload.projectId.trim() : "";
     const identifier = typeof payload.identifier === "string" ? payload.identifier.trim() : "";
     const title = typeof payload.title === "string" ? payload.title.trim() : "";
-    if (!taskId || !projectId || !identifier) return null;
-    return { taskId, projectId, identifier, title };
+    const projectName = typeof payload.projectName === "string" ? payload.projectName.trim() : "";
+    if (!projectId) return null;
+    if (taskId && identifier) {
+      return { taskId, projectId, identifier, title, ...(projectName ? { projectName } : {}) };
+    }
+    return { projectId, projectName };
   }
 
   function readBoardReturnTasks() {
@@ -129,7 +135,10 @@
     const threadId = normalizeThreadId(payload.threadId);
     if (threadId) {
       boardReturnTasksByThreadId = { ...boardReturnTasksByThreadId, [threadId]: task };
-      if (pendingBoardReturnTask?.taskId === task.taskId) pendingBoardReturnTask = null;
+      if (
+        (task.taskId && pendingBoardReturnTask?.taskId === task.taskId)
+        || (!task.taskId && pendingBoardReturnTask?.projectId === task.projectId)
+      ) pendingBoardReturnTask = null;
       persistBoardReturnTasks();
     } else {
       pendingBoardReturnTask = task;
@@ -151,7 +160,11 @@
       if (!url.searchParams.has("host")) url.searchParams.set("host", "codex");
       if (activeBoardTaskTarget) {
         url.searchParams.set("project", activeBoardTaskTarget.projectId);
-        url.searchParams.set("issue", activeBoardTaskTarget.identifier);
+        if (activeBoardTaskTarget.identifier) {
+          url.searchParams.set("issue", activeBoardTaskTarget.identifier);
+        } else {
+          url.searchParams.delete("issue");
+        }
       } else {
         url.searchParams.delete("project");
         url.searchParams.delete("issue");
@@ -569,13 +582,19 @@
       const boardButton = document.createElement("button");
       boardButton.type = "button";
       boardButton.className = "codex-taskboard-workspace-tab-main";
-      const boardLabel = [boardReturnTask?.identifier, boardReturnTask?.title]
-        .filter(Boolean)
-        .join(" · ") || "任务面板";
+      const boardLabel = boardReturnTask?.identifier
+        ? [boardReturnTask.identifier, boardReturnTask.title].filter(Boolean).join(" · ")
+        : boardReturnTask?.projectName
+          ? `${boardReturnTask.projectName} 看板`
+          : "任务面板";
       boardButton.title = boardLabel;
       boardButton.setAttribute(
         "aria-label",
-        boardReturnTask ? `打开任务 ${boardLabel}` : "打开任务面板",
+        boardReturnTask?.identifier
+          ? `打开任务 ${boardLabel}`
+          : boardReturnTask
+            ? `打开 ${boardLabel}`
+            : "打开任务面板",
       );
       const boardDot = document.createElement("span");
       boardDot.className = "codex-taskboard-workspace-tab-dot";
@@ -862,18 +881,39 @@
     window.postMessage(message, window.location.origin);
   }
 
-  function postHostContext() {
+  function mergeHostContexts(previous, live) {
+    const previousContext = previous && typeof previous === "object" ? previous : {};
+    const liveContext = live && typeof live === "object" ? live : {};
+    const merged = { ...previousContext, ...liveContext };
+
+    if (!Array.isArray(liveContext.projects) || liveContext.projects.length === 0) {
+      merged.projects = Array.isArray(previousContext.projects) ? previousContext.projects : [];
+    }
+
+    if (liveContext.sidebarCollapsed) {
+      if (!Array.isArray(liveContext.runningThreads) || liveContext.runningThreads.length === 0) {
+        merged.runningThreads = Array.isArray(previousContext.runningThreads)
+          ? previousContext.runningThreads
+          : [];
+      }
+      for (const key of ["user", "projectId", "threadId", "workspacePath"]) {
+        if (!liveContext[key] && previousContext[key]) merged[key] = previousContext[key];
+      }
+    }
+    return merged;
+  }
+
+  function postHostContext(force = false) {
     if (!frame) return;
     const liveContext = readHostContext();
-    const payload = hostContextSnapshot
-      ? {
-          ...hostContextSnapshot,
-          ...liveContext,
-          projects: liveContext.projects.length > 0
-            ? liveContext.projects
-            : hostContextSnapshot.projects,
-        }
-      : liveContext;
+    const payload = mergeHostContexts(
+      lastPostedHostContext ?? hostContextSnapshot,
+      liveContext,
+    );
+    const signature = JSON.stringify(payload);
+    if (!force && signature === lastPostedHostContextSignature) return;
+    lastPostedHostContext = payload;
+    lastPostedHostContextSignature = signature;
     postToFrame({ type: "taskboard:host-context", payload });
     postToFrame({ type: "taskboard:theme", theme: payload.theme });
   }
@@ -1111,7 +1151,7 @@
       });
       frameReadyWaiters.clear();
       if (active) showFrame();
-      postHostContext();
+      postHostContext(true);
       return;
     }
     if (message.type === "taskboard:drag-region") {
@@ -1260,6 +1300,7 @@
     frame?.remove();
     frame = null;
     frameReady = false;
+    lastPostedHostContextSignature = "";
     if (dragRegion) dragRegion.hidden = true;
     if (noDragLeft) noDragLeft.hidden = true;
     if (noDragRight) noDragRight.hidden = true;
@@ -1405,6 +1446,7 @@
       ]);
       if (!active || generation !== openGeneration) return;
       hostContextSnapshot = context;
+      lastPostedHostContext = context;
       if (!frameReady || result.restarted || !frameMatchesTaskboardUrl(taskboardUrl)) {
         showLoading();
         loadTaskboardFrame();
@@ -1466,6 +1508,8 @@
     if (restoreFocus) lastFocusedElement?.focus?.();
     lastFocusedElement = null;
     hostContextSnapshot = null;
+    lastPostedHostContext = null;
+    lastPostedHostContextSignature = "";
   }
 
   function openTaskboardForTask(task) {
@@ -1479,6 +1523,8 @@
     if (!active) {
       lastFocusedElement = document.activeElement;
       hostContextSnapshot = null;
+      lastPostedHostContext = null;
+      lastPostedHostContextSignature = "";
     }
     const generation = ++openGeneration;
     active = true;

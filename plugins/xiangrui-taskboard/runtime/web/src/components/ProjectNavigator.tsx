@@ -109,9 +109,7 @@ export function ProjectNavigator({
                     className={`project-navigator-item${isActive ? " is-active" : ""}${activeCount > 0 ? " is-running" : ""}`}
                     aria-current={isActive ? "page" : undefined}
                     disabled={openingProjectId !== null}
-                    onClick={() => {
-                      if (!isActive) onSelect(project);
-                    }}
+                    onClick={() => onSelect(project)}
                     title={`打开 ${project.name} 看板 · ${progressSummary}`}
                   >
                     <span className="project-navigator-avatar" aria-hidden="true">

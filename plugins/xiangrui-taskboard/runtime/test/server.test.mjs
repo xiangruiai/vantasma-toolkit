@@ -734,6 +734,30 @@ test("workflow workspace changes are broadcast to other open clients", async () 
   await reader.cancel();
 });
 
+test("server close terminates live realtime connections instead of leaving a stale process", async () => {
+  const baseUrl = await startServer();
+  const fixture = runningApps.at(-1);
+  const eventResponse = await fetch(`${baseUrl}/api/events`);
+  const reader = eventResponse.body.getReader();
+  await reader.read();
+
+  const closing = fixture.app.close();
+  const outcome = await Promise.race([
+    closing.then(() => "closed"),
+    new Promise((resolve) => setTimeout(() => resolve("timeout"), 250)),
+  ]);
+  if (outcome === "timeout") {
+    fixture.app.server.closeAllConnections();
+    await closing;
+  }
+  runningApps.pop();
+  await rm(fixture.directory, { recursive: true, force: true });
+
+  assert.equal(outcome, "closed");
+  const streamClosed = await reader.read().then((chunk) => chunk.done, () => true);
+  assert.equal(streamClosed, true);
+});
+
 test("workflow capabilities come from the live Codex skill and MCP catalogs", async () => {
   let workspacePath;
   const baseUrl = await startServer(async (directory) => {
@@ -762,8 +786,20 @@ done
   assert.equal(result.response.status, 200);
   assert.deepEqual(result.body, {
     skills: [
-      { id: "repo-skill", label: "Repository Skill", scope: "repo" },
-      { id: "user-skill", label: "user-skill", scope: "user" },
+      {
+        id: "repo-skill",
+        label: "Repository Skill",
+        description: "",
+        path: "",
+        scope: "repo",
+      },
+      {
+        id: "user-skill",
+        label: "user-skill",
+        description: "",
+        path: "",
+        scope: "user",
+      },
     ],
     mcpServers: [
       { id: "context7", label: "context7", transport: "streamable_http" },
