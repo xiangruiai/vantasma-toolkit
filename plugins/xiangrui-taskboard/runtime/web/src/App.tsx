@@ -572,6 +572,7 @@ export function App() {
   const [settlingTaskId, setSettlingTaskId] = useState<string | null>(null);
   const [openingProjectId, setOpeningProjectId] = useState<string | null>(null);
   const [openingThreadTaskId, setOpeningThreadTaskId] = useState<string | null>(null);
+  const [openingRunningThreadId, setOpeningRunningThreadId] = useState<string | null>(null);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [favoriteProjectIds, setFavoriteProjectIds] = useState(readFavoriteProjectIds);
   const [deviceWorkspacePaths, setDeviceWorkspacePaths] = useState(readDeviceWorkspacePaths);
@@ -582,6 +583,7 @@ export function App() {
   const [undoNotice, setUndoNotice] = useState<UndoNotice | null>(null);
   const tasksRequestRef = useRef(0);
   const tasksRef = useRef<Task[]>([]);
+  const promotingRunningThreadsRef = useRef(new Set<string>());
   const undoSequenceRef = useRef(0);
   const undoStackRef = useRef<UndoOperation[]>([]);
   const undoInFlightRef = useRef(false);
@@ -995,6 +997,54 @@ export function App() {
       task.identifier,
     );
     window.history.pushState(window.history.state, "", detailUrl);
+  }
+
+  async function openRunningTaskDetail(thread: RunningCodexThread) {
+    const projectId = identityResolver.canonicalProjectId(thread.projectId) ?? thread.projectId;
+    const existing = tasksRef.current.find((task) => task.threadId === thread.threadId) ?? null;
+    if (existing) {
+      openTaskDetail(existing);
+      return;
+    }
+    if (projectId !== selectedProjectId || promotingRunningThreadsRef.current.has(thread.threadId)) return;
+
+    promotingRunningThreadsRef.current.add(thread.threadId);
+    setOpeningRunningThreadId(thread.threadId);
+    setActionError(null);
+    try {
+      const created = await createTaskRequest(projectId, {
+        title: thread.title.trim() || "Codex 实时任务",
+        description: "这项任务由正在执行的 Codex 对话自动纳入任务面板。你可以在这里补充要求、评论和调整状态；系统不会因为对话停止而猜测任务已经完成。",
+        status: "in_progress",
+        priority: "none",
+        labels: ["codex"],
+        assigneeTarget: "codex-agent",
+        workflowId: null,
+        developmentContext: null,
+        dueDate: null,
+        recurrence: null,
+      }, thread.threadId);
+      setProjects((current) => current.map((project) => (
+        project.id === projectId
+          ? {
+              ...project,
+              issueCount: project.issueCount + 1,
+              inProgressCount: project.inProgressCount + 1,
+            }
+          : project
+      )));
+      setTasks((current) => sortTasks([
+        ...current.filter((task) => task.id !== created.id),
+        created,
+      ]));
+      setAnnouncement(`${created.identifier} 已自动建立，正在打开任务详情。`);
+      openTaskDetail(created);
+    } catch (error) {
+      setActionError(`无法打开任务详情：${errorMessage(error)}`);
+    } finally {
+      promotingRunningThreadsRef.current.delete(thread.threadId);
+      setOpeningRunningThreadId((current) => current === thread.threadId ? null : current);
+    }
   }
 
   function closeTaskDetail() {
@@ -2550,6 +2600,7 @@ export function App() {
                   movingTaskId={movingTaskId}
                   settlingTaskId={settlingTaskId}
                   contextMenuTaskId={contextMenu?.taskId ?? null}
+                  openingRunningThreadId={openingRunningThreadId}
                   onCreate={(initialStatus) => setEditor({ task: null, status: initialStatus })}
                   onEdit={openTaskDetail}
                   onContextMenu={(task, position) => setContextMenu({ taskId: task.id, ...position })}
@@ -2567,7 +2618,7 @@ export function App() {
                   onDragEnter={setDropTarget}
                   onDrop={finishTaskDrop}
                   onOpenThread={openThread}
-                  onOpenRunningTask={openThread}
+                  onOpenRunningTask={openRunningTaskDetail}
                 />
               ))}
             </div>

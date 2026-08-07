@@ -168,7 +168,7 @@ test("issues expose processing conversations without manual binding", () => {
   assert.match(contextMenuSource, /onOpenInThread/);
 });
 
-test("verified untracked Codex work opens its real conversation without a fake task detail", () => {
+test("verified untracked Codex work becomes a real issue detail before its conversation can open", () => {
   assert.match(typesSource, /export interface RunningCodexThread/);
   assert.match(typesSource, /runningThreads\?: RunningCodexThread\[\]/);
   assert.match(appSource, /const liveRunningThreads = useMemo/);
@@ -190,9 +190,17 @@ test("verified untracked Codex work opens its real conversation without a fake t
   assert.match(boardColumnSource, /<LiveCodexTaskCard/);
   assert.match(boardColumnSource, /tasks\.length \+ runningThreads\.length/);
   assert.match(appSource, /status === "in_progress" \? liveRunningThreads : \[\]/);
-  assert.match(boardColumnSource, /onOpenRunningTask: \(threadId: string\) => void/);
-  assert.match(liveCardSource, /onClick=\{\(\) => onOpen\(thread\.threadId\)\}/);
-  assert.match(appSource, /onOpenRunningTask=\{openThread\}/);
+  assert.match(boardColumnSource, /onOpenRunningTask: \(thread: RunningCodexThread\) => void/);
+  assert.match(liveCardSource, /onClick=\{\(\) => onOpen\(thread\)\}/);
+  assert.match(appSource, /async function openRunningTaskDetail\(thread: RunningCodexThread\)/);
+  assert.match(
+    appSource,
+    /createTaskRequest\([\s\S]*?status: "in_progress"[\s\S]*?thread\.threadId/,
+  );
+  assert.match(appSource, /assigneeTarget: "codex-agent"/);
+  assert.match(appSource, /openTaskDetail\(created\)/);
+  assert.match(appSource, /onOpenRunningTask=\{openRunningTaskDetail\}/);
+  assert.doesNotMatch(appSource, /onOpenRunningTask=\{openThread\}/);
   assert.match(styles, /\.live-codex-task/);
   assert.match(
     appSource,
@@ -202,9 +210,6 @@ test("verified untracked Codex work opens its real conversation without a fake t
     appSource,
     /status === "in_progress"[\s\S]{0,120}?liveRunningThreads\.length > 0/,
   );
-
-  assert.doesNotMatch(appSource, /LiveCodexTaskDetail|running-task|detailRunningThreadId|openRunningTaskDetail/);
-  assert.doesNotMatch(styles, /\.live-codex-task-detail/);
 
   assert.match(relatedConversationsSource, /runningThreads: RunningCodexThread\[\]/);
   assert.match(relatedConversationsSource, /运行中的未关联对话/);
