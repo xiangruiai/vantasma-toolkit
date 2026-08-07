@@ -33,6 +33,7 @@ interface BoardColumnProps {
   movingTaskId: string | null;
   settlingTaskId: string | null;
   contextMenuTaskId: string | null;
+  openingRunningThreadId: string | null;
   onCreate: (status: TaskStatus) => void;
   onEdit: (task: Task) => void;
   onContextMenu: (task: Task, position: { x: number; y: number }) => void;
@@ -42,7 +43,7 @@ interface BoardColumnProps {
   onDragEnter: (status: TaskStatus) => void;
   onDrop: (status: TaskStatus, taskId: string, beforeTaskId: string | null) => void;
   onOpenThread: (threadId: string) => void;
-  onOpenRunningTask: (threadId: string) => void;
+  onOpenRunningTask: (thread: RunningCodexThread) => void;
 }
 
 export function BoardColumn({
@@ -56,6 +57,7 @@ export function BoardColumn({
   movingTaskId,
   settlingTaskId,
   contextMenuTaskId,
+  openingRunningThreadId,
   onCreate,
   onEdit,
   onContextMenu,
@@ -156,6 +158,7 @@ export function BoardColumn({
           <LiveCodexTaskCard
             key={thread.threadId}
             thread={thread}
+            opening={openingRunningThreadId === thread.threadId}
             onOpen={onOpenRunningTask}
           />
         ))}
