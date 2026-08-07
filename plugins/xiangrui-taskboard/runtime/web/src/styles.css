@@ -3108,6 +3108,55 @@ kbd {
   pointer-events: auto;
 }
 
+.live-codex-task {
+  cursor: default;
+  border-color: color-mix(in srgb, var(--status-progress) 28%, var(--border));
+  background: color-mix(in srgb, var(--status-progress) 3%, var(--surface));
+}
+
+.live-codex-task:active {
+  cursor: default;
+}
+
+.live-codex-task-source,
+.live-codex-task-property,
+.live-codex-task-detail-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+.live-codex-task-indicator {
+  width: 8px;
+  height: 8px;
+  border: 2px solid color-mix(in srgb, var(--status-progress) 48%, transparent);
+  border-top-color: var(--status-progress);
+  border-radius: 50%;
+  animation: live-codex-task-spin 900ms linear infinite;
+}
+
+.live-codex-task-realtime {
+  margin-left: auto;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--status-progress) 12%, transparent);
+  color: var(--status-progress);
+  font-size: 9px;
+}
+
+.live-codex-task-property svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+}
+
+@keyframes live-codex-task-spin {
+  to { transform: rotate(360deg); }
+}
+
 .card-topline {
   position: relative;
   height: 16px;
@@ -3468,6 +3517,118 @@ kbd {
 
 .issue-detail-main {
   min-width: 0;
+}
+
+.live-codex-task-detail-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 720px) 300px;
+  align-items: start;
+  width: min(1120px, 100%);
+  min-height: 100%;
+  gap: 48px;
+  margin: 0 auto;
+  padding: 52px 40px 80px;
+}
+
+.live-codex-task-detail-main {
+  min-width: 0;
+  padding: 0 14px;
+}
+
+.live-codex-task-detail-kicker {
+  color: var(--status-progress);
+  font-weight: 560;
+}
+
+.live-codex-task-detail-main h1 {
+  margin: 18px 0 12px;
+  color: var(--text-primary);
+  font-size: 26px;
+  line-height: 1.35;
+}
+
+.live-codex-task-detail-main p {
+  max-width: 680px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.live-codex-task-open-thread {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 24px;
+}
+
+.live-codex-task-open-thread svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+}
+
+.live-codex-task-detail-properties {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 2px;
+}
+
+.live-codex-task-detail-properties h2 {
+  margin: 0 0 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 560;
+}
+
+.live-codex-task-detail-property {
+  display: grid;
+  grid-template-columns: 108px minmax(0, 1fr);
+  align-items: center;
+  min-height: 34px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.live-codex-task-detail-property > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-tertiary);
+}
+
+.live-codex-task-detail-property svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+}
+
+.live-codex-task-detail-property strong {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-codex-task-detail-thread-id {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: var(--border-hairline) solid var(--border);
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+.live-codex-task-detail-thread-id code {
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .blocking-detail-banner {
