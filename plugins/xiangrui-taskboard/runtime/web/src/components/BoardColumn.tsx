@@ -129,7 +129,7 @@ export function BoardColumn({
             <StatusIcon status={status} />
           </span>
           <h2 id={`column-${status}`}>{details.label}</h2>
-          <span className="task-count" aria-label={`${tasks.length} 个议题`}>{tasks.length}</span>
+          <span className="task-count" aria-label={`${tasks.length} 项`}>{tasks.length}</span>
         </div>
         <div className="column-actions">
           <button

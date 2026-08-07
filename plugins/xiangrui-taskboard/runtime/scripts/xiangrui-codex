@@ -2,8 +2,14 @@
 set -euo pipefail
 
 readonly XIANGRUI_REPO="$(cd "$(dirname "$0")/.." && pwd)"
-readonly XIANGRUI_NODE="$(command -v node)"
-readonly CODEX_APP="/Applications/ChatGPT.app"
+readonly XIANGRUI_NODE="${XIANGRUI_NODE:-$(command -v node || true)}"
+if [[ -d "/Applications/ChatGPT.app" ]]; then
+  readonly CODEX_APP="/Applications/ChatGPT.app"
+elif [[ -d "/Applications/Codex.app" ]]; then
+  readonly CODEX_APP="/Applications/Codex.app"
+else
+  readonly CODEX_APP="/Applications/ChatGPT.app"
+fi
 readonly CODEX_BUNDLE_ID="com.openai.codex"
 readonly CDP_PORT="9231"
 
@@ -31,8 +37,20 @@ APPLESCRIPT
     exit 0
   fi
   /usr/bin/osascript -e 'tell application id "com.openai.codex" to quit'
+  for attempt in {1..120}; do
+    if ! codex_is_running; then
+      break
+    fi
+    if [[ "$attempt" == "120" ]]; then
+      /usr/bin/osascript -e 'display alert "xiangrui Codex 启动失败" message "Codex 没有在 30 秒内退出，请手动退出后再试。" as critical'
+      exit 1
+    fi
+    /bin/sleep 0.25
+  done
 fi
 
 cd "$XIANGRUI_REPO"
 CODEX_TASKBOARD_HOST=127.0.0.1 \
-  "$XIANGRUI_NODE" scripts/codex-injector.mjs --launch --watch --open --port "$CDP_PORT"
+  "$XIANGRUI_NODE" scripts/codex-injector.mjs --launch --open --port "$CDP_PORT" --app-path "$CODEX_APP"
+
+/usr/bin/osascript -e 'display notification "任务面板已经进入 Codex 左侧边栏" with title "xiangrui Codex"'

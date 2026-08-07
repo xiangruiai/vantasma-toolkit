@@ -142,6 +142,27 @@ test("aborted catalog requests preserve AbortError instead of reporting a servic
   }
 });
 
+test("aborted JSON body reads preserve AbortError instead of returning undefined data", async () => {
+  const previousFetch = globalThis.fetch;
+  const abortError = new DOMException("The operation was aborted", "AbortError");
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => {
+      throw abortError;
+    },
+  });
+
+  try {
+    await assert.rejects(
+      () => getAiChatCatalog("project-1"),
+      (error) => error === abortError,
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("thread event subscription listens only for public snapshot hints and closes cleanly", () => {
   const PreviousEventSource = globalThis.EventSource;
   const listeners = new Map();

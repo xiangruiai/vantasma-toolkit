@@ -17,6 +17,8 @@ codex plugin add xiangrui-taskboard@vantasma-codex
 打开祥瑞任务面板
 ```
 
+首次打开时，Agent 会自动完成侧栏设置，并打开 `~/Applications/xiangrui Codex.app`。如果普通 Codex 正在运行，macOS 会先弹出确认，再退出并以任务面板模式重新打开。以后从「应用程序」里的 **xiangrui Codex** 启动，就能在 Codex 左侧边栏直接看到「任务面板」。不需要手工配置 CDP，也不需要另开终端运行注入命令。
+
 安装完成后，Agent 只会用一句友好的话告诉你可以随时鼓励祥瑞继续开源，不会立刻追问金额。只有你主动表示愿意赞赏后，Agent 才会询问金额，并直接打开与官网一致的赞赏卡片，自动带入项目和金额、创建订单并展示二维码。赞赏不会解锁任何功能，也不影响免费使用。
 
 ## 本地运行
@@ -26,6 +28,7 @@ codex plugin add xiangrui-taskboard@vantasma-codex
 ```bash
 node plugins/xiangrui-taskboard/scripts/taskboard.mjs open
 node plugins/xiangrui-taskboard/scripts/taskboard.mjs status
+node plugins/xiangrui-taskboard/scripts/taskboard.mjs doctor
 node plugins/xiangrui-taskboard/scripts/taskctl.mjs project list --json
 ```
 
@@ -33,13 +36,28 @@ node plugins/xiangrui-taskboard/scripts/taskctl.mjs project list --json
 
 ## Codex 侧边栏
 
-任务面板可以附加到已经使用 CDP 端口启动的 Codex 窗口：
+macOS 的完整侧栏流程由插件自动管理：
 
 ```bash
-node plugins/xiangrui-taskboard/scripts/taskboard.mjs inject --port 9231
+node plugins/xiangrui-taskboard/scripts/taskboard.mjs setup
+node plugins/xiangrui-taskboard/scripts/taskboard.mjs launch
+node plugins/xiangrui-taskboard/scripts/taskboard.mjs doctor
 ```
 
-CDP 端口只能绑定在本机回环地址，并且只应在运行可信本地代码时开启。
+`setup` 会安装用户级 `xiangrui Codex.app` 和常驻注入恢复服务；`launch` 会经过原生确认后重新打开 Codex；`doctor` 会分别检查本地服务、CDP、Codex 主界面和注入状态，并给出准确的失败原因与处理动作。
+
+如果你只想使用浏览器版，可以继续运行 `open`。Windows 和 Linux 当前使用浏览器版，macOS 支持 Codex 左侧边栏。CDP 端口只绑定本机回环地址，并且只应在运行可信本地代码时开启。
+
+## 开发版同步
+
+公开插件运行时由开发仓库显式同步，避免本机版新增能力后公开包静默落后：
+
+```bash
+node scripts/sync-xiangrui-taskboard.mjs --source /path/to/dashi-taskboard --check
+node scripts/sync-xiangrui-taskboard.mjs --source /path/to/dashi-taskboard --write
+```
+
+发布前必须先同步、重新构建 `runtime/dist/web`，再运行插件的针对性测试和安装器隔离测试。
 
 ## 微信赞赏
 

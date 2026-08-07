@@ -97,20 +97,20 @@ test("project update renames an existing project without changing its id", async
   let requestMethod;
   let requestBody;
   const result = await run(
-    ["project", "update", "xiangrui-taskboard", "--name", "xiangrui"],
+    ["project", "update", "dashi-taskboard", "--name", "xiangrui"],
     async (url, init) => {
       requestedUrl = url;
       requestMethod = init.method;
       requestBody = JSON.parse(init.body);
-      return response({ project: { id: "xiangrui-taskboard", name: "xiangrui" } });
+      return response({ project: { id: "dashi-taskboard", name: "xiangrui" } });
     },
   );
 
   assert.equal(result.exitCode, 0);
-  assert.equal(requestedUrl.pathname, "/api/projects/xiangrui-taskboard");
+  assert.equal(requestedUrl.pathname, "/api/projects/dashi-taskboard");
   assert.equal(requestMethod, "PATCH");
   assert.deepEqual(requestBody, { name: "xiangrui" });
-  assert.equal(result.stdout.project.id, "xiangrui-taskboard");
+  assert.equal(result.stdout.project.id, "dashi-taskboard");
   assert.equal(result.stdout.project.name, "xiangrui");
 });
 

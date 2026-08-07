@@ -60,7 +60,7 @@ test("composer handoff preserves an explicit auto-submit request", async () => {
   const request = {
     id: "host-comment-handoff-1",
     action: "prefill-task-composer",
-    instruction: "e-taskboard Addressing the issues mentioned in XIANGRUITASK-1",
+    instruction: "e-taskboard Addressing the issues mentioned in DASHITASKBOA-1",
     skillName: "manage-taskboard",
     skillDisplayName: "Manage Taskboard",
     skillPath: "/tmp/manage-taskboard/SKILL.md",
@@ -98,7 +98,7 @@ test("composer handoff rejects a non-boolean auto-submit flag", async () => {
       payload: JSON.stringify({
         id: "host-comment-handoff-2",
         action: "prefill-task-composer",
-        instruction: "e-taskboard Addressing the issues mentioned in XIANGRUITASK-1",
+        instruction: "e-taskboard Addressing the issues mentioned in DASHITASKBOA-1",
         skillName: "manage-taskboard",
         skillDisplayName: "Manage Taskboard",
         skillPath: "/tmp/manage-taskboard/SKILL.md",

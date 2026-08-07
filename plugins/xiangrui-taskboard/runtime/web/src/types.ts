@@ -258,6 +258,13 @@ export interface Attachment {
   createdAt: string;
 }
 
+export interface RunningCodexThread {
+  threadId: string;
+  projectId: string;
+  title: string;
+  linkedTaskId?: string;
+}
+
 export interface HostContext {
   user?: ActorIdentity;
   workspacePath?: string;
@@ -265,6 +272,7 @@ export interface HostContext {
   theme?: "light" | "dark";
   projectId?: string;
   projects?: Array<{ id: string; name: string }>;
+  runningThreads?: RunningCodexThread[];
   titlebarLeftInset?: number;
   sidebarCollapsed?: boolean;
 }

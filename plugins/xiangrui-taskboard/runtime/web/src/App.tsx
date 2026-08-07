@@ -79,6 +79,7 @@ import {
   type HostContext,
   type IssueRelationType,
   type Project,
+  type RunningCodexThread,
   type Task,
   type TaskboardMetadata,
   type TaskDraft,
@@ -125,6 +126,7 @@ interface ProjectChoice {
   name: string;
   issueCount: number;
   inProgressCount: number;
+  runningConversationCount: number;
   doneCount: number;
   inCodex: boolean;
   persisted: boolean;
@@ -664,8 +666,8 @@ export function App() {
     ? tasks.find((task) => task.identifier === detailTaskIdentifier) ?? null
     : null;
   const detailTaskId = detailTask?.id ?? null;
-  const conversationTaskCount = useMemo(
-    () => tasks.filter((task) => task.threadId).length,
+  const persistedThreadIds = useMemo(
+    () => new Set(tasks.flatMap((task) => task.threadId ? [task.threadId] : [])),
     [tasks],
   );
   const contextMenuTask = contextMenu
@@ -680,6 +682,14 @@ export function App() {
   );
   const projectChoices = useMemo<ProjectChoice[]>(() => {
     const persistedById = new Map(projects.map((project) => [project.id, project]));
+    const liveConversationCountByProject = new Map<string, number>();
+    for (const thread of hostContext?.runningThreads ?? []) {
+      if (thread.linkedTaskId || persistedThreadIds.has(thread.threadId)) continue;
+      liveConversationCountByProject.set(
+        thread.projectId,
+        (liveConversationCountByProject.get(thread.projectId) ?? 0) + 1,
+      );
+    }
     const seen = new Set<string>();
     const choices: ProjectChoice[] = [];
     for (const project of hostContext?.projects ?? []) {
@@ -690,6 +700,7 @@ export function App() {
         name: persistedById.get(project.id)?.name ?? project.name,
         issueCount: persistedById.get(project.id)?.issueCount ?? 0,
         inProgressCount: persistedById.get(project.id)?.inProgressCount ?? 0,
+        runningConversationCount: liveConversationCountByProject.get(project.id) ?? 0,
         doneCount: persistedById.get(project.id)?.doneCount ?? 0,
         inCodex: true,
         persisted: persistedById.has(project.id),
@@ -702,6 +713,7 @@ export function App() {
         name: project.name,
         issueCount: project.issueCount,
         inProgressCount: project.inProgressCount,
+        runningConversationCount: liveConversationCountByProject.get(project.id) ?? 0,
         doneCount: project.doneCount,
         inCodex: false,
         persisted: true,
@@ -710,7 +722,7 @@ export function App() {
     return choices.sort((left, right) => (
       Number(favoriteProjectIds.has(right.id)) - Number(favoriteProjectIds.has(left.id))
     ));
-  }, [favoriteProjectIds, hostContext?.projects, projects]);
+  }, [favoriteProjectIds, hostContext?.projects, hostContext?.runningThreads, persistedThreadIds, projects]);
   const projectsWithIssues = useMemo(
     () => projectChoices.filter((project) => project.issueCount > 0),
     [projectChoices],
@@ -1084,6 +1096,22 @@ export function App() {
     };
   }, [embedded]);
 
+  useEffect(() => {
+    if (!embedded || window.parent === window || !hostContext?.threadId) return;
+    const linkedTask = tasks.find((task) => task.threadId === hostContext.threadId);
+    if (!linkedTask) return;
+    window.parent.postMessage({
+      type: "taskboard:linked-task",
+      payload: {
+        threadId: hostContext.threadId,
+        taskId: linkedTask.id,
+        projectId: linkedTask.projectId,
+        identifier: linkedTask.identifier,
+        title: linkedTask.title,
+      },
+    }, "*");
+  }, [embedded, hostContext?.threadId, tasks]);
+
   useLayoutEffect(() => {
     if (!embedded || window.parent === window || !dragRegionRef.current) return;
     const region = dragRegionRef.current;
@@ -1395,6 +1423,19 @@ export function App() {
       TASK_STATUSES.map((status) => [status, filteredTasks.filter((task) => task.status === status)]),
     ) as Record<TaskStatus, Task[]>;
   }, [filteredTasks]);
+
+  const liveRunningThreads = useMemo<RunningCodexThread[]>(() => {
+    return (hostContext?.runningThreads ?? []).filter((thread) => (
+      thread.projectId === selectedProjectId
+      && !thread.linkedTaskId
+      && !persistedThreadIds.has(thread.threadId)
+    ));
+  }, [hostContext?.runningThreads, persistedThreadIds, selectedProjectId]);
+
+  const conversationTaskCount = useMemo(
+    () => tasks.filter((task) => task.threadId).length + liveRunningThreads.length,
+    [liveRunningThreads.length, tasks],
+  );
 
   const orderedStatuses = useMemo(() => [
     ...TASK_STATUSES.filter((status) => tasksByStatus[status].length > 0),
@@ -1763,6 +1804,8 @@ export function App() {
         type: "taskboard:open-thread",
         payload: {
           threadId,
+          taskId: sourceTask?.id,
+          projectId: sourceTask?.projectId,
           identifier: sourceTask?.identifier,
           title: sourceTask?.title,
         },
@@ -1821,7 +1864,9 @@ export function App() {
       type: "taskboard:create-thread",
       payload: {
         taskId: task.id,
+        projectId: task.projectId,
         identifier: task.identifier,
+        title: task.title,
         instruction,
         skillName: "manage-taskboard",
         skillDisplayName: "Manage Taskboard",
@@ -2356,6 +2401,7 @@ export function App() {
         ) : workspacePane === "conversations" ? (
           <RelatedConversations
             tasks={tasks}
+            runningThreads={liveRunningThreads}
             onOpenIssue={openTaskDetail}
             onOpenThread={openThread}
           />
