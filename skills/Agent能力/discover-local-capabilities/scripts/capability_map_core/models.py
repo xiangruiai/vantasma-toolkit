@@ -60,7 +60,7 @@ def _normalize_public_text(value: str, *, max_length: int = 2_048) -> str:
 
 def _normalize_identity_text(value: str, *, max_length: int) -> str:
     return unicodedata.normalize(
-        "NFC", _normalize_public_text(value, max_length=max_length).casefold()
+        "NFC", _normalize_public_text(value, max_length=max_length)
     )
 
 
@@ -200,11 +200,12 @@ class Capability:
     states: CapabilityStates = field(default_factory=CapabilityStates)
     classification_confidence: float = 0.0
     diagnostics: tuple[Diagnostic, ...] | list[Diagnostic] = field(default_factory=tuple)
-    logical_identity: InitVar[str] = ""
+    _logical_identity: str = field(default="", repr=False, compare=False)
+    logical_identity: InitVar[str | None] = None
     id: str = field(init=False)
     resolver_id: str = field(init=False)
 
-    def __post_init__(self, logical_identity: str) -> None:
+    def __post_init__(self, logical_identity: str | None) -> None:
         normalized_kind = self.kind.casefold().strip()
         normalized_scope = self.scope.casefold().strip()
         if normalized_kind not in CAPABILITY_KINDS:
@@ -254,7 +255,11 @@ class Capability:
             "provider": _normalize_identity_text(normalized_provider, max_length=256),
             "scope": normalized_scope,
         }
-        normalized_logical_identity = _normalize_logical_identity(logical_identity)
+        logical_identity_input = (
+            self._logical_identity if logical_identity is None else logical_identity
+        )
+        normalized_logical_identity = _normalize_logical_identity(logical_identity_input)
+        object.__setattr__(self, "_logical_identity", normalized_logical_identity)
         if normalized_logical_identity:
             identity["logical_identity"] = normalized_logical_identity
         object.__setattr__(

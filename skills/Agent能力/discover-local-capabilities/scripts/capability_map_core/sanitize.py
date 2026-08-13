@@ -37,27 +37,28 @@ _AWS_ACCESS_KEY_RE = re.compile(
     r"(?<![A-Z0-9])(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Z0-9])"
 )
 _SENSITIVE_KEY_RE = re.compile(r"(?i)^(?:token|secret|password|api[_-]?key)$")
-_ABSOLUTE_PATH_PREFIX = r"(?:file://|[A-Za-z]:[\\/]|\\\\[^\\/\s]+[\\/]|/)"
+_PATH_START_CHAR = r"[^`\s/\\|<>\"']"
+_PATH_TOKEN_BODY = r"(?:\\ |[^`\s|<>\"'])+"
+_FILE_URL_PREFIX = r"\bfile://"
+_WINDOWS_DRIVE_PREFIX = r"(?<![A-Za-z0-9_])[A-Za-z]:[\\/]"
+_UNC_PREFIX = r"\\\\[^\\/\s]+[\\/]"
+_UNIX_PREFIX = (
+    r"(?<![A-Za-z0-9_.~/-])/(?=" + _PATH_START_CHAR + r")"
+)
+_ABSOLUTE_PATH_PREFIX = (
+    rf"(?:{_FILE_URL_PREFIX}|{_WINDOWS_DRIVE_PREFIX}|"
+    rf"{_UNC_PREFIX}|{_UNIX_PREFIX})"
+)
 _QUOTED_ABSOLUTE_PATH_RE = re.compile(
     rf"(?:\"{_ABSOLUTE_PATH_PREFIX}[^\"\r\n]*\"|"
     rf"'{_ABSOLUTE_PATH_PREFIX}[^'\r\n]*')",
     re.IGNORECASE,
 )
-_UNQUOTED_ABSOLUTE_PATH_RE = re.compile(
-    r"(?:\bfile://|\b[A-Za-z]:[\\/]|\\\\[^\\/\s]+[\\/]|"
-    r"(?<![A-Za-z0-9_.~:/-])/)",
+_ABSOLUTE_PATH_CANDIDATE_RE = re.compile(
+    _ABSOLUTE_PATH_PREFIX + _PATH_TOKEN_BODY,
     re.IGNORECASE,
 )
 _UNESCAPED_WHITESPACE_RE = re.compile(r"(?<!\\)\s")
-_PATH_TOKEN_BODY = r"(?:\\ |[^\s|<>\"'\x60])+"
-_FILE_URL_WITH_SPACES_RE = re.compile(rf"(?i)\bfile://{_PATH_TOKEN_BODY}")
-_WINDOWS_ABSOLUTE_WITH_SPACES_RE = re.compile(
-    r"(?<![A-Za-z0-9_])(?:[A-Za-z]:[\\/]|\\\\[^\\/\s]+[\\/])"
-    + _PATH_TOKEN_BODY
-)
-_UNIX_ABSOLUTE_WITH_SPACES_RE = re.compile(
-    r"(?<![A-Za-z0-9_.~-])/" + _PATH_TOKEN_BODY
-)
 
 
 def _replace_assigned_secret(match: re.Match[str]) -> str:
@@ -103,14 +104,12 @@ def _truncate(value: str, max_length: int) -> str:
 def _redact_absolute_paths(value: str) -> str:
     value = _QUOTED_ABSOLUTE_PATH_RE.sub(REDACTED_PATH, value)
     stripped = value.strip()
-    unquoted_path = _UNQUOTED_ABSOLUTE_PATH_RE.search(stripped)
+    unquoted_path = _ABSOLUTE_PATH_CANDIDATE_RE.search(stripped)
     if unquoted_path and _UNESCAPED_WHITESPACE_RE.search(
         stripped[unquoted_path.start() :]
     ):
         return REDACTED_PATH
-    value = _FILE_URL_WITH_SPACES_RE.sub(REDACTED_PATH, value)
-    value = _WINDOWS_ABSOLUTE_WITH_SPACES_RE.sub(REDACTED_PATH, value)
-    return _UNIX_ABSOLUTE_WITH_SPACES_RE.sub(REDACTED_PATH, value)
+    return _ABSOLUTE_PATH_CANDIDATE_RE.sub(REDACTED_PATH, value)
 
 
 def _escape_markdown_pipes(value: str) -> str:
@@ -121,6 +120,14 @@ def _escape_markdown_pipes(value: str) -> str:
         return backslashes + "|"
 
     return re.sub(r"(?P<backslashes>\\*)\|", ensure_odd_backslashes, value)
+
+
+def _collision_key(base_key: str, index: int, max_length: int) -> str:
+    suffix = f" [{index}]"
+    if len(suffix) > max_length:
+        raise ValueError("max_length is too small to disambiguate mapping keys")
+    prefix = _truncate(base_key, max_length - len(suffix))
+    return prefix + suffix
 
 
 def sanitize_text(
@@ -204,7 +211,7 @@ def sanitize(
             result_key = safe_key
             collision_index = 2
             while result_key in result:
-                result_key = f"{safe_key} [{collision_index}]"
+                result_key = _collision_key(safe_key, collision_index, max_length)
                 collision_index += 1
             result[result_key] = safe_item
         return result

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sys
 import unittest
-from dataclasses import FrozenInstanceError, asdict
+from dataclasses import FrozenInstanceError, asdict, replace
 from pathlib import Path
 
 
@@ -119,6 +119,22 @@ class CapabilityModelTests(unittest.TestCase):
         self.assertNotIn("logical_identity", first.to_public_dict())
         self.assertNotIn("logical_identity", asdict(first))
 
+    def test_replace_of_non_identity_field_preserves_logical_identity(self) -> None:
+        original = Capability(
+            kind="mcp",
+            name="duplicate",
+            provider="shared",
+            logical_identity="configuration-one",
+        )
+
+        updated = replace(original, description="Updated description")
+
+        self.assertEqual(updated.id, original.id)
+        self.assertEqual(updated.resolver_id, original.resolver_id)
+        self.assertEqual(updated.description, "Updated description")
+        self.assertNotIn("configuration-one", repr(updated))
+        self.assertNotIn("logical_identity", updated.to_public_dict())
+
     def test_identity_normalizes_unicode_to_nfc(self) -> None:
         composed = Capability(
             kind="skill",
@@ -136,6 +152,21 @@ class CapabilityModelTests(unittest.TestCase):
         self.assertEqual(composed.id, decomposed.id)
         self.assertEqual(composed.resolver_id, decomposed.resolver_id)
         self.assertEqual(decomposed.name, "Café")
+
+    def test_identity_preserves_name_and_logical_identity_case(self) -> None:
+        lower_name = Capability(kind="cli", name="runner")
+        upper_name = Capability(kind="cli", name="Runner")
+        lower_origin = Capability(
+            kind="skill", name="same", logical_identity="origin"
+        )
+        upper_origin = Capability(
+            kind="skill", name="same", logical_identity="Origin"
+        )
+
+        self.assertNotEqual(lower_name.id, upper_name.id)
+        self.assertNotEqual(lower_name.resolver_id, upper_name.resolver_id)
+        self.assertNotEqual(lower_origin.id, upper_origin.id)
+        self.assertNotEqual(lower_origin.resolver_id, upper_origin.resolver_id)
 
     def test_name_empty_after_sanitization_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
@@ -272,51 +303,54 @@ class CapabilityModelTests(unittest.TestCase):
 
 
 class SanitizerTests(unittest.TestCase):
-    def test_paths_with_spaces_and_unicode_do_not_leave_suffixes(self) -> None:
+    def test_each_absolute_path_form_is_independently_redacted(self) -> None:
+        cases = {
+            "unix_quoted": '"/opt/Acme Tools/秘密/config.json"',
+            "unix_escaped_space": "/opt/Acme\\ Tools/秘密/config.json",
+            "unix_unquoted_space": "/opt/Acme Tools/秘密/config.json",
+            "windows_quoted": "'C:\\Program Files\\工具\\config.json'",
+            "unc_quoted": '"\\\\server\\Shared Folder\\秘密\\config.json"',
+            "file_url_quoted": '"file:///var/Acme Tools/秘密.json"',
+            "file_url_host": "file://server/share/private/config.json",
+            "file_url_windows": "file://localhost/C:/Users/Alice/private/config.json",
+        }
+
+        for branch, sample in cases.items():
+            with self.subTest(branch=branch):
+                self.assertEqual(
+                    sanitize_text(sample, home=Path("/Users/alice")), "<path>"
+                )
+
+    def test_unquoted_labeled_path_with_spaces_is_conservatively_redacted(self) -> None:
+        result = sanitize_text("path:/srv/Private Folder/secret.json")
+
+        self.assertEqual(result, "<path>")
+
+    def test_prose_slashes_and_web_urls_are_not_absolute_paths(self) -> None:
         samples = (
-            '"/opt/Acme Tools/秘密/config.json"',
-            "'C:\\Program Files\\工具\\config.json'",
-            '"\\\\server\\Shared Folder\\秘密\\config.json"',
-            '"file:///var/Acme Tools/秘密.json"',
-            "/opt/Acme\\ Tools/秘密/config.json",
-            "/opt/Acme Tools/秘密/config.json",
-            "prefix /opt/Acme Tools/秘密/config.json suffix",
+            "supports input / output formats",
+            "ratio 1 / 2",
+            "documentation https://example.com/input/output",
         )
 
         for sample in samples:
             with self.subTest(sample=sample):
-                result = sanitize_text(sample, home=Path("/Users/alice"))
-                self.assertNotIn("Acme", result)
-                self.assertNotIn("Tools", result)
-                self.assertNotIn("秘密", result)
-                self.assertNotIn("Files", result)
-                self.assertNotIn("工具", result)
-                self.assertNotIn("Folder", result)
+                self.assertEqual(sanitize_text(sample), sample)
 
     def test_paths_are_redacted_across_supported_forms(self) -> None:
         home = Path("/Users/alice")
-        raw = (
-            "/Users/alice/.agents/skills/demo "
-            "/opt/acme/private/tool "
-            "C:\\Users\\Alice\\private\\tool.exe "
-            "file:///var/private/config.json "
-            "file:///Users/alice/private/note.md "
-            "file://server/share/private/config.json "
-            "file://localhost/C:/Users/Alice/private/config.json "
-            "path:/srv/private/capability/config.json"
-        )
-
-        result = sanitize_text(raw, home=home)
         home_result = sanitize_text("/Users/alice/.agents/skills/demo", home=home)
 
         self.assertEqual(home_result, "~/.agents/skills/demo")
-        self.assertNotIn("/Users/alice", result)
-        self.assertNotIn("/opt/acme", result)
-        self.assertNotIn("C:\\Users", result)
-        self.assertNotIn("file://", result)
-        self.assertNotIn("server/share", result)
-        self.assertNotIn("/srv/private", result)
-        self.assertGreaterEqual(result.count("<path>"), 1)
+        cases = {
+            "/opt/acme/private/tool": "<path>",
+            "C:\\Users\\Alice\\private\\tool.exe": "<path>",
+            "file:///var/private/config.json": "<path>",
+            "path:/srv/private/capability/config.json": "path:<path>",
+        }
+        for sample, expected in cases.items():
+            with self.subTest(sample=sample):
+                self.assertEqual(sanitize_text(sample, home=home), expected)
 
     def test_control_table_newline_and_length_safety(self) -> None:
         result = sanitize_text("left|right\nnext\rline\x00end\x1f", max_length=22)
@@ -411,6 +445,14 @@ class SanitizerTests(unittest.TestCase):
         self.assertEqual(len(first), 2)
         self.assertEqual(sorted(first.values()), ["first", "second"])
         self.assertEqual(sorted(first), ["same key", "same key [2]"])
+
+    def test_mapping_collision_suffix_respects_max_length(self) -> None:
+        result = sanitize(
+            {"abcdefgh": "first", "abcdefgh\n": "second"}, max_length=8
+        )
+
+        self.assertEqual(result, {"abcdefgh": "first", "abc… [2]": "second"})
+        self.assertTrue(all(len(key) <= 8 for key in result))
 
     def test_non_json_values_raise_without_calling_untrusted_conversions(self) -> None:
         class Untrusted:
