@@ -22,7 +22,10 @@ from capability_map_core.skills import (  # noqa: E402
     discover_skills,
 )
 
-from support import write_raw_skill, write_skill  # noqa: E402
+try:  # noqa: E402
+    from .support import write_raw_skill, write_skill
+except ImportError:  # discovery mode imports tests as top-level modules
+    from support import write_raw_skill, write_skill
 
 
 class RootProviderTests(unittest.TestCase):
@@ -311,7 +314,45 @@ class SkillDiscoveryTests(unittest.TestCase):
                 {file_id for file_id, _, _ in reads},
                 {(skill_stat.st_dev, skill_stat.st_ino)},
             )
-            self.assertLessEqual(max(position for _, _, position in reads), body_start)
+            self.assertLessEqual(
+                max(position for _, _, position in reads),
+                body_start + 16 * 1024,
+            )
+
+    def test_malformed_frontmatter_uses_bounded_chunked_reads(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "skills"
+            write_raw_skill(
+                root / "malformed",
+                b"---\nname: malformed\n" + b"x" * (MAX_FRONTMATTER_BYTES * 2),
+            )
+            real_os_read = os.read
+            requested_sizes: list[int] = []
+            returned_bytes = 0
+
+            def recording_read(fd: int, size: int) -> bytes:
+                nonlocal returned_bytes
+                requested_sizes.append(size)
+                chunk = real_os_read(fd, size)
+                returned_bytes += len(chunk)
+                return chunk
+
+            with mock.patch("capability_map_core.skills.os.read", recording_read):
+                result = discover_skills(
+                    [RootSpec(root, "extra", "fixtures", "extra:fixtures", "<extra>")]
+                )
+
+            self.assertEqual(len(result.capabilities), 1)
+            self.assertLessEqual(len(requested_sizes), 20)
+            self.assertTrue(
+                all(4 * 1024 <= size <= 16 * 1024 for size in requested_sizes[:-1])
+            )
+            self.assertLessEqual(requested_sizes[-1], 16 * 1024)
+            self.assertLessEqual(returned_bytes, MAX_FRONTMATTER_BYTES + 1)
+            self.assertIn(
+                "frontmatter_too_large",
+                {item.code for item in result.diagnostics},
+            )
 
     @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are required")
     def test_physical_dedupe_keeps_all_visible_sources_and_one_resolver(self) -> None:
@@ -468,6 +509,124 @@ class SkillDiscoveryTests(unittest.TestCase):
             self.assertGreaterEqual(
                 [item.code for item in result.diagnostics].count("env_path_blocked"),
                 2,
+            )
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are required")
+    def test_linked_file_stays_bound_when_allowed_root_path_is_replaced(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            source_root = base / "source"
+            linked_directory = source_root / "linked"
+            linked_directory.mkdir(parents=True)
+            allowed_root = base / "allowed"
+            original = write_skill(
+                allowed_root / "target", frontmatter="name: original-linked-file"
+            )
+            (linked_directory / "SKILL.md").symlink_to(original)
+            external_root = base / "external"
+            secret_canary = b"linked-file-race-canary"
+            write_raw_skill(
+                external_root / "target",
+                b"---\nname: " + secret_canary + b"\n---\nprivate bytes",
+            )
+            backup = base / "allowed-backup"
+            skills_module = sys.modules["capability_map_core.skills"]
+            real_contained = skills_module._contained_by
+            real_os_read = os.read
+            swapped = False
+            read_chunks: list[bytes] = []
+
+            def swap_after_containment(path: Path, roots: tuple[Path, ...]) -> bool:
+                nonlocal swapped
+                contained = real_contained(path, roots)
+                if contained and path.name == "SKILL.md" and not swapped:
+                    allowed_root.rename(backup)
+                    allowed_root.symlink_to(external_root, target_is_directory=True)
+                    swapped = True
+                return contained
+
+            def recording_read(fd: int, size: int) -> bytes:
+                chunk = real_os_read(fd, size)
+                read_chunks.append(chunk)
+                return chunk
+
+            with mock.patch(
+                "capability_map_core.skills._contained_by", swap_after_containment
+            ), mock.patch(
+                "capability_map_core.skills.os.read", recording_read
+            ):
+                result = discover_skills(
+                    [
+                        RootSpec(source_root, "extra", "source", "root:source", "<source>"),
+                        RootSpec(allowed_root, "extra", "allowed", "root:allowed", "<allowed>"),
+                    ]
+                )
+
+            self.assertTrue(swapped)
+            self.assertNotIn(secret_canary, b"".join(read_chunks))
+            self.assertNotIn(
+                secret_canary.decode(),
+                {capability.name for capability in result.capabilities},
+            )
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are required")
+    def test_linked_directory_stays_bound_when_allowed_root_path_is_replaced(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            source_root = base / "source"
+            source_root.mkdir()
+            allowed_root = base / "allowed"
+            target_directory = allowed_root / "target"
+            write_skill(target_directory, frontmatter="name: original-linked-directory")
+            (source_root / "linked").symlink_to(
+                target_directory, target_is_directory=True
+            )
+            external_root = base / "external"
+            secret_canary = b"linked-directory-race-canary"
+            write_raw_skill(
+                external_root / "target",
+                b"---\nname: " + secret_canary + b"\n---\nprivate bytes",
+            )
+            backup = base / "allowed-backup"
+            skills_module = sys.modules["capability_map_core.skills"]
+            real_contained = skills_module._contained_by
+            real_os_read = os.read
+            swapped = False
+            read_chunks: list[bytes] = []
+
+            def swap_after_containment(path: Path, roots: tuple[Path, ...]) -> bool:
+                nonlocal swapped
+                contained = real_contained(path, roots)
+                if contained and path.name == "target" and not swapped:
+                    allowed_root.rename(backup)
+                    allowed_root.symlink_to(external_root, target_is_directory=True)
+                    swapped = True
+                return contained
+
+            def recording_read(fd: int, size: int) -> bytes:
+                chunk = real_os_read(fd, size)
+                read_chunks.append(chunk)
+                return chunk
+
+            with mock.patch(
+                "capability_map_core.skills._contained_by", swap_after_containment
+            ), mock.patch(
+                "capability_map_core.skills.os.read", recording_read
+            ):
+                result = discover_skills(
+                    [
+                        RootSpec(source_root, "extra", "source", "root:source", "<source>"),
+                        RootSpec(allowed_root, "extra", "allowed", "root:allowed", "<allowed>"),
+                    ]
+                )
+
+            self.assertTrue(swapped)
+            self.assertNotIn(secret_canary, b"".join(read_chunks))
+            self.assertNotIn(
+                secret_canary.decode(),
+                {capability.name for capability in result.capabilities},
             )
 
     @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are required")
@@ -1414,6 +1573,78 @@ class SkillDiscoveryTests(unittest.TestCase):
                 ["original-root"],
             )
 
+    def test_iterator_close_error_still_closes_directory_fd(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "root"
+            write_skill(root / "skill", frontmatter="name: close-probe")
+            root_id = (root.stat().st_dev, root.stat().st_ino)
+            real_os_open = os.open
+            real_os_close = os.close
+            real_scandir = os.scandir
+            root_fds: set[int] = set()
+            closed_fds: list[int] = []
+            raised = False
+
+            class CloseErrorIterator:
+                def __init__(self, iterator: object, should_raise: bool) -> None:
+                    self._iterator = iterator
+                    self._should_raise = should_raise
+
+                def __iter__(self) -> "CloseErrorIterator":
+                    return self
+
+                def __next__(self) -> object:
+                    return next(self._iterator)  # type: ignore[arg-type]
+
+                def close(self) -> None:
+                    nonlocal raised
+                    self._iterator.close()  # type: ignore[attr-defined]
+                    if self._should_raise and not raised:
+                        raised = True
+                        raise OSError("synthetic iterator close failure")
+
+            def recording_open(
+                path: object, flags: int, *args: object, **kwargs: object
+            ) -> int:
+                fd = real_os_open(path, flags, *args, **kwargs)
+                opened = os.fstat(fd)
+                if stat.S_ISDIR(opened.st_mode) and (
+                    opened.st_dev,
+                    opened.st_ino,
+                ) == root_id:
+                    root_fds.add(fd)
+                return fd
+
+            def raising_scandir(path: object) -> CloseErrorIterator:
+                opened = os.fstat(path)  # type: ignore[arg-type]
+                return CloseErrorIterator(
+                    real_scandir(path),
+                    (opened.st_dev, opened.st_ino) == root_id,
+                )
+
+            def recording_close(fd: int) -> None:
+                closed_fds.append(fd)
+                real_os_close(fd)
+
+            with mock.patch(
+                "capability_map_core.skills.os.open", recording_open
+            ), mock.patch(
+                "capability_map_core.skills.os.scandir", raising_scandir
+            ), mock.patch(
+                "capability_map_core.skills.os.close", recording_close
+            ):
+                result = discover_skills(
+                    [RootSpec(root, "extra", "root", "root:close", "<root>")]
+                )
+
+            self.assertTrue(raised)
+            self.assertTrue(root_fds)
+            self.assertTrue(root_fds.issubset(set(closed_fds)))
+            self.assertIn(
+                "directory_read_error",
+                {diagnostic.code for diagnostic in result.diagnostics},
+            )
+
     @unittest.skipUnless(hasattr(os, "O_DIRECTORY"), "directory fds are required")
     def test_root_path_replaced_after_fd_verification_reads_only_root_handle(
         self,
@@ -1556,6 +1787,30 @@ class SkillDiscoveryTests(unittest.TestCase):
             self.assertEqual(result.capabilities, ())
             self.assertIn(
                 "root_unverifiable",
+                {diagnostic.code for diagnostic in result.diagnostics},
+            )
+
+    def test_path_backend_discovers_regular_nested_and_system_skills(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "skills"
+            write_skill(root / "nested" / "regular", frontmatter="name: regular-path")
+            write_skill(root / ".system" / "hidden", frontmatter="name: system-path")
+
+            with mock.patch(
+                "capability_map_core.skills._FD_WALK_SUPPORTED", False
+            ):
+                result = discover_skills(
+                    [RootSpec(root, "extra", "path", "root:path", "<path>")]
+                )
+
+            self.assertEqual(
+                {capability.name for capability in result.capabilities},
+                {"regular-path", "system-path"},
+            )
+            by_name = {item.name: item for item in result.capabilities}
+            self.assertEqual(by_name["system-path"].source_locations[0].scope, "system")
+            self.assertIn(
+                "path_backend_best_effort",
                 {diagnostic.code for diagnostic in result.diagnostics},
             )
 
