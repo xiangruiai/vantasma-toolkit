@@ -14,6 +14,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .storage import (
+    RootEvidence as DirectoryEvidence,
+    _capture_root_evidence,
+    _validate_root_evidence,
+)
+
 
 _READ_LIMIT = 8 * 1024 * 1024
 _CHUNK_SIZE = 64 * 1024
@@ -58,9 +64,7 @@ class FileMutation:
     target_bytes: bytes = field(repr=False)
     mode: int
     newline: str
-    parent_evidence: tuple[str, int, int] | None = field(
-        default=None, repr=False
-    )
+    parent_evidence: DirectoryEvidence = field(repr=False)
 
     def __post_init__(self) -> None:
         path = Path(self.path)
@@ -78,6 +82,8 @@ class FileMutation:
             raise ValueError("a missing original cannot contain bytes")
         if not 0 <= self.mode <= 0o7777:
             raise ValueError("invalid transaction file mode")
+        if not isinstance(self.parent_evidence, DirectoryEvidence):
+            raise TypeError("parent_evidence must be DirectoryEvidence")
         object.__setattr__(self, "path", path)
 
 
@@ -124,7 +130,7 @@ class _CommittedEvidence:
     device: int
     inode: int
     size: int
-    ctime_ns: int
+    ctime_ns: int | None
     mode: int
     sha256: str
 
@@ -145,47 +151,86 @@ def _fsync_directory(descriptor: int) -> None:
             raise
 
 
-def _canonical_directory(path: Path) -> Path:
-    """Resolve existing ancestors once; later traversal refuses every symlink."""
+def capture_directory_evidence(path: Path) -> DirectoryEvidence:
+    """Capture a canonical physical root without creating any directory."""
 
-    return path.resolve(strict=False)
-
-
-def _open_directory(path: Path, *, create: bool) -> tuple[int, tuple[Path, ...]]:
-    canonical = _canonical_directory(path)
-    if not canonical.is_absolute():  # pragma: no cover - resolve makes it absolute
+    candidate = Path(path)
+    if not candidate.is_absolute():
         raise ValueError("transaction directory must be absolute")
+    return _capture_root_evidence(candidate)
+
+
+def directory_evidence_dict(evidence: DirectoryEvidence) -> dict[str, Any]:
+    """Serialize root identity into the private deterministic plan document."""
+
+    if not isinstance(evidence, DirectoryEvidence):
+        raise TypeError("evidence must be DirectoryEvidence")
+    return {
+        "resolved_path": str(evidence.resolved_path),
+        "existing_ancestors": [
+            {
+                "path": str(item.path),
+                "device": item.device,
+                "inode": item.inode,
+                "mode": item.mode,
+            }
+            for item in evidence.existing_ancestors
+        ],
+    }
+
+
+def _open_evidence_directory(
+    evidence: DirectoryEvidence, *, create: bool, label: str
+) -> int:
+    resolved = _validate_root_evidence(evidence)
+    if not evidence.existing_ancestors:  # pragma: no cover - filesystem root exists
+        raise ValueError(f"{label} has no existing safe ancestor")
+    anchor = evidence.existing_ancestors[-1]
     flags = (
         os.O_RDONLY
         | getattr(os, "O_CLOEXEC", 0)
         | os.O_DIRECTORY
         | os.O_NOFOLLOW
     )
-    descriptor = os.open(canonical.anchor, flags)
-    created: list[Path] = []
-    current = Path(canonical.anchor)
+    descriptor = os.open(anchor.path, flags)
     try:
-        for component in canonical.parts[1:]:
+        opened_anchor = os.fstat(descriptor)
+        if (
+            not stat.S_ISDIR(opened_anchor.st_mode)
+            or opened_anchor.st_dev != anchor.device
+            or opened_anchor.st_ino != anchor.inode
+        ):
+            raise ValueError(f"{label} ancestry changed while opening")
+        try:
+            relative = resolved.relative_to(anchor.path)
+        except ValueError as error:  # pragma: no cover - evidence construction guarantees
+            raise ValueError(f"{label} escaped its pinned ancestor") from error
+        parts = tuple(part for part in relative.parts if part not in {"", "."})
+        if parts and not create:
+            raise ValueError(f"{label} parent does not exist")
+        for component in parts:
             try:
                 child = os.open(component, flags, dir_fd=descriptor)
             except FileNotFoundError:
                 if not create:
-                    raise
+                    raise ValueError(f"{label} parent does not exist")
                 os.mkdir(component, 0o700, dir_fd=descriptor)
                 _fsync_directory(descriptor)
-                current = current / component
-                created.append(current)
-                child = os.open(component, flags, dir_fd=descriptor)
+                try:
+                    child = os.open(component, flags, dir_fd=descriptor)
+                except OSError as error:
+                    raise ValueError(
+                        f"{label} could not be opened safely"
+                    ) from error
             except OSError as error:
-                raise ValueError("transaction directory could not be opened safely") from error
+                raise ValueError(f"{label} could not be opened safely") from error
             metadata = os.fstat(child)
             if not stat.S_ISDIR(metadata.st_mode):  # pragma: no cover - O_DIRECTORY
                 os.close(child)
-                raise ValueError("transaction path component is not a directory")
+                raise ValueError(f"{label} component is not a directory")
             os.close(descriptor)
             descriptor = child
-            current = current / component
-        return descriptor, tuple(created)
+        return descriptor
     except BaseException:
         os.close(descriptor)
         raise
@@ -302,31 +347,14 @@ def _write_new_at(parent_fd: int, name: str, payload: bytes, mode: int) -> None:
         os.close(descriptor)
 
 
-def _verify_parent_evidence(mutations: tuple[FileMutation, ...]) -> None:
-    for mutation in mutations:
-        evidence = mutation.parent_evidence
-        if evidence is None:
-            continue
-        path_text, expected_device, expected_inode = evidence
-        try:
-            metadata = os.lstat(path_text)
-        except OSError as error:
-            raise TransactionError("stale transaction parent evidence", cause=error) from error
-        if (
-            stat.S_ISLNK(metadata.st_mode)
-            or not stat.S_ISDIR(metadata.st_mode)
-            or metadata.st_dev != expected_device
-            or metadata.st_ino != expected_inode
-        ):
-            raise TransactionError("stale transaction parent evidence")
-
-
 def _write_backup_manifest(
-    backup_root: Path,
+    backup_root_evidence: DirectoryEvidence,
     mutations: tuple[FileMutation, ...],
     plan_hash: str,
 ) -> tuple[Path, Path]:
-    root_fd, _ = _open_directory(backup_root, create=True)
+    root_fd = _open_evidence_directory(
+        backup_root_evidence, create=True, label="backup root"
+    )
     transaction_name = f"instruction-{plan_hash[:16]}-{secrets.token_hex(6)}"
     transaction_fd = -1
     try:
@@ -381,17 +409,18 @@ def _write_backup_manifest(
         if transaction_fd >= 0:
             os.close(transaction_fd)
         os.close(root_fd)
-    directory = backup_root / transaction_name
+    directory = backup_root_evidence.resolved_path / transaction_name
     return directory, directory / "manifest.json"
 
 
-def _committed_evidence(snapshot: _Snapshot, expected_hash: str) -> _CommittedEvidence:
+def _committed_evidence(
+    snapshot: _Snapshot, expected_hash: str, *, include_ctime: bool = True
+) -> _CommittedEvidence:
     if (
         not snapshot.existed
         or snapshot.device is None
         or snapshot.inode is None
         or snapshot.size is None
-        or snapshot.ctime_ns is None
         or snapshot.mode is None
         or snapshot.payload is None
         or hashlib.sha256(snapshot.payload).hexdigest() != expected_hash
@@ -401,7 +430,7 @@ def _committed_evidence(snapshot: _Snapshot, expected_hash: str) -> _CommittedEv
         snapshot.device,
         snapshot.inode,
         snapshot.size,
-        snapshot.ctime_ns,
+        snapshot.ctime_ns if include_ctime else None,
         snapshot.mode,
         expected_hash,
     )
@@ -414,7 +443,7 @@ def _still_owned(snapshot: _Snapshot, evidence: _CommittedEvidence) -> bool:
         and snapshot.device == evidence.device
         and snapshot.inode == evidence.inode
         and snapshot.size == evidence.size
-        and snapshot.ctime_ns == evidence.ctime_ns
+        and (evidence.ctime_ns is None or snapshot.ctime_ns == evidence.ctime_ns)
         and snapshot.mode == evidence.mode
         and hashlib.sha256(snapshot.payload).hexdigest() == evidence.sha256
     )
@@ -447,6 +476,7 @@ def apply_file_transaction(
     mutations: Iterable[FileMutation],
     *,
     backup_root: Path,
+    backup_root_evidence: DirectoryEvidence,
     plan_hash: str,
     failure_injector: Callable[[str, Path], None] | None = None,
 ) -> TransactionReceipt:
@@ -464,8 +494,9 @@ def apply_file_transaction(
         raise ValueError("backup_root must be absolute")
     if any(private_backup == item.path.parent for item in values):
         raise ValueError("backup_root must not be an instruction directory")
+    if not isinstance(backup_root_evidence, DirectoryEvidence):
+        raise TypeError("backup_root_evidence must be DirectoryEvidence")
 
-    _verify_parent_evidence(values)
     parent_handles: dict[Path, int] = {}
     staged_names: dict[Path, str] = {}
     committed: list[tuple[FileMutation, _CommittedEvidence]] = []
@@ -475,8 +506,10 @@ def apply_file_transaction(
         for mutation in values:
             parent_key = mutation.path.parent
             if parent_key not in parent_handles:
-                parent_handles[parent_key], _ = _open_directory(
-                    parent_key, create=True
+                parent_handles[parent_key] = _open_evidence_directory(
+                    mutation.parent_evidence,
+                    create=False,
+                    label="instruction target parent",
                 )
         for mutation in values:
             current = _snapshot_at(parent_handles[mutation.path.parent], mutation.path.name)
@@ -484,7 +517,7 @@ def apply_file_transaction(
                 raise TransactionError("stale transaction target")
 
         backup_directory, manifest_path = _write_backup_manifest(
-            private_backup, values, plan_hash
+            backup_root_evidence, values, plan_hash
         )
 
         for mutation in values:
@@ -505,20 +538,30 @@ def apply_file_transaction(
             current = _snapshot_at(parent_fd, mutation.path.name)
             if not _matches_expected(current, mutation):
                 raise TransactionError("stale transaction target")
-            temporary = staged_names.pop(mutation.path)
+            temporary = staged_names[mutation.path]
+            staged = _snapshot_at(parent_fd, temporary)
+            desired_hash = hashlib.sha256(mutation.target_bytes).hexdigest()
             os.replace(
                 temporary,
                 mutation.path.name,
                 src_dir_fd=parent_fd,
                 dst_dir_fd=parent_fd,
             )
-            _fsync_directory(parent_fd)
-            desired_hash = hashlib.sha256(mutation.target_bytes).hexdigest()
-            after = _snapshot_at(parent_fd, mutation.path.name)
-            evidence = _committed_evidence(after, desired_hash)
-            committed.append((mutation, evidence))
+            committed.append(
+                (
+                    mutation,
+                    _committed_evidence(
+                        staged, desired_hash, include_ctime=False
+                    ),
+                )
+            )
+            staged_names.pop(mutation.path)
             if failure_injector is not None:
                 failure_injector("after_replace", mutation.path)
+            _fsync_directory(parent_fd)
+            after = _snapshot_at(parent_fd, mutation.path.name)
+            evidence = _committed_evidence(after, desired_hash)
+            committed[-1] = (mutation, evidence)
 
         return TransactionReceipt(
             plan_hash,
@@ -544,7 +587,7 @@ def apply_file_transaction(
                 rollback_errors.append(rollback_error)
         if isinstance(error, TransactionError) and not committed:
             raise
-        message = "instruction transaction failed"
+        message = f"instruction transaction failed: {error}"
         if conflicts:
             message += "; rollback_conflict"
         if rollback_errors:
@@ -569,7 +612,10 @@ def apply_file_transaction(
 
 __all__ = [
     "FileMutation",
+    "DirectoryEvidence",
     "TransactionError",
     "TransactionReceipt",
     "apply_file_transaction",
+    "capture_directory_evidence",
+    "directory_evidence_dict",
 ]

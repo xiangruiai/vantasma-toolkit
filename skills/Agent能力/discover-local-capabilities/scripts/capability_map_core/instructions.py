@@ -2,24 +2,31 @@
 
 from __future__ import annotations
 
-import os
 import hashlib
 import hmac
 import json
+import os
 import re
 import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
+from .transactions import (
+    DirectoryEvidence,
+    capture_directory_evidence,
+    directory_evidence_dict,
+)
+
 
 MAX_INSTRUCTION_BYTES = 8 * 1024 * 1024
+SUPPORTED_SCHEMA = 1
 _READ_CHUNK_BYTES = 64 * 1024
 _VALID_AGENTS = frozenset({"codex", "claude"})
 _VALID_SCOPES = frozenset({"user", "project"})
 _INSTALLATION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
-_START_PREFIX = b"<!-- vantasma:discover-local-capabilities:start"
 _END_MARKER = b"<!-- vantasma:discover-local-capabilities:end -->"
+_BOUNDARY_MARKER = b"<!-- vantasma:discover-local-capabilities:managed -->"
 _START_RE = re.compile(
     rb"^<!-- vantasma:discover-local-capabilities:start "
     rb"id=([A-Za-z0-9][A-Za-z0-9._-]{0,127}) schema=([0-9]+) -->$"
@@ -50,6 +57,48 @@ class InstructionTarget:
 
 
 @dataclass(frozen=True)
+class InstructionTargetRequest:
+    """Injected runtime roots and target selectors retained for apply-time resolution."""
+
+    home: Path
+    project_root: Path | None = None
+    codex_home: Path | None = None
+    agents: tuple[str, ...] | Iterable[str] = ("codex", "claude")
+    scopes: tuple[str, ...] | Iterable[str] = ("user", "project")
+
+    def __post_init__(self) -> None:
+        home = Path(self.home).absolute()
+        project = (
+            None if self.project_root is None else Path(self.project_root).absolute()
+        )
+        codex = (
+            home / ".codex"
+            if self.codex_home is None
+            else Path(self.codex_home).absolute()
+        )
+        agents = _selection(self.agents, _VALID_AGENTS, "agent")
+        scopes = _selection(self.scopes, _VALID_SCOPES, "scope")
+        if "project" in scopes and project is None:
+            raise ValueError("project_root is required for project targets")
+        object.__setattr__(self, "home", home)
+        object.__setattr__(self, "project_root", project)
+        object.__setattr__(self, "codex_home", codex)
+        object.__setattr__(self, "agents", agents)
+        object.__setattr__(self, "scopes", scopes)
+
+    def to_private_dict(self) -> dict[str, Any]:
+        return {
+            "home": str(self.home),
+            "project_root": (
+                None if self.project_root is None else str(self.project_root)
+            ),
+            "codex_home": str(self.codex_home),
+            "agents": list(self.agents),
+            "scopes": list(self.scopes),
+        }
+
+
+@dataclass(frozen=True)
 class InstructionOperation:
     """One hash-bound file transition in a private instruction plan."""
 
@@ -62,9 +111,7 @@ class InstructionOperation:
     newline: str
     original_bytes: bytes = field(repr=False, compare=False)
     target_bytes: bytes = field(repr=False, compare=False)
-    parent_evidence: tuple[str, int, int] | None = field(
-        default=None, repr=False, compare=False
-    )
+    parent_evidence: DirectoryEvidence = field(repr=False, compare=False)
     diagnostics: tuple[str, ...] = field(default_factory=tuple)
 
     @property
@@ -83,15 +130,7 @@ class InstructionOperation:
             "target_sha256": self.target_sha256,
             "original_mode": self.original_mode,
             "newline": self.newline,
-            "parent_evidence": (
-                None
-                if self.parent_evidence is None
-                else {
-                    "path": self.parent_evidence[0],
-                    "device": self.parent_evidence[1],
-                    "inode": self.parent_evidence[2],
-                }
-            ),
+            "parent_evidence": directory_evidence_dict(self.parent_evidence),
             "diagnostics": list(self.diagnostics),
         }
 
@@ -102,8 +141,10 @@ class InstructionPlan:
 
     action: str
     installation_id: str
+    target_request: InstructionTargetRequest
     operations: tuple[InstructionOperation, ...]
     backup_root: Path
+    backup_root_evidence: DirectoryEvidence = field(repr=False, compare=False)
     plan_hash: str
     map_path: Path | None = field(default=None, repr=False)
     resolver_path: Path | None = field(default=None, repr=False)
@@ -126,11 +167,15 @@ class InstructionPlan:
             "schema_version": 1,
             "action": self.action,
             "installation_id": self.installation_id,
+            "target_request": self.target_request.to_private_dict(),
             "map_path": None if self.map_path is None else str(self.map_path),
             "resolver_path": (
                 None if self.resolver_path is None else str(self.resolver_path)
             ),
             "backup_root": str(self.backup_root),
+            "backup_root_evidence": directory_evidence_dict(
+                self.backup_root_evidence
+            ),
             "applicable": self.applicable,
             "operations": [item.to_private_dict() for item in self.operations],
             "diagnostics": list(self.diagnostics),
@@ -141,7 +186,10 @@ class InstructionPlan:
 
     def to_json(self) -> str:
         return json.dumps(
-            self.to_private_dict(), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            self.to_private_dict(),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
         )
 
 
@@ -163,6 +211,7 @@ class _ManagedBlock:
     start: int
     end: int
     terminator: bytes
+    has_boundary: bool
 
 
 def _safe_nonempty_regular_file(path: Path) -> bool:
@@ -296,25 +345,6 @@ def _snapshot_target(path: Path) -> _InstructionSnapshot:
         os.close(descriptor)
 
 
-def _parent_evidence(path: Path) -> tuple[str, int, int] | None:
-    current = path.parent
-    while True:
-        try:
-            metadata = os.lstat(current)
-        except FileNotFoundError:
-            if current == current.parent:
-                return None
-            current = current.parent
-            continue
-        except OSError as error:
-            raise ValueError("instruction parent could not be inspected") from error
-        if stat.S_ISLNK(metadata.st_mode):
-            raise ValueError("refusing symbolic-link instruction parent")
-        if not stat.S_ISDIR(metadata.st_mode):
-            raise ValueError("instruction parent is not a directory")
-        return (str(current), metadata.st_dev, metadata.st_ino)
-
-
 def _validate_installation_id(installation_id: str) -> str:
     if not isinstance(installation_id, str) or not _INSTALLATION_ID_RE.fullmatch(
         installation_id
@@ -375,7 +405,8 @@ def _line_content(line: bytes) -> bytes:
 def _managed_blocks(payload: bytes) -> tuple[tuple[_ManagedBlock, ...], tuple[str, ...]]:
     blocks: list[_ManagedBlock] = []
     diagnostics: list[str] = []
-    active: tuple[str, int] | None = None
+    active: tuple[str, int, bool] | None = None
+    pending_boundary: int | None = None
     seen_ids: set[str] = set()
     offset = 0
     for line in payload.splitlines(keepends=True):
@@ -385,36 +416,60 @@ def _managed_blocks(payload: bytes) -> tuple[tuple[_ManagedBlock, ...], tuple[st
         offset += len(line)
         start_match = _START_RE.fullmatch(content)
         marker_namespace = b"vantasma:discover-local-capabilities:" in content
+        boundary_at = content.find(_BOUNDARY_MARKER)
+        if boundary_at >= 0:
+            if (
+                content.count(_BOUNDARY_MARKER) != 1
+                or boundary_at + len(_BOUNDARY_MARKER) != len(content)
+                or active is not None
+                or pending_boundary is not None
+            ):
+                diagnostics.append("corrupt managed instruction boundary")
+            else:
+                pending_boundary = line_start + boundary_at
+            continue
         if start_match is not None:
             identifier = start_match.group(1).decode("ascii")
+            schema = int(start_match.group(2))
             if active is not None:
                 diagnostics.append("nested managed instruction markers")
             else:
-                active = (identifier, line_start)
+                active = (
+                    identifier,
+                    pending_boundary if pending_boundary is not None else line_start,
+                    pending_boundary is not None,
+                )
+                pending_boundary = None
+            if schema != SUPPORTED_SCHEMA:
+                diagnostics.append(f"unsupported_schema: {schema}")
             continue
+        if pending_boundary is not None:
+            diagnostics.append("managed instruction boundary is missing its start marker")
+            pending_boundary = None
         if content == _END_MARKER:
             if active is None:
                 diagnostics.append("unmatched managed instruction end marker")
             else:
-                identifier, start = active
+                identifier, start, has_boundary = active
                 if identifier in seen_ids:
                     diagnostics.append(f"duplicate managed block id: {identifier}")
                 seen_ids.add(identifier)
-                blocks.append(_ManagedBlock(identifier, start, offset, terminator))
+                blocks.append(
+                    _ManagedBlock(identifier, start, offset, terminator, has_boundary)
+                )
                 active = None
             continue
         if marker_namespace:
             diagnostics.append("corrupt managed instruction marker")
     if active is not None:
         diagnostics.append("managed instruction block is missing its end marker")
+    if pending_boundary is not None:
+        diagnostics.append("managed instruction boundary is missing its start marker")
     return tuple(blocks), tuple(dict.fromkeys(diagnostics))
 
 
 def _append_block(payload: bytes, block: bytes, newline: bytes) -> bytes:
-    if not payload:
-        return block + newline
-    separator = b"" if payload.endswith((b"\n", b"\r")) else newline
-    return payload + separator + block + newline
+    return payload + _BOUNDARY_MARKER + newline + block + newline
 
 
 def _operation_for_target(
@@ -436,7 +491,7 @@ def _operation_for_target(
     if len(matching) > 1:
         diagnostics += (f"duplicate managed block id: {installation_id}",)
     original_hash = hashlib.sha256(payload).hexdigest() if snapshot.existed else None
-    parent = _parent_evidence(target.path)
+    parent = capture_directory_evidence(target.path.parent)
     if diagnostics:
         return InstructionOperation(
             target,
@@ -459,9 +514,14 @@ def _operation_for_target(
         )
         if matching:
             block = matching[0]
+            replacement = (
+                _BOUNDARY_MARKER + newline + block_bytes
+                if block.has_boundary
+                else block_bytes
+            )
             desired = (
                 payload[: block.start]
-                + block_bytes
+                + replacement
                 + block.terminator
                 + payload[block.end :]
             )
@@ -498,7 +558,9 @@ def _sorted_targets(targets: Iterable[InstructionTarget]) -> tuple[InstructionTa
         raise ValueError("at least one instruction target is required")
     if not all(isinstance(item, InstructionTarget) for item in values):
         raise TypeError("targets must contain InstructionTarget values")
-    ordered = tuple(sorted(values, key=lambda item: (item.agent, item.scope, str(item.path))))
+    ordered = tuple(
+        sorted(values, key=lambda item: (item.agent, item.scope, str(item.path)))
+    )
     paths = [item.path for item in ordered]
     if len(set(paths)) != len(paths):
         raise ValueError("instruction target paths must be unique")
@@ -509,8 +571,10 @@ def _make_plan(
     *,
     action: str,
     installation_id: str,
+    target_request: InstructionTargetRequest,
     operations: tuple[InstructionOperation, ...],
     backup_root: Path,
+    backup_root_evidence: DirectoryEvidence,
     map_path: Path | None,
     resolver_path: Path | None,
 ) -> InstructionPlan:
@@ -520,8 +584,10 @@ def _make_plan(
     provisional = InstructionPlan(
         action,
         installation_id,
+        target_request,
         operations,
         backup_root,
+        backup_root_evidence,
         "",
         map_path,
         resolver_path,
@@ -536,8 +602,10 @@ def _make_plan(
     return InstructionPlan(
         action,
         installation_id,
+        target_request,
         operations,
         backup_root,
+        backup_root_evidence,
         hashlib.sha256(canonical).hexdigest(),
         map_path,
         resolver_path,
@@ -546,7 +614,7 @@ def _make_plan(
 
 
 def build_instruction_plan(
-    targets: Iterable[InstructionTarget],
+    target_request: InstructionTargetRequest,
     installation_id: str,
     map_path: Path,
     resolver_path: Path,
@@ -554,6 +622,8 @@ def build_instruction_plan(
 ) -> InstructionPlan:
     """Build a deterministic install/update plan without any filesystem writes."""
 
+    if not isinstance(target_request, InstructionTargetRequest):
+        raise TypeError("target_request must be an InstructionTargetRequest value")
     safe_id = _validate_installation_id(installation_id)
     exact_map = _absolute_private_path(map_path, "map_path")
     exact_resolver = _absolute_private_path(resolver_path, "resolver_path")
@@ -567,6 +637,7 @@ def build_instruction_plan(
         map_path=exact_map,
         resolver_path=exact_resolver,
     )
+    backup_evidence = capture_directory_evidence(private_backup)
     operations = tuple(
         _operation_for_target(
             target,
@@ -574,27 +645,31 @@ def build_instruction_plan(
             installation_id=safe_id,
             rendered_block=rendered,
         )
-        for target in _sorted_targets(targets)
+        for target in _sorted_targets(resolve_instruction_targets(target_request))
     )
     return _make_plan(
         action="install",
         installation_id=safe_id,
+        target_request=target_request,
         operations=operations,
         backup_root=private_backup,
+        backup_root_evidence=backup_evidence,
         map_path=exact_map,
         resolver_path=exact_resolver,
     )
 
 
 def build_uninstall_plan(
-    targets: Iterable[InstructionTarget],
+    target_request: InstructionTargetRequest,
     installation_id: str,
     backup_root: Path | None = None,
 ) -> InstructionPlan:
     """Build a block-only uninstall plan; capability data is deliberately untouched."""
 
+    if not isinstance(target_request, InstructionTargetRequest):
+        raise TypeError("target_request must be an InstructionTargetRequest value")
     safe_id = _validate_installation_id(installation_id)
-    ordered = _sorted_targets(targets)
+    ordered = _sorted_targets(resolve_instruction_targets(target_request))
     private_backup = (
         Path.home()
         / ".local"
@@ -615,11 +690,14 @@ def build_uninstall_plan(
         )
         for target in ordered
     )
+    backup_evidence = capture_directory_evidence(private_backup)
     return _make_plan(
         action="uninstall",
         installation_id=safe_id,
+        target_request=target_request,
         operations=operations,
         backup_root=private_backup,
+        backup_root_evidence=backup_evidence,
         map_path=None,
         resolver_path=None,
     )
@@ -642,12 +720,11 @@ def apply_instruction_plan(
         expected_plan_hash, plan.plan_hash
     ):
         raise ValueError("expected plan hash does not match the proposed plan")
-    targets = tuple(operation.target for operation in plan.operations)
     if plan.action == "install":
         if plan.map_path is None or plan.resolver_path is None:  # pragma: no cover
             raise ValueError("install plan is missing private runtime paths")
         current = build_instruction_plan(
-            targets,
+            plan.target_request,
             installation_id=plan.installation_id,
             map_path=plan.map_path,
             resolver_path=plan.resolver_path,
@@ -655,7 +732,7 @@ def apply_instruction_plan(
         )
     elif plan.action == "uninstall":
         current = build_uninstall_plan(
-            targets,
+            plan.target_request,
             installation_id=plan.installation_id,
             backup_root=plan.backup_root,
         )
@@ -666,7 +743,9 @@ def apply_instruction_plan(
 
         raise TransactionError("stale instruction plan; current state changed")
     if not current.applicable:
-        raise ValueError("instruction plan is not applicable: " + "; ".join(current.diagnostics))
+        raise ValueError(
+            "instruction plan is not applicable: " + "; ".join(current.diagnostics)
+        )
 
     from .transactions import FileMutation, apply_file_transaction
 
@@ -691,14 +770,21 @@ def apply_instruction_plan(
     return apply_file_transaction(
         mutations,
         backup_root=current.backup_root,
+        backup_root_evidence=current.backup_root_evidence,
         plan_hash=current.plan_hash,
         failure_injector=failure_injector,
     )
 
 
-def _selection(values: Iterable[str] | None, allowed: frozenset[str], label: str) -> tuple[str, ...]:
+def _selection(
+    values: Iterable[str] | None, allowed: frozenset[str], label: str
+) -> tuple[str, ...]:
     if values is None:
-        return tuple(value for value in ("codex", "claude", "user", "project") if value in allowed)
+        return tuple(
+            value
+            for value in ("codex", "claude", "user", "project")
+            if value in allowed
+        )
     selected: list[str] = []
     for raw in values:
         value = raw.casefold().strip()
@@ -710,8 +796,9 @@ def _selection(values: Iterable[str] | None, allowed: frozenset[str], label: str
 
 
 def resolve_instruction_targets(
+    request: InstructionTargetRequest | None = None,
     *,
-    home: Path,
+    home: Path | None = None,
     project_root: Path | None = None,
     codex_home: Path | None = None,
     agents: Iterable[str] | None = None,
@@ -719,13 +806,30 @@ def resolve_instruction_targets(
 ) -> tuple[InstructionTarget, ...]:
     """Resolve the effective, fully injected Codex and Claude instruction files."""
 
-    home_path = Path(home).absolute()
-    project_path = None if project_root is None else Path(project_root).absolute()
-    codex_path = (
-        home_path / ".codex" if codex_home is None else Path(codex_home).absolute()
-    )
-    selected_agents = _selection(agents, _VALID_AGENTS, "agent")
-    selected_scopes = _selection(scopes, _VALID_SCOPES, "scope")
+    if request is not None:
+        if any(
+            value is not None
+            for value in (home, project_root, codex_home, agents, scopes)
+        ):
+            raise ValueError("request cannot be combined with individual target inputs")
+        if not isinstance(request, InstructionTargetRequest):
+            raise TypeError("request must be an InstructionTargetRequest value")
+        selected_request = request
+    else:
+        if home is None:
+            raise ValueError("home is required")
+        selected_request = InstructionTargetRequest(
+            home=home,
+            project_root=project_root,
+            codex_home=codex_home,
+            agents=("codex", "claude") if agents is None else agents,
+            scopes=("user", "project") if scopes is None else scopes,
+        )
+    home_path = selected_request.home
+    project_path = selected_request.project_root
+    codex_path = selected_request.codex_home
+    selected_agents = selected_request.agents
+    selected_scopes = selected_request.scopes
     targets: list[InstructionTarget] = []
     for agent in ("codex", "claude"):
         if agent not in selected_agents:
@@ -760,7 +864,9 @@ __all__ = [
     "InstructionOperation",
     "InstructionPlan",
     "InstructionTarget",
+    "InstructionTargetRequest",
     "MAX_INSTRUCTION_BYTES",
+    "SUPPORTED_SCHEMA",
     "apply_instruction_plan",
     "build_instruction_plan",
     "build_uninstall_plan",
