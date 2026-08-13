@@ -53,8 +53,8 @@ _ABSOLUTE_PATH_PREFIX = (
     rf"{_UNC_PREFIX}|{_FORWARD_UNC_PREFIX}|{_UNIX_PREFIX})"
 )
 _QUOTED_ABSOLUTE_PATH_RE = re.compile(
-    rf"(?:\"{_ABSOLUTE_PATH_PREFIX}[^\"\r\n]*\"|"
-    rf"'{_ABSOLUTE_PATH_PREFIX}[^'\r\n]*')",
+    rf"(?:\"{_ABSOLUTE_PATH_PREFIX}(?:\\.|[^\"\\\r\n])*\"|"
+    rf"'{_ABSOLUTE_PATH_PREFIX}(?:\\.|[^'\\\r\n])*')",
     re.IGNORECASE,
 )
 _ABSOLUTE_PATH_CANDIDATE_RE = re.compile(
