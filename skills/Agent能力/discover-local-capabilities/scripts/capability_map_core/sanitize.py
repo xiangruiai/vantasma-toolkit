@@ -42,12 +42,15 @@ _PATH_TOKEN_BODY = r"(?:\\ |[^`\s|<>\"'])+"
 _FILE_URL_PREFIX = r"\bfile://"
 _WINDOWS_DRIVE_PREFIX = r"(?<![A-Za-z0-9_])[A-Za-z]:[\\/]"
 _UNC_PREFIX = r"\\\\[^\\/\s]+[\\/]"
+_FORWARD_UNC_PREFIX = (
+    r"(?<![A-Za-z0-9_.~:/-])//(?=" + _PATH_START_CHAR + r")"
+)
 _UNIX_PREFIX = (
     r"(?<![A-Za-z0-9_.~/-])/(?=" + _PATH_START_CHAR + r")"
 )
 _ABSOLUTE_PATH_PREFIX = (
     rf"(?:{_FILE_URL_PREFIX}|{_WINDOWS_DRIVE_PREFIX}|"
-    rf"{_UNC_PREFIX}|{_UNIX_PREFIX})"
+    rf"{_UNC_PREFIX}|{_FORWARD_UNC_PREFIX}|{_UNIX_PREFIX})"
 )
 _QUOTED_ABSOLUTE_PATH_RE = re.compile(
     rf"(?:\"{_ABSOLUTE_PATH_PREFIX}[^\"\r\n]*\"|"
@@ -59,6 +62,7 @@ _ABSOLUTE_PATH_CANDIDATE_RE = re.compile(
     re.IGNORECASE,
 )
 _UNESCAPED_WHITESPACE_RE = re.compile(r"(?<!\\)\s")
+_PATH_TRUNCATING_CHARACTERS = frozenset("`\"'<>|")
 
 
 def _replace_assigned_secret(match: re.Match[str]) -> str:
@@ -107,6 +111,12 @@ def _redact_absolute_paths(value: str) -> str:
     unquoted_path = _ABSOLUTE_PATH_CANDIDATE_RE.search(stripped)
     if unquoted_path and _UNESCAPED_WHITESPACE_RE.search(
         stripped[unquoted_path.start() :]
+    ):
+        return REDACTED_PATH
+    if (
+        unquoted_path
+        and unquoted_path.end() < len(stripped)
+        and stripped[unquoted_path.end()] in _PATH_TRUNCATING_CHARACTERS
     ):
         return REDACTED_PATH
     return _ABSOLUTE_PATH_CANDIDATE_RE.sub(REDACTED_PATH, value)

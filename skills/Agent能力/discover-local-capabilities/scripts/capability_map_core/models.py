@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import unicodedata
 from dataclasses import InitVar, dataclass, field
 from typing import Any
@@ -84,6 +85,16 @@ def _opaque_digest(namespace: str, evidence: dict[str, str]) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()[:24]
+
+
+def _identity_evidence_digest(value: str) -> str:
+    payload = json.dumps(
+        {"namespace": "logical-identity-v1", "evidence": value},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -200,7 +211,7 @@ class Capability:
     states: CapabilityStates = field(default_factory=CapabilityStates)
     classification_confidence: float = 0.0
     diagnostics: tuple[Diagnostic, ...] | list[Diagnostic] = field(default_factory=tuple)
-    _logical_identity: str = field(default="", repr=False, compare=False)
+    _logical_identity_digest: str = field(default="", repr=False, compare=False)
     logical_identity: InitVar[str | None] = None
     id: str = field(init=False)
     resolver_id: str = field(init=False)
@@ -255,13 +266,24 @@ class Capability:
             "provider": _normalize_identity_text(normalized_provider, max_length=256),
             "scope": normalized_scope,
         }
-        logical_identity_input = (
-            self._logical_identity if logical_identity is None else logical_identity
+        if logical_identity is None:
+            logical_identity_digest = self._logical_identity_digest
+            if logical_identity_digest and not re.fullmatch(
+                r"[0-9a-f]{64}", logical_identity_digest
+            ):
+                raise ValueError("_logical_identity_digest must be a SHA-256 digest")
+        else:
+            normalized_logical_identity = _normalize_logical_identity(logical_identity)
+            logical_identity_digest = (
+                ""
+                if not normalized_logical_identity
+                else _identity_evidence_digest(normalized_logical_identity)
+            )
+        object.__setattr__(
+            self, "_logical_identity_digest", logical_identity_digest
         )
-        normalized_logical_identity = _normalize_logical_identity(logical_identity_input)
-        object.__setattr__(self, "_logical_identity", normalized_logical_identity)
-        if normalized_logical_identity:
-            identity["logical_identity"] = normalized_logical_identity
+        if logical_identity_digest:
+            identity["logical_identity_digest"] = logical_identity_digest
         object.__setattr__(
             self, "id", f"cap_{_opaque_digest('capability-v2', identity)}"
         )

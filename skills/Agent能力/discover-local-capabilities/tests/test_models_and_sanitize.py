@@ -120,11 +120,12 @@ class CapabilityModelTests(unittest.TestCase):
         self.assertNotIn("logical_identity", asdict(first))
 
     def test_replace_of_non_identity_field_preserves_logical_identity(self) -> None:
+        logical_identity = "configuration-one-synthetic-origin"
         original = Capability(
             kind="mcp",
             name="duplicate",
             provider="shared",
-            logical_identity="configuration-one",
+            logical_identity=logical_identity,
         )
 
         updated = replace(original, description="Updated description")
@@ -132,7 +133,11 @@ class CapabilityModelTests(unittest.TestCase):
         self.assertEqual(updated.id, original.id)
         self.assertEqual(updated.resolver_id, original.resolver_id)
         self.assertEqual(updated.description, "Updated description")
-        self.assertNotIn("configuration-one", repr(updated))
+        self.assertNotIn(logical_identity, repr(updated))
+        self.assertNotIn(logical_identity, json.dumps(asdict(updated), sort_keys=True))
+        self.assertNotIn(
+            logical_identity, json.dumps(updated.to_public_dict(), sort_keys=True)
+        )
         self.assertNotIn("logical_identity", updated.to_public_dict())
 
     def test_identity_normalizes_unicode_to_nfc(self) -> None:
@@ -320,6 +325,31 @@ class SanitizerTests(unittest.TestCase):
                 self.assertEqual(
                     sanitize_text(sample, home=Path("/Users/alice")), "<path>"
                 )
+
+    def test_forward_slash_unc_forms_are_independently_redacted(self) -> None:
+        cases = {
+            "unquoted": "//synthetic-host/synthetic/share",
+            "quoted": '"//synthetic-host/synthetic/share"',
+            "share_with_space": "//synthetic-host/synthetic share/private.json",
+            "quoted_share_with_space": (
+                '"//synthetic-host/synthetic share/private.json"'
+            ),
+        }
+
+        for branch, sample in cases.items():
+            with self.subTest(branch=branch):
+                self.assertEqual(sanitize_text(sample), "<path>")
+
+    def test_absolute_paths_with_truncating_characters_redact_whole_field(self) -> None:
+        samples = (
+            "/opt/synthetic`private/config.json",
+            '/opt/synthetic"private/config.json',
+            "/opt/synthetic'private/config.json",
+        )
+
+        for sample in samples:
+            with self.subTest(sample=sample):
+                self.assertEqual(sanitize_text(sample), "<path>")
 
     def test_unquoted_labeled_path_with_spaces_is_conservatively_redacted(self) -> None:
         result = sanitize_text("path:/srv/Private Folder/secret.json")
