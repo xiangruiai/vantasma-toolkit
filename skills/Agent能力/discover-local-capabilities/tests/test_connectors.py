@@ -575,6 +575,186 @@ values = [1, 2, 3]
                 "invalid_unicode", {item.code for item in result.diagnostics}
             )
 
+    def test_toml_fallback_rejects_invalid_lines_and_unbalanced_values(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            invalid_line = base / "invalid-line.toml"
+            invalid_line.write_text(
+                '[mcp_servers.first]\ncommand = "fixture"\nthis is invalid\n',
+                encoding="utf-8",
+            )
+            invalid_array = base / "invalid-array.toml"
+            invalid_array.write_text(
+                '[mcp_servers.second]\ncommand = "fixture"\nargs = ["broken"\n',
+                encoding="utf-8",
+            )
+            specs = [
+                ConnectorConfigSpec(
+                    path,
+                    "extra",
+                    f"invalid-{index}",
+                    "toml",
+                    f"invalid:{index}",
+                    f"<invalid:{index}>",
+                )
+                for index, path in enumerate((invalid_line, invalid_array), start=1)
+            ]
+
+            with mock.patch.object(connector_module, "_tomllib", None):
+                result = discover_connectors(
+                    home=base / "empty-home", extra_config_paths=specs
+                )
+
+            self.assertFalse(result.capabilities)
+            self.assertEqual(
+                sum(item.code == "invalid_toml" for item in result.diagnostics),
+                2,
+            )
+
+    def test_same_mcp_name_in_different_container_namespaces_is_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            config = _write_json(
+                base / "containers.json",
+                {
+                    "mcp_servers": {"shared": {"command": "fixture"}},
+                    "mcpServers": {"shared": {"type": "sse"}},
+                    "servers": {"shared": {"type": "http"}},
+                },
+            )
+            spec = ConnectorConfigSpec(
+                config,
+                "extra",
+                "container-fixture",
+                "json",
+                "container-fixture",
+                "<container-fixture>",
+            )
+
+            result = discover_connectors(
+                home=base / "empty-home", extra_config_paths=[spec]
+            )
+
+            mcps = [item for item in result.capabilities if item.kind == "mcp"]
+            self.assertEqual(len(mcps), 3)
+            self.assertEqual(len({item.id for item in mcps}), 3)
+            self.assertEqual(
+                {item.tags for item in mcps},
+                {
+                    ("enabled:unknown", "transport:stdio"),
+                    ("enabled:unknown", "transport:sse"),
+                    ("enabled:unknown", "transport:http"),
+                },
+            )
+
+    def test_equal_size_rewrite_with_restored_mtime_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            config = _write_json(
+                base / "rewrite.json",
+                {"mcpServers": {"alpha": {"command": "fixture"}}},
+            )
+            replacement = json.dumps(
+                {"mcpServers": {"bravo": {"command": "fixture"}}}
+            ).encode("utf-8")
+            self.assertEqual(len(replacement), config.stat().st_size)
+            original_times = config.stat()
+            real_open = connector_module.os.open
+            rewritten = False
+
+            def rewrite_before_open(
+                path: object, flags: int, *args: object, **kwargs: object
+            ) -> int:
+                nonlocal rewritten
+                if (
+                    not rewritten
+                    and not isinstance(path, int)
+                    and Path(path).name == config.name
+                ):
+                    rewritten = True
+                    config.write_bytes(replacement)
+                    os.utime(
+                        config,
+                        ns=(original_times.st_atime_ns, original_times.st_mtime_ns),
+                    )
+                return real_open(path, flags, *args, **kwargs)
+
+            spec = ConnectorConfigSpec(
+                config,
+                "extra",
+                "rewrite-fixture",
+                "json",
+                "rewrite-fixture",
+                "<rewrite-fixture>",
+            )
+            with mock.patch(
+                "capability_map_core.connectors.os.open", rewrite_before_open
+            ):
+                result = discover_connectors(
+                    home=base / "empty-home", extra_config_paths=[spec]
+                )
+
+            self.assertTrue(rewritten)
+            self.assertFalse(result.capabilities)
+            self.assertIn(
+                "source_changed", {item.code for item in result.diagnostics}
+            )
+
+    def test_environment_override_case_folding_depends_on_injected_platform(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            home = base / "home"
+            portable = base / "portable"
+            (home / ".codex").mkdir(parents=True)
+            (portable).mkdir(parents=True)
+            (home / ".codex" / "config.toml").write_text(
+                '[mcp_servers.unix-default]\ncommand = "fixture"\n',
+                encoding="utf-8",
+            )
+            (portable / "config.toml").write_text(
+                '[mcp_servers.windows-override]\ncommand = "fixture"\n',
+                encoding="utf-8",
+            )
+            environment = {"codex_home": str(portable)}
+
+            unix = discover_connectors(
+                home=home, environ=environment, platform_name="Linux"
+            )
+            windows = discover_connectors(
+                home=home, environ=environment, platform_name="Windows"
+            )
+
+            self.assertEqual(
+                [item.name for item in unix.capabilities], ["unix-default"]
+            )
+            self.assertEqual(
+                [item.name for item in windows.capabilities], ["windows-override"]
+            )
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are required")
+    def test_broken_config_symlink_is_distinct_from_missing_config(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            broken = base / "broken.json"
+            broken.symlink_to(base / "missing-target.json")
+            spec = ConnectorConfigSpec(
+                broken,
+                "extra",
+                "broken-fixture",
+                "json",
+                "broken-fixture",
+                "<broken-fixture>",
+            )
+
+            result = discover_connectors(
+                home=base / "empty-home", extra_config_paths=[spec]
+            )
+
+            self.assertFalse(result.capabilities)
+            self.assertIn(
+                "broken_symlink", {item.code for item in result.diagnostics}
+            )
+
 
 class PluginDiscoveryTests(unittest.TestCase):
     def test_only_real_nested_manifests_are_plugins_and_versions_remain_distinct(
@@ -962,6 +1142,163 @@ class PluginDiscoveryTests(unittest.TestCase):
             self.assertEqual(
                 sum(item.code == "invalid_unicode" for item in result.diagnostics),
                 3,
+            )
+
+    def test_insecure_plugin_backend_is_skipped_without_losing_mcp_results(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            config = _write_json(
+                base / "mcp.json",
+                {"mcpServers": {"healthy-mcp": {"command": "fixture"}}},
+            )
+            spec = ConnectorConfigSpec(
+                config,
+                "extra",
+                "healthy-provider",
+                "json",
+                "healthy-config",
+                "<healthy-config>",
+            )
+            root = base / "plugins"
+            _write_plugin(
+                root / "plugin",
+                ".codex-plugin",
+                {"name": "must-not-load", "version": "1"},
+            )
+
+            with mock.patch.object(connector_module.os, "supports_fd", set()):
+                result = discover_connectors(
+                    home=base / "empty-home",
+                    extra_config_paths=[spec],
+                    plugin_roots=[root],
+                    platform_name="Windows",
+                )
+
+            self.assertEqual(
+                [item.name for item in result.capabilities], ["healthy-mcp"]
+            )
+            self.assertIn(
+                "secure_plugin_backend_unavailable",
+                {item.code for item in result.diagnostics},
+            )
+
+    def test_plugin_backend_typeerror_is_isolated(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root = base / "plugins"
+            _write_plugin(
+                root / "plugin",
+                ".codex-plugin",
+                {"name": "must-not-load", "version": "1"},
+            )
+            with mock.patch(
+                "capability_map_core.connectors.os.scandir",
+                side_effect=TypeError("synthetic unsupported fd scandir"),
+            ):
+                result = discover_connectors(
+                    home=base / "empty-home", plugin_roots=[root]
+                )
+
+            self.assertFalse(result.capabilities)
+            self.assertIn(
+                "secure_plugin_backend_unavailable",
+                {item.code for item in result.diagnostics},
+            )
+
+    def test_verified_child_directory_closes_fd_on_baseexception(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            child = parent / "child"
+            child.mkdir()
+            expected = child.stat()
+            parent_fd = os.open(parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            real_open = connector_module.os.open
+            real_fstat = connector_module.os.fstat
+            child_fd: int | None = None
+
+            def recording_open(
+                path: object, flags: int, *args: object, **kwargs: object
+            ) -> int:
+                nonlocal child_fd
+                fd = real_open(path, flags, *args, **kwargs)
+                if path == "child" and kwargs.get("dir_fd") == parent_fd:
+                    child_fd = fd
+                return fd
+
+            def failing_fstat(fd: int):
+                if child_fd is not None and fd == child_fd:
+                    raise KeyboardInterrupt("synthetic fstat failure")
+                return real_fstat(fd)
+
+            try:
+                with mock.patch(
+                    "capability_map_core.connectors.os.open", recording_open
+                ), mock.patch(
+                    "capability_map_core.connectors.os.fstat", failing_fstat
+                ):
+                    with self.assertRaises(KeyboardInterrupt):
+                        connector_module._open_verified_child_directory(
+                            parent_fd, "child", expected
+                        )
+                self.assertIsNotNone(child_fd)
+                with self.assertRaises(OSError):
+                    real_fstat(child_fd)  # type: ignore[arg-type]
+            finally:
+                os.close(parent_fd)
+
+    def test_plugin_entry_limit_is_deterministic_across_scandir_order(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root = base / "plugins"
+            _write_plugin(
+                root / "a-plugin",
+                ".codex-plugin",
+                {"name": "alpha", "version": "1"},
+            )
+            for name in ("one", "two", "three", "four"):
+                (root / "z-overflow" / name).mkdir(parents=True)
+            real_scandir = connector_module.os.scandir
+            root_id = (root.stat().st_dev, root.stat().st_ino)
+
+            class ReorderedScandir:
+                def __init__(self, target: object, reverse: bool) -> None:
+                    self._wrapped = real_scandir(target)  # type: ignore[arg-type]
+                    entries = list(self._wrapped)
+                    if isinstance(target, int):
+                        target_stat = os.fstat(target)
+                        if (target_stat.st_dev, target_stat.st_ino) == root_id:
+                            entries.sort(key=lambda item: item.name, reverse=reverse)
+                    self._entries = entries
+
+                def __enter__(self):
+                    return iter(self._entries)
+
+                def __exit__(self, *args: object) -> None:
+                    self._wrapped.close()
+
+            def scan(reverse: bool):
+                with mock.patch.object(connector_module, "MAX_PLUGIN_ENTRIES", 5), mock.patch(
+                    "capability_map_core.connectors.os.scandir",
+                    side_effect=lambda target: ReorderedScandir(target, reverse),
+                ), mock.patch.object(
+                    connector_module,
+                    "_secure_plugin_backend_supported",
+                    return_value=True,
+                ):
+                    return discover_connectors(
+                        home=base / "empty-home", plugin_roots=[root]
+                    )
+
+            forward = scan(False)
+            reverse = scan(True)
+
+            self.assertEqual(
+                [item.to_public_dict() for item in forward.capabilities],
+                [item.to_public_dict() for item in reverse.capabilities],
+            )
+            self.assertFalse(forward.capabilities)
+            self.assertIn(
+                "plugin_entry_limit", {item.code for item in forward.diagnostics}
             )
 
 

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import errno
 import hashlib
+import heapq
 import json
 import os
+import platform
 import re
 import stat
 import unicodedata
@@ -39,6 +41,9 @@ MAX_PLUGIN_ENTRIES = 25_000
 _READ_CHUNK_BYTES = 64 * 1024
 _PLUGIN_MARKERS = frozenset({".codex-plugin", ".claude-plugin"})
 _TRANSPORTS = frozenset({"stdio", "http", "sse", "unknown"})
+_FD_SCANDIR = os.scandir
+_DIRFD_OPEN = os.open
+_DIRFD_STAT = os.stat
 _SENSITIVE_IDENTITY_RE = re.compile(
     r"(?i)(?:token|secret|password|api[_-]?key)\s*[:=]"
 )
@@ -139,6 +144,10 @@ class _InvalidUnicode(ValueError):
     pass
 
 
+class _BrokenSymlink(OSError):
+    pass
+
+
 def _diagnostic(
     code: str,
     message: str,
@@ -183,11 +192,11 @@ def _resolve_safe_chain(path: Path, *, max_links: int = 64) -> Path:
 
     absolute = path.absolute()
     resolved = Path(absolute.anchor)
-    pending = deque(absolute.parts[1:])
-    seen: set[tuple[Path, tuple[str, ...]]] = set()
+    pending = deque((part, False) for part in absolute.parts[1:])
+    seen: set[tuple[Path, tuple[tuple[str, bool], ...]]] = set()
     links = 0
     while pending:
-        part = pending.popleft()
+        part, from_link_target = pending.popleft()
         if part in {"", "."}:
             continue
         if part == "..":
@@ -196,7 +205,12 @@ def _resolve_safe_chain(path: Path, *, max_links: int = 64) -> Path:
         if part.casefold() == ".env":
             raise _EnvPathBlocked
         candidate = resolved / part
-        entry_stat = os.lstat(candidate)
+        try:
+            entry_stat = os.lstat(candidate)
+        except FileNotFoundError as error:
+            if from_link_target:
+                raise _BrokenSymlink(errno.ENOENT, "broken symbolic link") from error
+            raise
         if not stat.S_ISLNK(entry_stat.st_mode):
             resolved = candidate
             continue
@@ -212,7 +226,9 @@ def _resolve_safe_chain(path: Path, *, max_links: int = 64) -> Path:
         if target.is_absolute():
             resolved = Path(target.anchor)
             target_parts = target_parts[1:]
-        pending.extendleft(reversed(target_parts))
+        pending.extendleft(
+            reversed([(target_part, True) for target_part in target_parts])
+        )
     return resolved
 
 
@@ -226,8 +242,26 @@ def _file_id(value: os.stat_result) -> tuple[int, int] | None:
 def _stat_evidence(value: os.stat_result) -> tuple[int, ...]:
     return tuple(
         int(getattr(value, name))
-        for name in ("st_dev", "st_ino", "st_mode", "st_size", "st_mtime_ns")
+        for name in (
+            "st_dev",
+            "st_ino",
+            "st_mode",
+            "st_nlink",
+            "st_size",
+            "st_ctime_ns",
+            "st_mtime_ns",
+        )
         if hasattr(value, name)
+    )
+
+
+def _secure_plugin_backend_supported() -> bool:
+    return bool(
+        getattr(os, "O_DIRECTORY", 0)
+        and getattr(os, "O_NOFOLLOW", 0)
+        and _FD_SCANDIR in os.supports_fd
+        and _DIRFD_OPEN in os.supports_dir_fd
+        and _DIRFD_STAT in os.supports_dir_fd
     )
 
 
@@ -247,6 +281,29 @@ def _directory_flags() -> int:
         | getattr(os, "O_NOFOLLOW", 0)
         | getattr(os, "O_DIRECTORY", 0)
     )
+
+
+def _open_verified_child_directory(
+    parent_fd: int, name: str, expected: os.stat_result
+) -> int:
+    """Open a verified child directory and transfer fd ownership to caller."""
+
+    fd = os.open(name, _directory_flags(), dir_fd=parent_fd)
+    try:
+        opened = os.fstat(fd)
+        if (
+            not stat.S_ISDIR(opened.st_mode)
+            or _file_id(opened) != _file_id(expected)
+            or _stat_evidence(opened) != _stat_evidence(expected)
+        ):
+            raise OSError(errno.ESTALE, "directory changed")
+        return fd
+    except BaseException:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        raise
 
 
 def _read_fd_bounded(fd: int, maximum: int) -> tuple[bytes, bool]:
@@ -289,7 +346,7 @@ def _read_verified_regular(
                 location=location,
             ),
         ), None
-    except OSError:
+    except (OSError, TypeError, NotImplementedError):
         return None, (
             _diagnostic(
                 open_error_code,
@@ -313,8 +370,18 @@ def _read_verified_regular(
             ), None
         payload, oversized = _read_fd_bounded(fd, MAX_CONFIG_BYTES)
         final_stat = os.fstat(fd)
-        if _file_id(final_stat) != _file_id(opened) or (
-            not oversized and _stat_evidence(final_stat) != _stat_evidence(opened)
+        if dir_fd is None:
+            final_path_stat = os.lstat(path)
+        else:
+            final_path_stat = os.stat(path, dir_fd=dir_fd, follow_symlinks=False)
+        if (
+            _file_id(final_stat) != _file_id(opened)
+            or _file_id(final_path_stat) != _file_id(opened)
+            or _stat_evidence(final_path_stat) != _stat_evidence(final_stat)
+            or (
+                not oversized
+                and _stat_evidence(final_stat) != _stat_evidence(opened)
+            )
         ):
             return None, (
                 _diagnostic(
@@ -331,7 +398,7 @@ def _read_verified_regular(
                 location=location,
             ),
         ), None
-    except OSError:
+    except (OSError, TypeError, NotImplementedError):
         return None, (
             _diagnostic(
                 read_error_code,
@@ -373,6 +440,18 @@ def _read_bounded_path(
     try:
         exact_path = _resolve_safe_chain(path)
         expected = os.lstat(exact_path)
+    except _BrokenSymlink:
+        return _ReadResult(
+            None,
+            None,
+            (
+                _diagnostic(
+                    "broken_symlink",
+                    "A configured source contains a broken symbolic link.",
+                    location=location,
+                ),
+            ),
+        )
     except FileNotFoundError:
         return _ReadResult(None, None)
     except _EnvPathBlocked:
@@ -399,7 +478,7 @@ def _read_bounded_path(
                 ),
             ),
         )
-    except OSError:
+    except (OSError, TypeError, NotImplementedError):
         return _ReadResult(
             None,
             None,
@@ -534,6 +613,47 @@ def _fallback_toml_value(raw: str) -> str | bool | list[str | bool]:
     raise ValueError("unsupported TOML subset value")
 
 
+def _toml_value_is_syntactically_valid(raw: str) -> bool:
+    value = raw.strip()
+    if not value:
+        return False
+    stack: list[str] = []
+    quote = ""
+    escaped = False
+    pairs = {"]": "[", "}": "{"}
+    for character in value:
+        if escaped:
+            escaped = False
+            continue
+        if quote:
+            if character == "\\" and quote == '"':
+                escaped = True
+            elif character == quote:
+                quote = ""
+            continue
+        if character in {'"', "'"}:
+            quote = character
+        elif character in "[{":
+            stack.append(character)
+        elif character in "]}":
+            if not stack or stack.pop() != pairs[character]:
+                return False
+    if quote or stack:
+        return False
+    if value[0] in {'"', "'", "[", "{"}:
+        closing = {'"': '"', "'": "'", "[": "]", "{": "}"}[value[0]]
+        return value[-1] == closing
+    return bool(
+        re.fullmatch(
+            r"(?i)(?:true|false|[+-]?(?:inf|nan)|"
+            r"[+-]?(?:\d[\d_]*)(?:\.\d[\d_]*)?(?:e[+-]?\d[\d_]*)?|"
+            r"\d{4}-\d{2}-\d{2}(?:[Tt ][0-9:.+-Zz]+)?|"
+            r"\d{2}:\d{2}:[0-9.]+)",
+            value,
+        )
+    )
+
+
 def _split_toml_dotted_key(raw: str) -> tuple[str, ...]:
     parts: list[str] = []
     index = 0
@@ -596,12 +716,23 @@ def _parse_toml_subset(payload: bytes) -> dict[str, Any]:
         line = _strip_toml_comment(source_line)
         if not line:
             continue
-        if line.startswith("[") and line.endswith("]"):
+        if line.startswith("[["):
+            if not line.endswith("]]" ):
+                raise ValueError("invalid TOML array table")
+            try:
+                _split_toml_dotted_key(line[2:-2].strip())
+            except ValueError as error:
+                raise ValueError("invalid TOML array table") from error
+            current = None
+            continue
+        if line.startswith("["):
+            if not line.endswith("]"):
+                raise ValueError("invalid TOML table")
             current = None
             try:
                 table_parts = _split_toml_dotted_key(line[1:-1].strip())
-            except ValueError:
-                continue
+            except ValueError as error:
+                raise ValueError("invalid TOML table") from error
             if (
                 len(table_parts) == 2
                 and table_parts[0] in {"mcp_servers", "mcpServers"}
@@ -611,7 +742,11 @@ def _parse_toml_subset(payload: bytes) -> dict[str, Any]:
                 )
             continue
         key_match = key_re.fullmatch(line)
-        if current is None or key_match is None:
+        if key_match is None:
+            raise ValueError("invalid TOML assignment")
+        if not _toml_value_is_syntactically_valid(key_match.group(2)):
+            raise ValueError("invalid TOML value")
+        if current is None:
             continue
         key = key_match.group(1)
         try:
@@ -690,17 +825,19 @@ def _parse_structured(
     return _ParsedResult(value, tuple(diagnostics))
 
 
-def _server_maps(value: Any) -> tuple[tuple[str, Mapping[str, Any]], ...]:
+def _server_maps(
+    value: Any,
+) -> tuple[tuple[str, str, Mapping[str, Any]], ...]:
     if not isinstance(value, Mapping):
         return ()
-    servers: list[tuple[str, Mapping[str, Any]]] = []
+    servers: list[tuple[str, str, Mapping[str, Any]]] = []
     for field_name in ("mcp_servers", "mcpServers", "servers"):
         container = value.get(field_name)
         if not isinstance(container, Mapping):
             continue
         for name, configuration in container.items():
             if isinstance(name, str) and isinstance(configuration, Mapping):
-                servers.append((name, configuration))
+                servers.append((field_name, name, configuration))
     return tuple(servers)
 
 
@@ -770,9 +907,13 @@ def _mcp_pair(
     return capability, ResolverRecord(capability.resolver_id, (str(exact_path),))
 
 
-def _environment_value(environ: Mapping[str, str], key: str) -> str | None:
+def _environment_value(
+    environ: Mapping[str, str], key: str, *, case_insensitive: bool
+) -> str | None:
     if key in environ:
         return environ[key]
+    if not case_insensitive:
+        return None
     folded = key.casefold()
     for candidate, value in environ.items():
         if candidate.casefold() == folded:
@@ -794,9 +935,12 @@ def _config_specs(
     project: Path | None,
     extra_config_paths: Iterable[Path | ConnectorConfigSpec],
     environ: Mapping[str, str],
+    windows: bool,
 ) -> tuple[ConnectorConfigSpec, ...]:
     injected = tuple(extra_config_paths)
-    codex_override = _environment_value(environ, "CODEX_HOME")
+    codex_override = _environment_value(
+        environ, "CODEX_HOME", case_insensitive=windows
+    )
     codex_home = (
         _expand_home(codex_override, home) if codex_override else home / ".codex"
     )
@@ -894,10 +1038,15 @@ def _plugin_root_specs(
     project: Path | None,
     plugin_roots: Iterable[Path | RootSpec],
     environ: Mapping[str, str],
+    windows: bool,
 ) -> tuple[RootSpec, ...]:
     injected = tuple(plugin_roots)
-    codex_override = _environment_value(environ, "CODEX_HOME")
-    claude_override = _environment_value(environ, "CLAUDE_CONFIG_DIR")
+    codex_override = _environment_value(
+        environ, "CODEX_HOME", case_insensitive=windows
+    )
+    claude_override = _environment_value(
+        environ, "CLAUDE_CONFIG_DIR", case_insensitive=windows
+    )
     codex_home = (
         _expand_home(codex_override, home) if codex_override else home / ".codex"
     )
@@ -994,7 +1143,7 @@ def _scan_plugin_root(
                 location=root.public_prefix,
             ),
         )
-    except OSError:
+    except (OSError, TypeError, NotImplementedError):
         return (), (
             _diagnostic(
                 "plugin_root_stat_error",
@@ -1059,6 +1208,7 @@ def _scan_plugin_root(
     if (
         not stat.S_ISDIR(opened_root.st_mode)
         or _file_id(opened_root) != _file_id(visible_stat)
+        or _stat_evidence(opened_root) != _stat_evidence(visible_stat)
     ):
         os.close(root_fd)
         return (), (
@@ -1074,17 +1224,30 @@ def _scan_plugin_root(
     stack: list[tuple[int, tuple[str, ...], int]] = [(root_fd, (), 0)]
     entry_count = 0
     stop = False
+    limit_exceeded = False
     while stack and not stop:
         directory_fd, parts, depth = stack.pop()
         try:
             try:
                 with os.scandir(directory_fd) as iterator:
-                    entries = []
-                    remaining = MAX_PLUGIN_ENTRIES - entry_count
-                    for entry in iterator:
-                        entries.append(entry)
-                        if len(entries) > remaining:
-                            break
+                    remaining = max(MAX_PLUGIN_ENTRIES - entry_count, 0)
+                    entries = heapq.nsmallest(
+                        remaining + 1,
+                        iterator,
+                        key=lambda item: (item.name.casefold(), item.name),
+                    )
+                if len(entries) > remaining:
+                    diagnostics.append(
+                        _diagnostic(
+                            "plugin_entry_limit",
+                            "A plugin root exceeded the supported entry count.",
+                            location=root.public_prefix,
+                        )
+                    )
+                    limit_exceeded = True
+                    stop = True
+                    continue
+                entry_count += len(entries)
             except PermissionError:
                 diagnostics.append(
                     _diagnostic(
@@ -1093,6 +1256,16 @@ def _scan_plugin_root(
                         location=root.public_prefix,
                     )
                 )
+                continue
+            except (TypeError, NotImplementedError):
+                diagnostics.append(
+                    _diagnostic(
+                        "secure_plugin_backend_unavailable",
+                        "Secure plugin directory-handle traversal is unavailable.",
+                        location=root.public_prefix,
+                    )
+                )
+                stop = True
                 continue
             except OSError:
                 diagnostics.append(
@@ -1104,17 +1277,6 @@ def _scan_plugin_root(
                 )
                 continue
             for entry in entries:
-                entry_count += 1
-                if entry_count > MAX_PLUGIN_ENTRIES:
-                    diagnostics.append(
-                        _diagnostic(
-                            "plugin_entry_limit",
-                            "A plugin root exceeded the supported entry count.",
-                            location=root.public_prefix,
-                        )
-                    )
-                    stop = True
-                    break
                 if entry.name.casefold() == ".env":
                     diagnostics.append(
                         _diagnostic(
@@ -1176,16 +1338,9 @@ def _scan_plugin_root(
                         )
                         continue
                     try:
-                        child_fd = os.open(
-                            entry.name, _directory_flags(), dir_fd=directory_fd
+                        child_fd = _open_verified_child_directory(
+                            directory_fd, entry.name, entry_stat
                         )
-                        opened = os.fstat(child_fd)
-                        if (
-                            not stat.S_ISDIR(opened.st_mode)
-                            or _file_id(opened) != _file_id(entry_stat)
-                        ):
-                            os.close(child_fd)
-                            raise OSError(errno.ESTALE, "directory changed")
                     except PermissionError:
                         diagnostics.append(
                             _diagnostic(
@@ -1258,6 +1413,8 @@ def _scan_plugin_root(
             os.close(directory_fd)
     while stack:
         os.close(stack.pop()[0])
+    if limit_exceeded:
+        occurrences.clear()
     return tuple(occurrences), tuple(diagnostics)
 
 
@@ -1400,7 +1557,7 @@ def _plugin_pairs(
                 f"<plugin:{capability.id}>",
             )
         )
-        for server_name, configuration in _server_maps(manifest):
+        for container_name, server_name, configuration in _server_maps(manifest):
             try:
                 pair = _mcp_pair(
                     server_name,
@@ -1408,7 +1565,9 @@ def _plugin_pairs(
                     scope="plugin",
                     provider=name,
                     location=f"<plugin:{capability.id}>/manifest",
-                    logical_source=f"plugin:{capability.id}",
+                    logical_source=(
+                        f"plugin:{capability.id}:container:{container_name}"
+                    ),
                     source_identity=f"manifest:{physical}",
                     exact_path=occurrence.exact_path,
                 )
@@ -1432,12 +1591,15 @@ def discover_connectors(
     extra_config_paths: Iterable[Path | ConnectorConfigSpec] = (),
     plugin_roots: Iterable[Path | RootSpec] = (),
     environ: Mapping[str, str] | None = None,
+    platform_name: str | None = None,
 ) -> ConnectorDiscoveryResult:
     """Discover MCPs and verified plugins without executing or networking."""
 
     injected_home = Path(home)
     injected_project = None if project is None else Path(project)
     environment = os.environ if environ is None else environ
+    operating_system = platform.system() if platform_name is None else platform_name
+    windows = operating_system.casefold().startswith("win")
     pairs: list[tuple[Capability, ResolverRecord]] = []
     diagnostics: list[Diagnostic] = []
 
@@ -1446,6 +1608,7 @@ def discover_connectors(
         project=injected_project,
         extra_config_paths=extra_config_paths,
         environ=environment,
+        windows=windows,
     ):
         read = _read_bounded_path(spec.path, location=spec.public_location)
         diagnostics.extend(read.diagnostics)
@@ -1459,7 +1622,7 @@ def discover_connectors(
         diagnostics.extend(parsed.diagnostics)
         if parsed.value is None:
             continue
-        for name, configuration in _server_maps(parsed.value):
+        for container_name, name, configuration in _server_maps(parsed.value):
             try:
                 pair = _mcp_pair(
                     name,
@@ -1467,7 +1630,9 @@ def discover_connectors(
                     scope=spec.scope,
                     provider=spec.provider,
                     location=spec.public_location,
-                    logical_source=spec.logical_key,
+                    logical_source=(
+                        f"{spec.logical_key}:container:{container_name}"
+                    ),
                     source_identity=read.physical_identity or "unknown",
                     exact_path=read.exact_path,
                 )
@@ -1482,21 +1647,42 @@ def discover_connectors(
                 continue
             pairs.append(pair)
 
-    occurrences: list[_ManifestOccurrence] = []
-    seen_manifest_ids: set[tuple[int, int]] = set()
-    for root in _plugin_root_specs(
+    plugin_specs = _plugin_root_specs(
         home=injected_home,
         project=injected_project,
         plugin_roots=plugin_roots,
         environ=environment,
-    ):
-        root_occurrences, root_diagnostics = _scan_plugin_root(root)
-        diagnostics.extend(root_diagnostics)
-        for occurrence in root_occurrences:
-            if occurrence.physical_id in seen_manifest_ids:
+        windows=windows,
+    )
+    occurrences: list[_ManifestOccurrence] = []
+    seen_manifest_ids: set[tuple[int, int]] = set()
+    if not _secure_plugin_backend_supported():
+        diagnostics.append(
+            _diagnostic(
+                "secure_plugin_backend_unavailable",
+                "Secure plugin directory-handle traversal is unavailable; plugin roots were skipped.",
+                location="<plugin-roots>",
+            )
+        )
+    else:
+        for root in plugin_specs:
+            try:
+                root_occurrences, root_diagnostics = _scan_plugin_root(root)
+            except (TypeError, NotImplementedError):
+                diagnostics.append(
+                    _diagnostic(
+                        "secure_plugin_backend_unavailable",
+                        "Secure plugin directory-handle traversal is unavailable for a configured root.",
+                        location=root.public_prefix,
+                    )
+                )
                 continue
-            seen_manifest_ids.add(occurrence.physical_id)
-            occurrences.append(occurrence)
+            diagnostics.extend(root_diagnostics)
+            for occurrence in root_occurrences:
+                if occurrence.physical_id in seen_manifest_ids:
+                    continue
+                seen_manifest_ids.add(occurrence.physical_id)
+                occurrences.append(occurrence)
     plugin_pairs, skill_roots, plugin_diagnostics = _plugin_pairs(occurrences)
     pairs.extend(plugin_pairs)
     diagnostics.extend(plugin_diagnostics)
