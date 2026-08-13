@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import sys
 import tempfile
 import unittest
@@ -272,10 +273,10 @@ class SkillDiscoveryTests(unittest.TestCase):
             write_skill(env_directory / "hidden-skill", frontmatter="name: forbidden")
             real_os_open = os.open
             real_os_read = os.read
-            reads: list[tuple[Path, int, int]] = []
+            reads: list[tuple[tuple[int, int], int, int]] = []
             payload = skill.read_bytes()
             body_start = payload.index(b"\n---\n") + len(b"\n---\n")
-            opened_paths: dict[int, Path] = {}
+            opened_ids: dict[int, tuple[int, int]] = {}
 
             def recording_open(
                 path: object, flags: int, *args: object, **kwargs: object
@@ -284,12 +285,13 @@ class SkillDiscoveryTests(unittest.TestCase):
                 if ".env" in {part.casefold() for part in opened_path.parts}:
                     raise AssertionError("discovery attempted to read .env")
                 fd = real_os_open(path, flags, *args, **kwargs)
-                opened_paths[fd] = opened_path
+                opened_stat = os.fstat(fd)
+                opened_ids[fd] = (opened_stat.st_dev, opened_stat.st_ino)
                 return fd
 
             def recording_read(fd: int, size: int) -> bytes:
                 chunk = real_os_read(fd, size)
-                reads.append((opened_paths[fd], size, os.lseek(fd, 0, os.SEEK_CUR)))
+                reads.append((opened_ids[fd], size, os.lseek(fd, 0, os.SEEK_CUR)))
                 return chunk
 
             with mock.patch(
@@ -304,9 +306,10 @@ class SkillDiscoveryTests(unittest.TestCase):
             self.assertTrue(
                 all(0 < size <= MAX_FRONTMATTER_BYTES + 1 for _, size, _ in reads)
             )
+            skill_stat = skill.stat()
             self.assertEqual(
-                {path.resolve() for path, _, _ in reads},
-                {skill.resolve()},
+                {file_id for file_id, _, _ in reads},
+                {(skill_stat.st_dev, skill_stat.st_ino)},
             )
             self.assertLessEqual(max(position for _, _, position in reads), body_start)
 
@@ -406,6 +409,10 @@ class SkillDiscoveryTests(unittest.TestCase):
                 payload_directory.stat().st_dev,
                 payload_directory.stat().st_ino,
             )
+            allowed_targets_id = (
+                allowed_targets.stat().st_dev,
+                allowed_targets.stat().st_ino,
+            )
 
             def recording_read(fd: int, size: int) -> bytes:
                 chunk = real_os_read(fd, size)
@@ -413,11 +420,12 @@ class SkillDiscoveryTests(unittest.TestCase):
                 return chunk
 
             def recording_scandir(path: object) -> object:
-                if Path(path).name == allowed_targets.name:
+                opened_stat = os.stat(path)
+                opened_id = (opened_stat.st_dev, opened_stat.st_ino)
+                if opened_id == allowed_targets_id:
                     raise PermissionError("keep the allowed target root unscanned")
-                target_stat = os.stat(path)
-                if (target_stat.st_dev, target_stat.st_ino) == payload_directory_id:
-                    payload_scans.append(Path(path))  # type: ignore[arg-type]
+                if opened_id == payload_directory_id:
+                    payload_scans.append(payload_directory)
                 return real_scandir(path)
 
             def recording_readlink(
@@ -551,10 +559,18 @@ class SkillDiscoveryTests(unittest.TestCase):
                 return chunk
 
             uniform_evidence = (("st_mode", 33188), ("st_size", 123))
+            skills_module = sys.modules["capability_map_core.skills"]
+            real_file_id = skills_module._file_id
+
+            def no_regular_file_id(observed: os.stat_result) -> object:
+                if stat.S_ISREG(observed.st_mode):
+                    return None
+                return real_file_id(observed)
+
             with mock.patch.object(
                 os, "O_NOFOLLOW", 0, create=True
             ), mock.patch(
-                "capability_map_core.skills._file_id", return_value=None
+                "capability_map_core.skills._file_id", no_regular_file_id
             ), mock.patch(
                 "capability_map_core.skills._stat_evidence",
                 return_value=uniform_evidence,
@@ -654,9 +670,14 @@ class SkillDiscoveryTests(unittest.TestCase):
                 "<physical>",
             )
             real_scandir = os.scandir
+            physical_root_id = (
+                physical_root.stat().st_dev,
+                physical_root.stat().st_ino,
+            )
 
             def hide_direct_root(path: object) -> object:
-                if Path(path).name == physical_root.name:
+                opened = os.stat(path)
+                if (opened.st_dev, opened.st_ino) == physical_root_id:
                     raise PermissionError("keep physical root available but hidden")
                 return real_scandir(path)
 
@@ -762,11 +783,16 @@ class SkillDiscoveryTests(unittest.TestCase):
             os.utime(first_copy, ns=(1_700_000_000_000_000_001,) * 2)
             os.utime(second_copy, ns=(1_700_000_000_000_000_002,) * 2)
 
-            def no_file_id(path: Path) -> tuple[str, ...]:
-                return ("realpath", os.path.normcase(str(path.resolve(strict=True))))
+            skills_module = sys.modules["capability_map_core.skills"]
+            real_file_id = skills_module._file_id
+
+            def no_regular_file_id(observed: os.stat_result) -> object:
+                if stat.S_ISREG(observed.st_mode):
+                    return None
+                return real_file_id(observed)
 
             with mock.patch(
-                "capability_map_core.skills._physical_key", no_file_id
+                "capability_map_core.skills._file_id", no_regular_file_id
             ):
                 before_move = discover_skills([moving_spec])
                 original.parent.rename(moving_root / "a-new-origin")
@@ -810,8 +836,13 @@ class SkillDiscoveryTests(unittest.TestCase):
             write_skill(first_root / "same-relative", frontmatter=metadata)
             write_skill(second_root / "same-relative", frontmatter=metadata)
 
-            def no_file_id(path: Path) -> tuple[str, ...]:
-                return ("realpath", os.path.normcase(str(path.resolve(strict=True))))
+            skills_module = sys.modules["capability_map_core.skills"]
+            real_file_id = skills_module._file_id
+
+            def no_regular_file_id(observed: os.stat_result) -> object:
+                if stat.S_ISREG(observed.st_mode):
+                    return None
+                return real_file_id(observed)
 
             uniform_evidence = (
                 ("st_dev", 7),
@@ -823,9 +854,7 @@ class SkillDiscoveryTests(unittest.TestCase):
                 ("st_mtime_ns", 11),
             )
             with mock.patch(
-                "capability_map_core.skills._physical_key", no_file_id
-            ), mock.patch(
-                "capability_map_core.skills._file_id", return_value=None
+                "capability_map_core.skills._file_id", no_regular_file_id
             ), mock.patch(
                 "capability_map_core.skills._stat_evidence",
                 return_value=uniform_evidence,
@@ -923,9 +952,12 @@ class SkillDiscoveryTests(unittest.TestCase):
             write_skill(healthy, frontmatter="name: healthy")
             real_scandir = os.scandir
             real_os_open = os.open
+            blocked_id = (blocked.stat().st_dev, blocked.stat().st_ino)
+            unreadable_id = (unreadable.stat().st_dev, unreadable.stat().st_ino)
 
             def guarded_scandir(path: object) -> object:
-                if Path(path).name == blocked.name:
+                opened = os.stat(path)
+                if (opened.st_dev, opened.st_ino) == blocked_id:
                     raise PermissionError("synthetic traversal denial")
                 return real_scandir(path)
 
@@ -933,9 +965,14 @@ class SkillDiscoveryTests(unittest.TestCase):
                 path: object, flags: int, *args: object, **kwargs: object
             ) -> int:
                 opened_path = Path(path)  # type: ignore[arg-type]
+                directory_fd = kwargs.get("dir_fd")
+                parent_id = None
+                if isinstance(directory_fd, int):
+                    parent_stat = os.fstat(directory_fd)
+                    parent_id = (parent_stat.st_dev, parent_stat.st_ino)
                 if (
                     opened_path.name == unreadable_file.name
-                    and opened_path.parent.name == unreadable_file.parent.name
+                    and parent_id == unreadable_id
                 ):
                     raise PermissionError("synthetic read denial")
                 return real_os_open(path, flags, *args, **kwargs)
@@ -1008,6 +1045,10 @@ class SkillDiscoveryTests(unittest.TestCase):
             ]
             real_lstat = os.lstat
             real_scandir = os.scandir
+            scandir_denied_id = (
+                scandir_denied.stat().st_dev,
+                scandir_denied.stat().st_ino,
+            )
 
             def guarded_lstat(path: object, *args: object, **kwargs: object) -> object:
                 if Path(path).name == stat_denied.name:
@@ -1024,7 +1065,8 @@ class SkillDiscoveryTests(unittest.TestCase):
                 return real_readlink(path, *args, **kwargs)
 
             def guarded_scandir(path: object) -> object:
-                if Path(path).name == scandir_denied.name:
+                opened = os.stat(path)
+                if (opened.st_dev, opened.st_ino) == scandir_denied_id:
                     raise PermissionError("synthetic root scandir denial")
                 return real_scandir(path)
 
@@ -1245,20 +1287,26 @@ class SkillDiscoveryTests(unittest.TestCase):
                 b"---\nname: " + secret_canary + b"\n---\nprivate bytes",
             )
             original_backup = base / "verified-root-backup"
-            skills_module = sys.modules["capability_map_core.skills"]
-            real_physical_key = skills_module._physical_key
+            real_os_open = os.open
             real_os_read = os.read
             replaced = False
             read_chunks: list[bytes] = []
 
-            def replace_after_physical_key(path: Path) -> tuple[str, ...]:
+            def replace_before_root_open(
+                path: object, flags: int, *args: object, **kwargs: object
+            ) -> int:
                 nonlocal replaced
-                key = real_physical_key(path)
-                if Path(path).name == physical_root.name and not replaced:
+                if (
+                    not isinstance(path, int)
+                    and Path(path).name == physical_root.name
+                    and flags & os.O_DIRECTORY
+                    and kwargs.get("dir_fd") is None
+                    and not replaced
+                ):
                     Path(path).rename(original_backup)
                     Path(path).symlink_to(external_root, target_is_directory=True)
                     replaced = True
-                return key
+                return real_os_open(path, flags, *args, **kwargs)
 
             def recording_read(fd: int, size: int) -> bytes:
                 chunk = real_os_read(fd, size)
@@ -1266,8 +1314,8 @@ class SkillDiscoveryTests(unittest.TestCase):
                 return chunk
 
             with mock.patch(
-                "capability_map_core.skills._physical_key",
-                replace_after_physical_key,
+                "capability_map_core.skills.os.open",
+                replace_before_root_open,
             ), mock.patch(
                 "capability_map_core.skills.os.read", recording_read
             ):
@@ -1302,6 +1350,10 @@ class SkillDiscoveryTests(unittest.TestCase):
             external_root = base / "external-root"
             write_skill(external_root / "escaped", frontmatter="name: escaped-root")
             original_backup = base / "verified-root-backup"
+            root_id = (
+                physical_root.stat().st_dev,
+                physical_root.stat().st_ino,
+            )
             real_scandir = os.scandir
             replaced = False
             closed = False
@@ -1330,9 +1382,13 @@ class SkillDiscoveryTests(unittest.TestCase):
             def replace_after_open(path: object) -> TrackingIterator:
                 nonlocal replaced
                 iterator = real_scandir(path)
-                if Path(path).name == physical_root.name and not replaced:
-                    Path(path).rename(original_backup)  # type: ignore[arg-type]
-                    Path(path).symlink_to(external_root, target_is_directory=True)
+                opened = os.fstat(path)  # type: ignore[arg-type]
+                if (
+                    (opened.st_dev, opened.st_ino) == root_id
+                    and not replaced
+                ):
+                    physical_root.rename(original_backup)
+                    physical_root.symlink_to(external_root, target_is_directory=True)
                     replaced = True
                 return TrackingIterator(iterator)
 
@@ -1353,11 +1409,135 @@ class SkillDiscoveryTests(unittest.TestCase):
 
             self.assertTrue(replaced)
             self.assertTrue(closed)
-            self.assertEqual(result.capabilities, ())
-            self.assertIn(
-                "root_changed",
-                {diagnostic.code for diagnostic in result.diagnostics},
+            self.assertEqual(
+                [capability.name for capability in result.capabilities],
+                ["original-root"],
             )
+
+    @unittest.skipUnless(hasattr(os, "O_DIRECTORY"), "directory fds are required")
+    def test_root_path_replaced_after_fd_verification_reads_only_root_handle(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root = base / "verified-root"
+            write_skill(root / "same", frontmatter="name: original-from-root-fd")
+            external = base / "external-root"
+            secret_canary = b"root-fd-secret-canary"
+            write_raw_skill(
+                external / "same",
+                b"---\nname: " + secret_canary + b"\n---\nprivate bytes",
+            )
+            backup = base / "verified-root-backup"
+            root_id = (root.stat().st_dev, root.stat().st_ino)
+            real_fstat = os.fstat
+            real_os_read = os.read
+            replaced = False
+            read_chunks: list[bytes] = []
+
+            def replace_after_root_fstat(fd: int) -> os.stat_result:
+                nonlocal replaced
+                observed = real_fstat(fd)
+                if (
+                    stat.S_ISDIR(observed.st_mode)
+                    and (observed.st_dev, observed.st_ino) == root_id
+                    and not replaced
+                ):
+                    root.rename(backup)
+                    root.symlink_to(external, target_is_directory=True)
+                    replaced = True
+                return observed
+
+            def recording_read(fd: int, size: int) -> bytes:
+                chunk = real_os_read(fd, size)
+                read_chunks.append(chunk)
+                return chunk
+
+            with mock.patch(
+                "capability_map_core.skills.os.fstat", replace_after_root_fstat
+            ), mock.patch(
+                "capability_map_core.skills.os.read", recording_read
+            ):
+                result = discover_skills(
+                    [RootSpec(root, "extra", "root", "root:fd", "<root>")]
+                )
+
+            self.assertTrue(replaced)
+            self.assertEqual(
+                [capability.name for capability in result.capabilities],
+                ["original-from-root-fd"],
+            )
+            self.assertNotIn(secret_canary, b"".join(read_chunks))
+
+    @unittest.skipUnless(hasattr(os, "O_DIRECTORY"), "directory fds are required")
+    def test_root_path_replaced_during_entry_enumeration_reads_via_dir_fd(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root = base / "verified-root"
+            write_skill(root / "same", frontmatter="name: original-entry")
+            external = base / "external-root"
+            secret_canary = b"entry-enumeration-secret-canary"
+            write_raw_skill(
+                external / "same",
+                b"---\nname: " + secret_canary + b"\n---\nprivate bytes",
+            )
+            backup = base / "verified-root-backup"
+            root_id = (root.stat().st_dev, root.stat().st_ino)
+            real_scandir = os.scandir
+            real_os_read = os.read
+            replaced = False
+            read_chunks: list[bytes] = []
+
+            class ReplacingIterator:
+                def __init__(self, iterator: object, replace_on_next: bool) -> None:
+                    self._iterator = iterator
+                    self._replace_on_next = replace_on_next
+
+                def __iter__(self) -> "ReplacingIterator":
+                    return self
+
+                def __next__(self) -> object:
+                    nonlocal replaced
+                    if self._replace_on_next and not replaced:
+                        root.rename(backup)
+                        root.symlink_to(external, target_is_directory=True)
+                        replaced = True
+                    return next(self._iterator)  # type: ignore[arg-type]
+
+                def close(self) -> None:
+                    self._iterator.close()  # type: ignore[attr-defined]
+
+            def replacing_scandir(path: object) -> ReplacingIterator:
+                iterator = real_scandir(path)
+                if isinstance(path, int):
+                    opened = os.fstat(path)
+                    is_root = (opened.st_dev, opened.st_ino) == root_id
+                else:
+                    is_root = Path(path).name == root.name  # type: ignore[arg-type]
+                return ReplacingIterator(iterator, is_root)
+
+            def recording_read(fd: int, size: int) -> bytes:
+                chunk = real_os_read(fd, size)
+                read_chunks.append(chunk)
+                return chunk
+
+            with mock.patch(
+                "capability_map_core.skills.os.scandir", replacing_scandir
+            ), mock.patch(
+                "capability_map_core.skills.os.read", recording_read
+            ):
+                result = discover_skills(
+                    [RootSpec(root, "extra", "root", "root:fd", "<root>")]
+                )
+
+            self.assertTrue(replaced)
+            self.assertEqual(
+                [capability.name for capability in result.capabilities],
+                ["original-entry"],
+            )
+            self.assertNotIn(secret_canary, b"".join(read_chunks))
 
     def test_root_without_strong_identity_is_skipped(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

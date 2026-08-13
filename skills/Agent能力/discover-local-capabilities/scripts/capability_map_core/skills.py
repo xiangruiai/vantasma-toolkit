@@ -22,6 +22,11 @@ MAX_FRONTMATTER_BYTES = 64 * 1024
 _TOP_LEVEL_KEY_RE = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*):(?:[ \t]*(.*))?$")
 _METADATA_FIELDS = frozenset({"name", "description", "tags", "aliases"})
 _SCOPE_PRIORITY = {"system": 0, "project": 1, "user": 2, "plugin": 3, "extra": 4}
+_FD_WALK_SUPPORTED = (
+    hasattr(os, "O_DIRECTORY")
+    and os.open in os.supports_dir_fd
+    and os.scandir in os.supports_fd
+)
 
 
 @dataclass(frozen=True)
@@ -69,6 +74,9 @@ class _Occurrence:
     via_symlink: bool
     expected_file_id: tuple[int, int] | None
     expected_stat: tuple[tuple[str, int], ...]
+    frontmatter_payload: bytes
+    frontmatter_truncated: bool
+    read_issues: tuple[_MetadataIssue, ...]
 
 
 @dataclass(frozen=True)
@@ -176,15 +184,6 @@ def _resolve_symlink_chain(path: Path, *, max_links: int = 64) -> Path:
     return resolved
 
 
-def _physical_key(path: Path) -> tuple[str, ...]:
-    stat_result = path.stat()
-    inode = getattr(stat_result, "st_ino", 0)
-    device = getattr(stat_result, "st_dev", 0)
-    if inode:
-        return ("inode", str(device), str(inode))
-    return ("realpath", os.path.normcase(str(path.resolve(strict=True))))
-
-
 def _file_id(stat_result: os.stat_result) -> tuple[int, int] | None:
     inode = getattr(stat_result, "st_ino", 0)
     if not inode:
@@ -197,6 +196,32 @@ def _root_file_id(stat_result: os.stat_result) -> tuple[int, int] | None:
     if not inode:
         return None
     return (getattr(stat_result, "st_dev", 0), inode)
+
+
+def _physical_key_from_stat(
+    stat_result: os.stat_result, fallback_path: Path
+) -> tuple[str, ...]:
+    file_id = _file_id(stat_result)
+    if file_id is not None:
+        return ("inode", str(file_id[0]), str(file_id[1]))
+    return ("realpath", os.path.normcase(str(fallback_path)))
+
+
+def _fd_walk_supported() -> bool:
+    return _FD_WALK_SUPPORTED
+
+
+def _directory_open_flags() -> int:
+    flags = os.O_RDONLY | os.O_DIRECTORY
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    return flags
+
+
+def _file_open_flags() -> int:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    return flags
 
 
 def _stat_evidence(stat_result: os.stat_result) -> tuple[tuple[str, int], ...]:
@@ -229,7 +254,121 @@ def _walk_root(
     occurrences: list[_Occurrence] = []
     diagnostics: list[Diagnostic] = []
 
+    def open_verified_directory(
+        path: str | Path,
+        expected_id: tuple[int, int],
+        *,
+        directory_fd: int | None = None,
+    ) -> int:
+        if directory_fd is None:
+            fd = os.open(path, _directory_open_flags())
+        else:
+            fd = os.open(
+                path, _directory_open_flags(), dir_fd=directory_fd
+            )
+        try:
+            opened = os.fstat(fd)
+            if not stat.S_ISDIR(opened.st_mode) or _file_id(opened) != expected_id:
+                raise _SourceChanged
+            return fd
+        except BaseException:
+            os.close(fd)
+            raise
+
+    def read_opened_skill(
+        fd: int, expected_stat: os.stat_result
+    ) -> tuple[os.stat_result, bytes, bool, tuple[_MetadataIssue, ...]]:
+        opened_stat = os.fstat(fd)
+        if not stat.S_ISREG(opened_stat.st_mode) or not _opened_source_matches(
+            opened_stat, _file_id(expected_stat), _stat_evidence(expected_stat)
+        ):
+            raise _SourceChanged
+        try:
+            payload, truncated = _read_frontmatter_fd(fd)
+        except OSError:
+            return (
+                opened_stat,
+                b"",
+                False,
+                (
+                    _MetadataIssue(
+                        "skill_read_error", "Skill frontmatter could not be read."
+                    ),
+                ),
+            )
+        return opened_stat, payload, truncated, ()
+
+    def read_anchored_skill(
+        directory_fd: int, name: str, expected_stat: os.stat_result
+    ) -> tuple[os.stat_result, bytes, bool, tuple[_MetadataIssue, ...]]:
+        if not getattr(os, "O_NOFOLLOW", 0) and _file_id(expected_stat) is None:
+            raise _SafeOpenUnavailable
+        try:
+            fd = os.open(name, _file_open_flags(), dir_fd=directory_fd)
+        except OSError as error:
+            if error.errno in {errno.ELOOP, errno.ENOENT, errno.ENOTDIR}:
+                raise _SourceChanged from error
+            raise
+        try:
+            return read_opened_skill(fd, expected_stat)
+        finally:
+            os.close(fd)
+
+    def read_verified_path_skill(
+        path: Path, expected_stat: os.stat_result
+    ) -> tuple[os.stat_result, bytes, bool, tuple[_MetadataIssue, ...]]:
+        if not getattr(os, "O_NOFOLLOW", 0) and _file_id(expected_stat) is None:
+            raise _SafeOpenUnavailable
+        try:
+            fd = os.open(path, _file_open_flags())
+        except OSError as error:
+            if error.errno in {errno.ELOOP, errno.ENOENT, errno.ENOTDIR}:
+                raise _SourceChanged from error
+            raise
+        try:
+            return read_opened_skill(fd, expected_stat)
+        finally:
+            os.close(fd)
+
+    def add_occurrence(
+        *,
+        logical_parts: tuple[str, ...],
+        visible_path: Path,
+        real_file: Path,
+        observed_stat: os.stat_result,
+        payload: bytes,
+        truncated: bool,
+        read_issues: tuple[_MetadataIssue, ...],
+        is_link: bool,
+        reached_via_symlink: bool,
+    ) -> None:
+        skill_parts = logical_parts
+        scope = _effective_scope(root, skill_parts)
+        source = SourceLocation(
+            _safe_location(root.public_prefix, skill_parts),
+            scope,
+            root.provider,
+        )
+        relative_key = "/".join(skill_parts) or "."
+        occurrences.append(
+            _Occurrence(
+                visible_file=visible_path.absolute(),
+                real_file=real_file,
+                physical_key=_physical_key_from_stat(observed_stat, real_file),
+                logical_parts=skill_parts,
+                source=source,
+                origin_key=f"{root.logical_key}:{relative_key}",
+                via_symlink=reached_via_symlink or is_link,
+                expected_file_id=_file_id(observed_stat),
+                expected_stat=_stat_evidence(observed_stat),
+                frontmatter_payload=payload,
+                frontmatter_truncated=truncated,
+                read_issues=read_issues,
+            )
+        )
+
     def walk(
+        directory_fd: int,
         physical_directory: Path,
         logical_parts: tuple[str, ...],
         ancestors: frozenset[tuple[str, ...]],
@@ -237,43 +376,39 @@ def _walk_root(
     ) -> None:
         public_directory = _safe_location(root.public_prefix, logical_parts)
         try:
-            directory_key = _physical_key(physical_directory)
-        except OSError:
-            diagnostics.append(
-                _diagnostic(
-                    "directory_read_error",
-                    "Could not resolve a directory while scanning Skills.",
-                    location=public_directory,
-                )
-            )
-            return
-        if directory_key in ancestors:
-            diagnostics.append(
-                _diagnostic(
-                    "symlink_loop",
-                    "A directory link loop was skipped.",
-                    location=public_directory,
-                )
-            )
-            return
-        next_ancestors = ancestors | {directory_key}
-        iterator = None
-        try:
-            iterator = os.scandir(physical_directory)
-            if not logical_parts:
-                opened_path_stat = os.lstat(physical_directory)
-                if stat.S_ISLNK(opened_path_stat.st_mode) or (
-                    _root_file_id(opened_path_stat) != expected_root_id
-                ):
-                    diagnostics.append(
-                        _diagnostic(
-                            "root_changed",
-                            "A verified Skill root changed before scanning and was skipped.",
-                            location=public_directory,
-                        )
+            directory_stat = os.fstat(directory_fd)
+            directory_file_id = _file_id(directory_stat)
+            if not stat.S_ISDIR(directory_stat.st_mode) or directory_file_id is None:
+                diagnostics.append(
+                    _diagnostic(
+                        "directory_unverifiable",
+                        "A Skill directory had no strong physical identity and was skipped.",
+                        location=public_directory,
                     )
-                    return
-            entries = sorted(iterator, key=lambda entry: entry.name)
+                )
+                return
+            directory_key = (
+                "inode",
+                str(directory_file_id[0]),
+                str(directory_file_id[1]),
+            )
+            if directory_key in ancestors:
+                diagnostics.append(
+                    _diagnostic(
+                        "symlink_loop",
+                        "A directory link loop was skipped.",
+                        location=public_directory,
+                    )
+                )
+                return
+            next_ancestors = ancestors | {directory_key}
+            iterator = None
+            try:
+                iterator = os.scandir(directory_fd)
+                names = sorted(entry.name for entry in iterator)
+            finally:
+                if iterator is not None:
+                    iterator.close()
         except OSError:
             diagnostics.append(
                 _diagnostic(
@@ -284,135 +419,237 @@ def _walk_root(
             )
             return
         finally:
-            if iterator is not None:
-                iterator.close()
+            if 'names' not in locals():
+                os.close(directory_fd)
 
-        for entry in entries:
-            if _is_env_segment(entry.name):
-                diagnostics.append(
-                    _diagnostic(
-                        "env_path_blocked",
-                        "A .env filesystem entry was skipped without reading it.",
-                        location=_safe_location(
-                            root.public_prefix, logical_parts + (entry.name,)
-                        ),
+        try:
+            for name in names:
+                if _is_env_segment(name):
+                    diagnostics.append(
+                        _diagnostic(
+                            "env_path_blocked",
+                            "A .env filesystem entry was skipped without reading it.",
+                            location=_safe_location(
+                                root.public_prefix, logical_parts + (name,)
+                            ),
+                        )
                     )
-                )
-                continue
-            physical_path = Path(entry.path)
-            child_parts = logical_parts + (entry.name,)
-            visible_path = root.path.joinpath(*child_parts).absolute()
-            public_child = _safe_location(root.public_prefix, child_parts)
-            try:
-                is_link = entry.is_symlink()
-                if is_link:
-                    try:
-                        resolved = _resolve_symlink_chain(physical_path)
-                    except _EnvPathBlocked:
-                        diagnostics.append(
-                            _diagnostic(
-                                "env_path_blocked",
-                                "A symbolic link chain passing through .env was skipped without reading it.",
-                                location=public_child,
+                    continue
+                physical_path = physical_directory / name
+                child_parts = logical_parts + (name,)
+                visible_path = root.path.joinpath(*child_parts).absolute()
+                public_child = _safe_location(root.public_prefix, child_parts)
+                try:
+                    entry_stat = os.stat(
+                        name, dir_fd=directory_fd, follow_symlinks=False
+                    )
+                    is_link = stat.S_ISLNK(entry_stat.st_mode)
+                    if is_link:
+                        try:
+                            anchored_target = Path(os.readlink(name, dir_fd=directory_fd))
+                            if _has_env_segment(anchored_target):
+                                raise _EnvPathBlocked
+                            resolved = _resolve_symlink_chain(physical_path)
+                        except _EnvPathBlocked:
+                            diagnostics.append(
+                                _diagnostic(
+                                    "env_path_blocked",
+                                    "A symbolic link chain passing through .env was skipped without reading it.",
+                                    location=public_child,
+                                )
                             )
-                        )
-                        continue
-                    except PermissionError:
-                        diagnostics.append(
-                            _diagnostic(
-                                "permission_denied",
-                                "A symbolic link chain could not be inspected due to permissions.",
-                                location=public_child,
+                            continue
+                        except PermissionError:
+                            diagnostics.append(
+                                _diagnostic(
+                                    "permission_denied",
+                                    "A symbolic link chain could not be inspected due to permissions.",
+                                    location=public_child,
+                                )
                             )
-                        )
-                        continue
-                    except (OSError, RuntimeError) as error:
-                        code = _symlink_failure_code(error)
-                        diagnostics.append(
-                            _diagnostic(
-                                code,
-                                (
-                                    "A symbolic link loop was skipped."
-                                    if code == "symlink_loop"
-                                    else "A broken symbolic link was skipped."
+                            continue
+                        except (OSError, RuntimeError) as error:
+                            code = _symlink_failure_code(error)
+                            diagnostics.append(
+                                _diagnostic(
+                                    code,
+                                    (
+                                        "A symbolic link loop was skipped."
+                                        if code == "symlink_loop"
+                                        else "A broken symbolic link was skipped."
+                                    ),
+                                    location=public_child,
+                                )
+                            )
+                            continue
+                        if _has_env_segment(resolved):
+                            diagnostics.append(
+                                _diagnostic(
+                                    "env_path_blocked",
+                                    "A symbolic link resolving through .env was skipped without reading it.",
+                                    location=public_child,
+                                )
+                            )
+                            continue
+                        if not _contained_by(resolved, allowed_roots):
+                            diagnostics.append(
+                                _diagnostic(
+                                    "symlink_outside_allowed_roots",
+                                    "A symbolic link target outside allowed roots was skipped.",
+                                    location=public_child,
+                                )
+                            )
+                            continue
+                        target_stat = os.stat(resolved, follow_symlinks=False)
+                        if stat.S_ISDIR(target_stat.st_mode):
+                            target_id = _file_id(target_stat)
+                            if target_id is None:
+                                diagnostics.append(
+                                    _diagnostic(
+                                        "directory_unverifiable",
+                                        "A linked Skill directory had no strong physical identity and was skipped.",
+                                        location=public_child,
+                                    )
+                                )
+                                continue
+                            target_fd = open_verified_directory(
+                                resolved, target_id
+                            )
+                            walk(
+                                target_fd,
+                                resolved,
+                                child_parts,
+                                next_ancestors,
+                                True,
+                            )
+                            continue
+                        if name != "SKILL.md" or not stat.S_ISREG(
+                            target_stat.st_mode
+                        ):
+                            continue
+                        try:
+                            observed_stat, payload, truncated, read_issues = (
+                                read_verified_path_skill(resolved, target_stat)
+                            )
+                        except OSError:
+                            observed_stat = target_stat
+                            payload = b""
+                            truncated = False
+                            read_issues = (
+                                _MetadataIssue(
+                                    "skill_read_error",
+                                    "Skill frontmatter could not be read.",
                                 ),
-                                location=public_child,
                             )
+                        real_file = resolved
+                    elif stat.S_ISDIR(entry_stat.st_mode):
+                        child_id = _file_id(entry_stat)
+                        if child_id is None:
+                            diagnostics.append(
+                                _diagnostic(
+                                    "directory_unverifiable",
+                                    "A Skill directory had no strong physical identity and was skipped.",
+                                    location=public_child,
+                                )
+                            )
+                            continue
+                        child_fd = open_verified_directory(
+                            name, child_id, directory_fd=directory_fd
+                        )
+                        walk(
+                            child_fd,
+                            physical_path,
+                            child_parts,
+                            next_ancestors,
+                            reached_via_symlink,
                         )
                         continue
-                    if _has_env_segment(resolved):
-                        diagnostics.append(
-                            _diagnostic(
-                                "env_path_blocked",
-                                "A symbolic link resolving through .env was skipped without reading it.",
-                                location=public_child,
+                    elif name == "SKILL.md" and stat.S_ISREG(entry_stat.st_mode):
+                        try:
+                            observed_stat, payload, truncated, read_issues = (
+                                read_anchored_skill(directory_fd, name, entry_stat)
                             )
-                        )
-                        continue
-                    if not _contained_by(resolved, allowed_roots):
-                        diagnostics.append(
-                            _diagnostic(
-                                "symlink_outside_allowed_roots",
-                                "A symbolic link target outside allowed roots was skipped.",
-                                location=public_child,
+                        except OSError:
+                            observed_stat = entry_stat
+                            payload = b""
+                            truncated = False
+                            read_issues = (
+                                _MetadataIssue(
+                                    "skill_read_error",
+                                    "Skill frontmatter could not be read.",
+                                ),
                             )
+                        real_file = physical_path
+                    else:
+                        continue
+                except _SafeOpenUnavailable:
+                    diagnostics.append(
+                        _diagnostic(
+                            "safe_open_unavailable",
+                            "This platform cannot safely open a Skill without symlink following or a stable file ID.",
+                            location=public_child,
                         )
-                        continue
-                    if resolved.is_dir():
-                        walk(resolved, child_parts, next_ancestors, True)
-                        continue
-                    if entry.name != "SKILL.md" or not resolved.is_file():
-                        continue
-                    real_file = resolved
-                elif entry.is_dir(follow_symlinks=False):
-                    walk(
-                        physical_path,
-                        child_parts,
-                        next_ancestors,
-                        reached_via_symlink,
                     )
                     continue
-                elif entry.name == "SKILL.md" and entry.is_file(
-                    follow_symlinks=False
-                ):
-                    real_file = physical_path
-                else:
-                    continue
-                file_key = _physical_key(real_file)
-                observed_stat = real_file.stat()
-            except OSError:
-                diagnostics.append(
-                    _diagnostic(
-                        "entry_read_error",
-                        "A filesystem entry could not be inspected.",
-                        location=public_child,
+                except _SourceChanged:
+                    diagnostics.append(
+                        _diagnostic(
+                            "source_changed",
+                            "A Skill source changed during discovery and was skipped without reading it.",
+                            location=public_child,
+                        )
                     )
-                )
-                continue
+                    continue
+                except OSError:
+                    diagnostics.append(
+                        _diagnostic(
+                            "entry_read_error",
+                            "A filesystem entry could not be inspected.",
+                            location=public_child,
+                        )
+                    )
+                    continue
 
-            skill_parts = logical_parts
-            scope = _effective_scope(root, skill_parts)
-            source = SourceLocation(
-                _safe_location(root.public_prefix, skill_parts),
-                scope,
-                root.provider,
-            )
-            relative_key = "/".join(skill_parts) or "."
-            occurrences.append(
-                _Occurrence(
-                    visible_file=visible_path.absolute(),
+                add_occurrence(
+                    logical_parts=logical_parts,
+                    visible_path=visible_path,
                     real_file=real_file,
-                    physical_key=file_key,
-                    logical_parts=skill_parts,
-                    source=source,
-                    origin_key=f"{root.logical_key}:{relative_key}",
-                    via_symlink=reached_via_symlink or is_link,
-                    expected_file_id=_file_id(observed_stat),
-                    expected_stat=_stat_evidence(observed_stat),
+                    observed_stat=observed_stat,
+                    payload=payload,
+                    truncated=truncated,
+                    read_issues=read_issues,
+                    is_link=is_link,
+                    reached_via_symlink=reached_via_symlink,
                 )
-            )
+        finally:
+            os.close(directory_fd)
 
-    walk(physical_root, (), frozenset(), root_is_symlink)
+    try:
+        root_fd = open_verified_directory(physical_root, expected_root_id)
+    except _SourceChanged:
+        diagnostics.append(
+            _diagnostic(
+                "root_changed",
+                "A verified Skill root changed before its directory handle was opened.",
+                location=root.public_prefix,
+            )
+        )
+        return occurrences, diagnostics
+    except OSError as error:
+        code = (
+            "root_changed"
+            if error.errno in {errno.ELOOP, errno.ENOENT, errno.ENOTDIR}
+            else "directory_read_error"
+        )
+        diagnostics.append(
+            _diagnostic(
+                code,
+                "A verified Skill root could not be opened safely.",
+                location=root.public_prefix,
+            )
+        )
+        return occurrences, diagnostics
+    walk(root_fd, physical_root, (), frozenset(), root_is_symlink)
     return occurrences, diagnostics
 
 
@@ -617,86 +854,43 @@ def _opened_source_matches(
     return _stat_evidence(stat_result) == expected_stat
 
 
-def _open_verified_source(occurrence: _Occurrence) -> int:
-    path = occurrence.real_file
-    flags = os.O_RDONLY
-    if hasattr(os, "O_CLOEXEC"):
-        flags |= os.O_CLOEXEC
-    nofollow = getattr(os, "O_NOFOLLOW", 0)
-    if not nofollow and occurrence.expected_file_id is None:
-        raise _SafeOpenUnavailable
-    try:
-        before = os.lstat(path)
-        if stat.S_ISLNK(before.st_mode) or not _opened_source_matches(
-            before, occurrence.expected_file_id, occurrence.expected_stat
-        ):
-            raise _SourceChanged
-        fd = os.open(path, flags | nofollow)
-    except _SourceChanged:
-        raise
-    except OSError as error:
-        if error.errno in {errno.ELOOP, errno.ENOENT, errno.ENOTDIR}:
-            raise _SourceChanged from error
-        raise
-    try:
-        opened = os.fstat(fd)
-        if not stat.S_ISREG(opened.st_mode) or not _opened_source_matches(
-            opened, occurrence.expected_file_id, occurrence.expected_stat
-        ):
-            raise _SourceChanged
-        if not nofollow:
-            after = os.lstat(path)
-            if stat.S_ISLNK(after.st_mode) or not _opened_source_matches(
-                after, occurrence.expected_file_id, occurrence.expected_stat
-            ):
-                raise _SourceChanged
-        return fd
-    except BaseException:
-        os.close(fd)
-        raise
-
-
-def _read_frontmatter_prefix(occurrence: _Occurrence) -> tuple[bytes, bool]:
-    fd = _open_verified_source(occurrence)
-    try:
-        chunks: list[bytes] = []
-        total = 0
-        line_number = 0
-        while total <= MAX_FRONTMATTER_BYTES:
-            remaining = MAX_FRONTMATTER_BYTES - total
-            line_chunks: list[bytes] = []
-            while len(line_chunks) <= remaining:
-                byte = os.read(fd, 1)
-                if not byte:
-                    break
-                line_chunks.append(byte)
-                if byte == b"\n":
-                    break
-            line = b"".join(line_chunks)
-            if not line:
+def _read_frontmatter_fd(fd: int) -> tuple[bytes, bool]:
+    chunks: list[bytes] = []
+    total = 0
+    line_number = 0
+    while total <= MAX_FRONTMATTER_BYTES:
+        remaining = MAX_FRONTMATTER_BYTES - total
+        line_chunks: list[bytes] = []
+        while len(line_chunks) <= remaining:
+            byte = os.read(fd, 1)
+            if not byte:
+                break
+            line_chunks.append(byte)
+            if byte == b"\n":
+                break
+        line = b"".join(line_chunks)
+        if not line:
+            return b"".join(chunks), False
+        if len(line) > remaining:
+            chunks.append(line[:remaining])
+            return b"".join(chunks), True
+        chunks.append(line)
+        total += len(line)
+        marker = line.rstrip(b"\r\n")
+        if line_number == 0:
+            marker = marker.removeprefix(b"\xef\xbb\xbf")
+            if marker.strip() != b"---":
                 return b"".join(chunks), False
-            if len(line) > remaining:
-                chunks.append(line[:remaining])
-                return b"".join(chunks), True
-            chunks.append(line)
-            total += len(line)
-            marker = line.rstrip(b"\r\n")
-            if line_number == 0:
-                marker = marker.removeprefix(b"\xef\xbb\xbf")
-                if marker.strip() != b"---":
-                    return b"".join(chunks), False
-            elif marker.strip() in {b"---", b"..."}:
-                return b"".join(chunks), False
-            line_number += 1
-        return b"".join(chunks), True
-    finally:
-        os.close(fd)
+        elif marker.strip() in {b"---", b"..."}:
+            return b"".join(chunks), False
+        line_number += 1
+    return b"".join(chunks), True
 
 
 def _skill_metadata(
     occurrence: _Occurrence, fallback_name: str
 ) -> _SkillMetadata:
-    issues: list[_MetadataIssue] = []
+    issues = list(occurrence.read_issues)
     if not sanitize_text(fallback_name, max_length=512):
         fallback_name = "unnamed-skill"
         issues.append(
@@ -705,20 +899,13 @@ def _skill_metadata(
                 "Skill directory name was empty after sanitization; a neutral fallback was used.",
             )
         )
-    try:
-        payload, truncated = _read_frontmatter_prefix(occurrence)
-    except _SourceChanged:
-        raise
-    except OSError:
-        issues.append(
-            _MetadataIssue(
-                "skill_read_error", "Skill frontmatter could not be read."
-            )
-        )
+    if occurrence.read_issues:
         return _SkillMetadata(
             fallback_name,
             issues=tuple(issues),
         )
+    payload = occurrence.frontmatter_payload
+    truncated = occurrence.frontmatter_truncated
     content_digest = hashlib.sha256(payload).hexdigest()
     try:
         text = payload.decode("utf-8-sig")
@@ -854,6 +1041,15 @@ def discover_skills(roots: list[RootSpec] | tuple[RootSpec, ...]) -> SkillDiscov
     global_diagnostics: list[Diagnostic] = []
     resolved_roots: list[tuple[RootSpec, Path, bool, tuple[int, int]]] = []
     for root in root_specs:
+        if not _fd_walk_supported():
+            global_diagnostics.append(
+                _diagnostic(
+                    "root_unverifiable",
+                    "This platform cannot bind Skill traversal to directory handles.",
+                    location=root.public_prefix,
+                )
+            )
+            continue
         try:
             source_stat = os.lstat(root.path)
         except FileNotFoundError:
@@ -964,28 +1160,9 @@ def discover_skills(roots: list[RootSpec] | tuple[RootSpec, ...]) -> SkillDiscov
             key=_occurrence_order,
         )
         representative = ordered_occurrences[0]
-        try:
-            metadata = _skill_metadata(
-                representative, representative.real_file.parent.name
-            )
-        except _SafeOpenUnavailable:
-            global_diagnostics.append(
-                _diagnostic(
-                    "safe_open_unavailable",
-                    "This platform cannot safely open a Skill without symlink following or a stable file ID.",
-                    location=representative.source.location,
-                )
-            )
-            continue
-        except _SourceChanged:
-            global_diagnostics.append(
-                _diagnostic(
-                    "source_changed",
-                    "A Skill source changed after discovery and was skipped without reading it.",
-                    location=representative.source.location,
-                )
-            )
-            continue
+        metadata = _skill_metadata(
+            representative, representative.real_file.parent.name
+        )
         logical_identity, weak_identity = _logical_identity(
             occurrences, representative, metadata.content_digest
         )
