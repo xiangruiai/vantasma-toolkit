@@ -6,6 +6,7 @@ import hashlib
 import math
 import os
 import platform
+import signal
 import stat
 import subprocess
 import threading
@@ -547,41 +548,30 @@ def _minimal_probe_environment(
     return minimal
 
 
-class _BoundedCapture:
-    """Retain one shared bounded prefix while readers drain both pipes."""
+class _StreamCapture:
+    """Retain a bounded prefix for one stream without cross-stream races."""
 
-    def __init__(self, limit: int) -> None:
+    def __init__(self, limit: int, overflow: threading.Event) -> None:
         self._limit = limit
         self._retained = bytearray()
-        self._lock = threading.Lock()
-        self._limit_reached = threading.Event()
+        self._overflow = overflow
         self.truncated = False
-
-    @property
-    def limit_reached(self) -> bool:
-        return self._limit_reached.is_set()
 
     def add(self, chunk: bytes) -> None:
         if not chunk:
             return
-        with self._lock:
-            remaining = self._limit - len(self._retained)
-            if remaining > 0:
-                self._retained.extend(chunk[:remaining])
-            if len(chunk) > remaining:
-                self.truncated = True
-                self._limit_reached.set()
+        remaining = self._limit - len(self._retained)
+        if remaining > 0:
+            self._retained.extend(chunk[:remaining])
+        if len(chunk) > remaining:
+            self.truncated = True
+            self._overflow.set()
 
-    def output(self) -> str:
-        with self._lock:
-            retained = bytes(self._retained)
-        decoded = retained.decode("utf-8", errors="replace")
-        sanitized = sanitize_text(decoded, max_length=self._limit)
-        bounded = sanitized.encode("utf-8")[: self._limit]
-        return bounded.decode("utf-8", errors="ignore")
+    def bytes(self) -> bytes:
+        return bytes(self._retained)
 
 
-def _drain_pipe(pipe: Any, capture: _BoundedCapture) -> None:
+def _drain_pipe(pipe: Any, capture: _StreamCapture) -> None:
     try:
         while True:
             chunk = pipe.read(PROBE_READ_CHUNK_BYTES)
@@ -596,7 +586,7 @@ def _drain_pipe(pipe: Any, capture: _BoundedCapture) -> None:
 
 def _wait_for_process(
     process: Any,
-    capture: _BoundedCapture,
+    overflow: threading.Event,
     *,
     timeout: float,
 ) -> tuple[str | None, float]:
@@ -605,8 +595,7 @@ def _wait_for_process(
         returncode = process.poll()
         if returncode is not None:
             return None, max(0.0, deadline - time.monotonic())
-        if capture.limit_reached:
-            capture.truncated = True
+        if overflow.is_set():
             return "output_limit", max(0.0, deadline - time.monotonic())
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -614,23 +603,204 @@ def _wait_for_process(
         time.sleep(min(_PROBE_POLL_SECONDS, remaining))
 
 
-def _stop_and_reap(process: Any) -> None:
-    if process.poll() is None:
+class _DirectProcessTree:
+    """Fallback guard used by injected process doubles and unsupported hosts."""
+
+    def __init__(self, process: Any) -> None:
+        self._process = process
+
+    def terminate(self) -> None:
+        if self._process.poll() is None:
+            self._process.terminate()
+
+    def kill(self) -> None:
+        if self._process.poll() is None:
+            self._process.kill()
+
+    def alive(self) -> bool:
+        return self._process.poll() is None
+
+    def close(self) -> None:
+        return
+
+
+class _PosixProcessTree:
+    """A dedicated POSIX session whose process group is safe to signal."""
+
+    def __init__(self, process: Any) -> None:
+        self._pgid = int(process.pid)
+
+    def _signal(self, signal_number: int) -> None:
         try:
-            process.terminate()
-        except OSError:
+            os.killpg(self._pgid, signal_number)
+        except (ProcessLookupError, PermissionError):
             pass
+
+    def terminate(self) -> None:
+        self._signal(signal.SIGTERM)
+
+    def kill(self) -> None:
+        self._signal(signal.SIGKILL)
+
+    def alive(self) -> bool:
+        try:
+            os.killpg(self._pgid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+    def close(self) -> None:
+        return
+
+
+class _WindowsProcessTree:
+    """Windows Job Object guard with CTRL_BREAK as graceful first stage."""
+
+    _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+    _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+
+    def __init__(self, process: Any) -> None:
+        import ctypes
+        from ctypes import wintypes
+
+        class IoCounters(ctypes.Structure):
+            _fields_ = [
+                ("ReadOperationCount", ctypes.c_ulonglong),
+                ("WriteOperationCount", ctypes.c_ulonglong),
+                ("OtherOperationCount", ctypes.c_ulonglong),
+                ("ReadTransferCount", ctypes.c_ulonglong),
+                ("WriteTransferCount", ctypes.c_ulonglong),
+                ("OtherTransferCount", ctypes.c_ulonglong),
+            ]
+
+        class BasicLimitInformation(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_longlong),
+                ("PerJobUserTimeLimit", ctypes.c_longlong),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class ExtendedLimitInformation(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", BasicLimitInformation),
+                ("IoInfo", IoCounters),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.CreateJobObjectW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
+        kernel32.SetInformationJobObject.argtypes = (
+            wintypes.HANDLE,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+        )
+        kernel32.AssignProcessToJobObject.argtypes = (
+            wintypes.HANDLE,
+            wintypes.HANDLE,
+        )
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            raise OSError(ctypes.get_last_error(), "CreateJobObjectW failed")
+        information = ExtendedLimitInformation()
+        information.BasicLimitInformation.LimitFlags = (
+            self._JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        )
+        if not kernel32.SetInformationJobObject(
+            job,
+            self._JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+            ctypes.byref(information),
+            ctypes.sizeof(information),
+        ):
+            error = ctypes.get_last_error()
+            kernel32.CloseHandle(job)
+            raise OSError(error, "SetInformationJobObject failed")
+        process_handle = wintypes.HANDLE(int(process._handle))
+        if not kernel32.AssignProcessToJobObject(job, process_handle):
+            error = ctypes.get_last_error()
+            kernel32.CloseHandle(job)
+            raise OSError(error, "AssignProcessToJobObject failed")
+        self._kernel32 = kernel32
+        self._job = job
+        self._process = process
+
+    def terminate(self) -> None:
+        if self._process.poll() is None:
+            try:
+                self._process.send_signal(signal.CTRL_BREAK_EVENT)
+            except (OSError, ValueError):
+                self._process.terminate()
+
+    def kill(self) -> None:
+        self.close()
+        if self._process.poll() is None:
+            self._process.kill()
+
+    def alive(self) -> bool:
+        return self._process.poll() is None or self._job is not None
+
+    def close(self) -> None:
+        if self._job is not None:
+            self._kernel32.CloseHandle(self._job)
+            self._job = None
+
+
+def _process_tree_guard(process: Any) -> Any:
+    if os.name == "nt":
+        return _WindowsProcessTree(process)
+    if hasattr(process, "pid"):
+        return _PosixProcessTree(process)
+    return _DirectProcessTree(process)
+
+
+def _wait_tree_exit(tree: Any, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while tree.alive():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(_PROBE_POLL_SECONDS, remaining))
+    return True
+
+
+def _stop_and_reap(process: Any, tree: Any | None) -> None:
+    guard = _DirectProcessTree(process) if tree is None else tree
+    try:
+        guard.terminate()
+    except (OSError, ValueError):
+        pass
     try:
         process.wait(timeout=_PROBE_TERMINATE_GRACE_SECONDS)
-        return
     except subprocess.TimeoutExpired:
         pass
+    if not _wait_tree_exit(guard, _PROBE_TERMINATE_GRACE_SECONDS):
+        try:
+            guard.kill()
+        except (OSError, ValueError):
+            pass
     if process.poll() is None:
         try:
             process.kill()
         except OSError:
             pass
-    process.wait()
+    try:
+        process.wait(timeout=_PROBE_TERMINATE_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        pass
+    guard.close()
 
 
 def _close_probe_pipes(process: Any) -> None:
@@ -641,6 +811,38 @@ def _close_probe_pipes(process: Any) -> None:
             pipe.close()
         except OSError:
             pass
+
+
+def _join_readers(readers: Iterable[threading.Thread], timeout: float) -> None:
+    deadline = time.monotonic() + timeout
+    for reader in readers:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        reader.join(remaining)
+
+
+def _combine_probe_output(
+    stdout: _StreamCapture,
+    stderr: _StreamCapture,
+    *,
+    limit: int,
+) -> tuple[str, bool]:
+    stdout_bytes = stdout.bytes()
+    stderr_bytes = stderr.bytes()
+    separator = b"\n" if stdout_bytes and stderr_bytes else b""
+    combined = stdout_bytes + separator + stderr_bytes
+    truncated = stdout.truncated or stderr.truncated or len(combined) > limit
+    decoded = combined[:limit].decode("utf-8", errors="replace")
+    sanitized = sanitize_text(decoded, max_length=limit)
+    bounded = sanitized.encode("utf-8")[:limit]
+    return bounded.decode("utf-8", errors="ignore"), truncated
+
+
+def _popen_platform_options() -> dict[str, Any]:
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
 
 
 def _probe_diagnostic(
@@ -719,6 +921,7 @@ def probe_cli_version(
             stderr=subprocess.PIPE,
             shell=False,
             env=minimal_environment,
+            **_popen_platform_options(),
         )
     except Exception as error:
         return CliVersionProbeResult(
@@ -732,64 +935,85 @@ def probe_cli_version(
             ),
         )
 
-    capture = _BoundedCapture(bounded_limit)
-    readers = [
-        threading.Thread(
-            target=_drain_pipe,
-            args=(pipe, capture),
-            name=f"cli-version-{stream_name}",
-            daemon=True,
-        )
-        for stream_name, pipe in (
-            ("stdout", process.stdout),
-            ("stderr", process.stderr),
-        )
-        if pipe is not None
-    ]
-    for reader in readers:
-        reader.start()
-
+    started_readers: list[threading.Thread] = []
+    all_readers: list[threading.Thread] = []
+    tree: Any | None = None
+    stdout_capture: _StreamCapture | None = None
+    stderr_capture: _StreamCapture | None = None
     stop_reason: str | None = None
+    probe_error: Exception | None = None
     try:
+        tree = _process_tree_guard(process)
+        overflow = threading.Event()
+        stdout_capture = _StreamCapture(bounded_limit, overflow)
+        stderr_capture = _StreamCapture(bounded_limit, overflow)
+        all_readers = [
+            threading.Thread(
+                target=_drain_pipe,
+                args=(pipe, capture),
+                name=f"cli-version-{stream_name}",
+                daemon=True,
+            )
+            for stream_name, pipe, capture in (
+                ("stdout", process.stdout, stdout_capture),
+                ("stderr", process.stderr, stderr_capture),
+            )
+            if pipe is not None
+        ]
+        for reader in all_readers:
+            reader.start()
+            started_readers.append(reader)
         stop_reason, remaining = _wait_for_process(
             process,
-            capture,
+            overflow,
             timeout=bounded_timeout,
         )
-        if stop_reason is not None:
-            _stop_and_reap(process)
-        else:
+        if stop_reason is None:
             process.wait(timeout=max(remaining, _PROBE_TERMINATE_GRACE_SECONDS))
-        for reader in readers:
-            reader.join(_PROBE_THREAD_JOIN_SECONDS)
-        if any(reader.is_alive() for reader in readers):
-            _close_probe_pipes(process)
-            for reader in readers:
-                reader.join(_PROBE_THREAD_JOIN_SECONDS)
+        _stop_and_reap(process, tree)
+        tree = None
+        _join_readers(started_readers, _PROBE_THREAD_JOIN_SECONDS)
     except Exception as error:
+        probe_error = error
         try:
-            _stop_and_reap(process)
+            _stop_and_reap(process, tree)
+            tree = None
         except Exception:
             pass
+    finally:
+        if tree is not None:
+            try:
+                _stop_and_reap(process, tree)
+            except Exception:
+                pass
+        _close_probe_pipes(process)
+        _join_readers(started_readers, _PROBE_THREAD_JOIN_SECONDS)
+
+    if stdout_capture is None or stderr_capture is None:
+        output = ""
+        truncated = False
+    else:
+        output, truncated = _combine_probe_output(
+            stdout_capture,
+            stderr_capture,
+            limit=bounded_limit,
+        )
+    if probe_error is not None:
         return CliVersionProbeResult(
             "error",
-            capture.output(),
+            output,
+            process.returncode,
             diagnostics=(
                 _probe_diagnostic(
                     "version_probe_error",
                     "The version probe could not be completed.",
-                    details={"error_type": type(error).__name__},
+                    details={"error_type": type(probe_error).__name__},
                 ),
             ),
         )
-    finally:
-        _close_probe_pipes(process)
-        for reader in readers:
-            reader.join(_PROBE_THREAD_JOIN_SECONDS)
 
-    output = capture.output()
     diagnostics: list[Diagnostic] = []
-    if capture.truncated or stop_reason == "output_limit":
+    if truncated or stop_reason == "output_limit":
         diagnostics.append(
             _probe_diagnostic(
                 "version_output_truncated",

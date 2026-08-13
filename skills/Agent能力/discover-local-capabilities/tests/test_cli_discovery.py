@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -54,6 +55,25 @@ def _write_python_executable(path: Path, body: str) -> Path:
     path.write_text(f"#!{sys.executable}\n{body}\n", encoding="utf-8")
     path.chmod(0o755)
     return path
+
+
+def _pid_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _wait_pid_gone(pid: int, timeout: float = 1.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not _pid_exists(pid):
+            return True
+        time.sleep(0.02)
+    return not _pid_exists(pid)
 
 
 class _TrackingPipe:
@@ -465,6 +485,12 @@ class CliVersionProbeTests(unittest.TestCase):
             self.assertIs(kwargs["stdout"], subprocess.PIPE)
             self.assertIs(kwargs["stderr"], subprocess.PIPE)
             self.assertFalse(kwargs["shell"])
+            if os.name == "nt":
+                self.assertTrue(
+                    kwargs["creationflags"] & subprocess.CREATE_NEW_PROCESS_GROUP
+                )
+            else:
+                self.assertTrue(kwargs["start_new_session"])
             self.assertLessEqual(MAX_PROBE_TIMEOUT_SECONDS, 3)
             self.assertTrue(
                 all(
@@ -589,6 +615,96 @@ class CliVersionProbeTests(unittest.TestCase):
             self.assertIn(
                 "version_output_truncated",
                 [diagnostic.code for diagnostic in result.diagnostics],
+            )
+
+    def test_stream_output_is_combined_stdout_then_stderr_deterministically(self) -> None:
+        if os.name == "nt":
+            self.skipTest("POSIX executable fixture")
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = _write_python_executable(
+                Path(temporary) / "ordered-tool",
+                "import os, time\n"
+                "os.write(2, b'stderr-fixed')\n"
+                "time.sleep(0.02)\n"
+                "os.write(1, b'stdout-fixed')",
+            )
+
+            outputs = [
+                probe_cli_version(executable, flags=(), timeout=1).output
+                for _ in range(5)
+            ]
+
+            self.assertEqual(outputs, ["stdout-fixed stderr-fixed"] * 5)
+
+    def test_timeout_kills_descendant_process_group_and_does_not_wait_on_pipes(
+        self,
+    ) -> None:
+        if os.name == "nt":
+            self.skipTest("POSIX process-group fixture")
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = _write_python_executable(
+                Path(temporary) / "spawning-tool",
+                "import subprocess, sys, time\n"
+                "child = subprocess.Popen(\n"
+                "    [sys.executable, '-c', 'import time; time.sleep(30)'],\n"
+                "    stdin=subprocess.DEVNULL, stdout=sys.stdout, stderr=sys.stderr,\n"
+                ")\n"
+                "print(child.pid, flush=True)\n"
+                "time.sleep(30)",
+            )
+            child_pid = 0
+            started = time.monotonic()
+            try:
+                result = probe_cli_version(executable, flags=(), timeout=0.3)
+                elapsed = time.monotonic() - started
+                child_pid = int(result.output.strip().split()[0])
+
+                self.assertEqual(result.status, "timeout")
+                self.assertLess(elapsed, 2.0)
+                self.assertTrue(_wait_pid_gone(child_pid))
+            finally:
+                if child_pid and _pid_exists(child_pid):
+                    os.kill(child_pid, signal.SIGKILL)
+
+    def test_second_reader_start_failure_cleans_process_pipes_and_started_thread(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = _write_file(Path(temporary) / "tool")
+            process = _FakeProcess(stdout=b"partial", stays_running=True)
+            original_start = threading.Thread.start
+            start_calls = 0
+
+            def fail_second_start(reader: threading.Thread) -> None:
+                nonlocal start_calls
+                start_calls += 1
+                if start_calls == 2:
+                    raise RuntimeError("synthetic second reader failure")
+                original_start(reader)
+
+            with (
+                mock.patch(
+                    "capability_map_core.clis.subprocess.Popen",
+                    return_value=process,
+                ),
+                mock.patch(
+                    "capability_map_core.clis.threading.Thread.start",
+                    autospec=True,
+                    side_effect=fail_second_start,
+                ),
+            ):
+                result = probe_cli_version(executable, timeout=1)
+
+            self.assertEqual(result.status, "error")
+            self.assertTrue(process.terminate_called)
+            self.assertTrue(process.wait_timeouts)
+            self.assertTrue(process.stdout.closed)
+            self.assertTrue(process.stderr.closed)
+            self.assertFalse(
+                any(
+                    thread.name.startswith("cli-version-") and thread.is_alive()
+                    for thread in threading.enumerate()
+                )
             )
 
     def test_real_noisy_executable_is_stopped_without_capturing_full_output(self) -> None:
