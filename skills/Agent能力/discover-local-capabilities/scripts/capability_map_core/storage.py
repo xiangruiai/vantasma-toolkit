@@ -10,12 +10,13 @@ import platform
 import re
 import stat
 import tempfile
-from collections.abc import Callable, Iterable, Mapping
+from collections import deque
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any
+from typing import Any, Protocol
 
-from .models import Diagnostic, ResolverRecord
+from .models import Diagnostic
 from .sanitize import REDACTED_PATH, sanitize, sanitize_text
 
 
@@ -25,6 +26,7 @@ CONFIG_FILENAME = "capability-map.config.json"
 RECEIPT_FILENAME = "setup-receipt.md"
 RESOLVER_FILENAME = "capability-resolver.json"
 MAX_OBSIDIAN_CONFIG_BYTES = 1024 * 1024
+MAX_STORAGE_TARGET_BYTES = 64 * 1024 * 1024
 _READ_CHUNK_BYTES = 64 * 1024
 _WINDOWS_ABSOLUTE_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/])")
 _IGNORABLE_FSYNC_ERRORS = frozenset(
@@ -153,11 +155,29 @@ class StorageWriteResult:
     receipt_info: dict[str, Any]
 
 
+class ResolverRecordLike(Protocol):
+    """Structural protocol shared by model and CLI resolver records."""
+
+    resolver_id: str
+    exact_locations: Sequence[str]
+
+
+@dataclass(frozen=True)
+class _ResolverEntry:
+    resolver_id: str
+    exact_locations: tuple[str, ...]
+
+
 @dataclass(frozen=True)
 class _Snapshot:
     existed: bool
     payload: bytes | None
     mode: int | None
+    device: int | None = None
+    inode: int | None = None
+    size: int | None = None
+    mtime_ns: int | None = None
+    ctime_ns: int | None = None
 
 
 @dataclass(frozen=True)
@@ -217,6 +237,57 @@ def _is_within(path: Path, root: Path) -> bool:
         ) == _normalized_compare_path(root)
     except ValueError:
         return False
+
+
+def _resolve_storage_path(path: Path, *, reject_root_symlink: bool) -> Path:
+    """Resolve existing ancestors without trusting a symlinked output root."""
+
+    absolute = path.absolute()
+    resolved = Path(absolute.anchor)
+    pending = deque((part, False) for part in absolute.parts[1:])
+    seen: set[tuple[Path, tuple[tuple[str, bool], ...]]] = set()
+    links = 0
+    while pending:
+        part, from_link_target = pending.popleft()
+        if part in {"", "."}:
+            continue
+        if part == "..":
+            resolved = resolved.parent
+            continue
+        if part.casefold() == ".env":
+            raise ValueError("storage paths must not traverse .env")
+        candidate = resolved / part
+        try:
+            metadata = os.lstat(candidate)
+        except FileNotFoundError as error:
+            if from_link_target:
+                raise ValueError("storage path contains a broken symlink") from error
+            resolved = candidate
+            continue
+        except OSError as error:
+            raise ValueError("storage path could not be resolved safely") from error
+        if not stat.S_ISLNK(metadata.st_mode):
+            resolved = candidate
+            continue
+        if reject_root_symlink and not pending:
+            raise ValueError("storage output root must not be a symbolic link")
+        links += 1
+        state = (candidate, tuple(pending))
+        if links > 64 or state in seen:
+            raise ValueError("storage path contains a symbolic-link loop")
+        seen.add(state)
+        try:
+            target = Path(os.readlink(candidate))
+        except OSError as error:
+            raise ValueError("storage symlink could not be read safely") from error
+        target_parts = list(target.parts)
+        if target.is_absolute():
+            resolved = Path(target.anchor)
+            target_parts = target_parts[1:]
+        pending.extendleft(
+            reversed([(target_part, True) for target_part in target_parts])
+        )
+    return Path(os.path.normpath(resolved))
 
 
 def default_storage_paths(
@@ -300,8 +371,22 @@ def default_storage_paths(
         if private_root is not None
         else system_data_root / ".private"
     )
-    if vault_path is not None and _is_within(selected_private_root, vault_path):
-        raise ValueError("private resolver storage must be outside the selected Vault")
+    resolved_public_root = _resolve_storage_path(
+        selected_public_root, reject_root_symlink=True
+    )
+    resolved_private_root = _resolve_storage_path(
+        selected_private_root, reject_root_symlink=True
+    )
+    if vault_path is not None:
+        resolved_vault = _resolve_storage_path(vault_path, reject_root_symlink=True)
+        if not _is_within(resolved_public_root, resolved_vault):
+            raise ValueError("public storage must remain inside the selected Vault")
+        if _is_within(resolved_private_root, resolved_vault) or _is_within(
+            resolved_private_root, resolved_public_root
+        ):
+            raise ValueError(
+                "private resolver storage must be outside the selected Vault"
+            )
 
     selected_backup = (
         None
@@ -633,20 +718,17 @@ def discover_obsidian_vaults(
 
 
 def build_private_resolver_document(
-    paths: StoragePaths, resolver_records: Iterable[ResolverRecord]
+    paths: StoragePaths, resolver_records: Iterable[ResolverRecordLike]
 ) -> dict[str, Any]:
     """Build the deterministic private schema containing every exact location."""
 
-    merged: dict[str, set[str]] = {}
-    for record in resolver_records:
-        if not isinstance(record, ResolverRecord):
-            raise TypeError("resolver_records must contain ResolverRecord values")
-        if not record.resolver_id:
-            raise ValueError("resolver_id must not be empty")
-        merged.setdefault(record.resolver_id, set()).update(record.exact_locations)
+    entries = _resolver_entries(resolver_records)
     records = [
-        {"resolver_id": resolver_id, "exact_locations": sorted(locations)}
-        for resolver_id, locations in sorted(merged.items())
+        {
+            "resolver_id": entry.resolver_id,
+            "exact_locations": list(entry.exact_locations),
+        }
+        for entry in entries
     ]
     storage = {
         "public_root": os.fspath(paths.public_root),
@@ -662,6 +744,32 @@ def build_private_resolver_document(
     if paths.staging_root is not None:
         storage["staging_root"] = os.fspath(paths.staging_root)
     return {"schema_version": 1, "storage": storage, "records": records}
+
+
+def _resolver_entries(
+    resolver_records: Iterable[ResolverRecordLike],
+) -> tuple[_ResolverEntry, ...]:
+    by_id: dict[str, _ResolverEntry] = {}
+    for record in resolver_records:
+        resolver_id = getattr(record, "resolver_id", None)
+        locations_value = getattr(record, "exact_locations", None)
+        if not isinstance(resolver_id, str) or not resolver_id:
+            raise ValueError("resolver_id must be a non-empty string")
+        if isinstance(locations_value, (str, bytes)) or not isinstance(
+            locations_value, Sequence
+        ):
+            raise TypeError("exact_locations must be a sequence of strings")
+        locations = tuple(locations_value)
+        if any(not isinstance(location, str) for location in locations):
+            raise TypeError("exact_locations must contain strings")
+        entry = _ResolverEntry(resolver_id, locations)
+        previous = by_id.get(resolver_id)
+        if previous is not None and previous.exact_locations != locations:
+            raise ValueError(
+                f"conflicting resolver records for resolver_id {resolver_id!r}"
+            )
+        by_id[resolver_id] = entry
+    return tuple(by_id[resolver_id] for resolver_id in sorted(by_id))
 
 
 def _artifact_value(
@@ -700,7 +808,9 @@ def _coerce_artifacts(
     )
 
 
-def _exact_values(paths: StoragePaths, records: Iterable[ResolverRecord]) -> tuple[str, ...]:
+def _exact_values(
+    paths: StoragePaths, records: Iterable[ResolverRecordLike]
+) -> tuple[str, ...]:
     values = {
         os.fspath(paths.public_root),
         os.fspath(paths.map_path),
@@ -791,15 +901,83 @@ def _sha256(payload: bytes) -> str:
 
 def _target_snapshot(target: Path) -> _Snapshot:
     try:
-        metadata = os.lstat(target)
+        before = os.lstat(target)
     except FileNotFoundError:
         return _Snapshot(False, None, None)
-    if stat.S_ISLNK(metadata.st_mode):
+    except OSError as error:
+        raise ValueError(f"storage target could not be inspected: {target.name}") from error
+    if stat.S_ISLNK(before.st_mode):
         raise ValueError(f"refusing symbolic-link target: {target.name}")
-    if not stat.S_ISREG(metadata.st_mode):
+    if not stat.S_ISREG(before.st_mode):
         raise ValueError(f"storage target is not a regular file: {target.name}")
-    payload = target.read_bytes()
-    return _Snapshot(True, payload, stat.S_IMODE(metadata.st_mode))
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        descriptor = os.open(target, flags)
+    except OSError as error:
+        raise ValueError(f"storage target changed before opening: {target.name}") from error
+    try:
+        opened = os.fstat(descriptor)
+        before_evidence = (
+            before.st_dev,
+            before.st_ino,
+            before.st_mode,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        )
+        opened_evidence = (
+            opened.st_dev,
+            opened.st_ino,
+            opened.st_mode,
+            opened.st_size,
+            opened.st_mtime_ns,
+            opened.st_ctime_ns,
+        )
+        if not stat.S_ISREG(opened.st_mode) or opened_evidence != before_evidence:
+            raise ValueError(f"storage target changed while opening: {target.name}")
+        if opened.st_size > MAX_STORAGE_TARGET_BYTES:
+            raise ValueError(f"storage target exceeds the read limit: {target.name}")
+        chunks: list[bytes] = []
+        total = 0
+        while total <= MAX_STORAGE_TARGET_BYTES:
+            chunk = os.read(
+                descriptor,
+                min(_READ_CHUNK_BYTES, MAX_STORAGE_TARGET_BYTES + 1 - total),
+            )
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+        if total > MAX_STORAGE_TARGET_BYTES:
+            raise ValueError(f"storage target exceeds the read limit: {target.name}")
+        after = os.fstat(descriptor)
+        after_evidence = (
+            after.st_dev,
+            after.st_ino,
+            after.st_mode,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        )
+        if after_evidence != opened_evidence or total != opened.st_size:
+            raise ValueError(f"storage target changed while reading: {target.name}")
+        return _Snapshot(
+            True,
+            b"".join(chunks),
+            stat.S_IMODE(opened.st_mode),
+            opened.st_dev,
+            opened.st_ino,
+            opened.st_size,
+            opened.st_mtime_ns,
+            opened.st_ctime_ns,
+        )
+    finally:
+        os.close(descriptor)
 
 
 def _prepare_root(root: Path) -> None:
@@ -902,7 +1080,7 @@ def _restore_snapshot(target: Path, snapshot: _Snapshot) -> None:
 def write_storage_bundle(
     paths: StoragePaths,
     artifacts: PublicArtifacts | Mapping[str, Any],
-    resolver_records: Iterable[ResolverRecord],
+    resolver_records: Iterable[ResolverRecordLike],
     failure_injector: Callable[[str, Path], None] | None = None,
 ) -> StorageWriteResult:
     """Atomically replace a complete bundle and roll back every caught failure.
@@ -914,10 +1092,7 @@ def write_storage_bundle(
     if not isinstance(paths, StoragePaths):
         raise TypeError("paths must be a StoragePaths value")
     public_artifacts = _coerce_artifacts(artifacts)
-    records = tuple(resolver_records)
-    for record in records:
-        if not isinstance(record, ResolverRecord):
-            raise TypeError("resolver_records must contain ResolverRecord values")
+    records = _resolver_entries(resolver_records)
 
     exact_values = _exact_values(paths, records)
     map_payload = _sanitize_markdown_document(
@@ -1014,16 +1189,22 @@ def write_storage_bundle(
         _fsync_directory(public_stage)
         _fsync_directory(private_stage)
 
+        replaced_targets: list[_PreparedTarget] = []
         try:
             for target in prepared:
                 if failure_injector is not None:
                     failure_injector(target.label, target.target)
+                if _target_snapshot(target.target) != snapshots[target.target]:
+                    raise RuntimeError(
+                        f"storage target changed concurrently: {target.label}"
+                    )
                 os.replace(staged[target.label], target.target)
+                replaced_targets.append(target)
                 os.chmod(target.target, target.mode, follow_symlinks=False)
                 _fsync_directory(target.target.parent)
         except BaseException as original_error:
             rollback_errors: list[BaseException] = []
-            for target in reversed(prepared):
+            for target in reversed(replaced_targets):
                 try:
                     _restore_snapshot(target.target, snapshots[target.target])
                 except BaseException as rollback_error:
