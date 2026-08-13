@@ -299,6 +299,23 @@ def _phrase_matches(phrase: str, value: str, text_tokens: frozenset[str]) -> boo
     return re.search(pattern, normalized_value) is not None
 
 
+def _cjk_query_phrase_matches(term: str, value: str) -> bool:
+    """Match multi-character CJK scene terms without enabling single-char noise."""
+
+    normalized_term = unicodedata.normalize("NFKC", term).casefold()
+    if len(normalized_term) < 2:
+        return False
+    if not any("\u3400" <= character <= "\ufaff" for character in normalized_term):
+        return False
+    normalized_value = unicodedata.normalize("NFKC", value).casefold()
+    return normalized_term in normalized_value
+
+
+def _contains_cjk(value: str) -> bool:
+    normalized = unicodedata.normalize("NFKC", value)
+    return any("\u3400" <= character <= "\ufaff" for character in normalized)
+
+
 def _field_match(
     value: str,
     scene: SceneDefinition,
@@ -310,17 +327,36 @@ def _field_match(
         return 0.0, ()
     text_tokens = _tokens(value)
     matched: list[str] = []
+    phrase_evidence: set[str] = set()
     for term in scene.keywords:
+        if field_name == "query" and _contains_cjk(term):
+            if _cjk_query_phrase_matches(term, value):
+                matched.append(term)
+                phrase_evidence.add(term)
+            continue
         if _term_matches(term, text_tokens):
             matched.append(term)
     for phrase in scene.phrases:
-        if _phrase_matches(phrase, value, text_tokens):
+        if field_name == "query" and _contains_cjk(phrase):
+            phrase_matched = _cjk_query_phrase_matches(phrase, value)
+        else:
+            phrase_matched = _phrase_matches(phrase, value, text_tokens)
+        if phrase_matched:
             matched.append(phrase)
+            if field_name == "query":
+                phrase_evidence.add(phrase)
     distinct = tuple(sorted(set(matched)))
     if not distinct:
         return 0.0, ()
     strength = min(2.5, 1.0 + 0.35 * (len(distinct) - 1))
-    evidence = tuple(f"{field_name}:{term}" for term in distinct[:8])
+    evidence = tuple(
+        (
+            f"{field_name}:phrase:{term}"
+            if term in phrase_evidence
+            else f"{field_name}:{term}"
+        )
+        for term in distinct[:8]
+    )
     return weight * strength, evidence
 
 
@@ -460,14 +496,15 @@ def classify_capabilities(
     return tuple(result)
 
 
-def _score_query_scene(query: str, scene: SceneDefinition) -> float:
-    score, _ = _field_match(
+def _score_query_scene(
+    query: str, scene: SceneDefinition
+) -> tuple[float, tuple[str, ...]]:
+    return _field_match(
         query,
         scene,
         field_name="query",
         weight=1.0,
     )
-    return score
 
 
 def _direct_query_evidence(
@@ -557,11 +594,13 @@ def route_query(
         classified = tuple(computed_by_id.get(item.id, item) for item in original)
 
     query_tokens = _tokens(safe_query)
-    query_scene_scores = {
+    query_scene_matches = {
         scene.id: _score_query_scene(safe_query, scene) for scene in scenes
     }
-    query_scene_scores = {
-        scene_id: score for scene_id, score in query_scene_scores.items() if score > 0.0
+    query_scene_matches = {
+        scene_id: match
+        for scene_id, match in query_scene_matches.items()
+        if match[0] > 0.0
     }
     scene_by_id = {scene.id: scene for scene in scenes}
     ranked: list[RouteMatch] = []
@@ -570,16 +609,18 @@ def route_query(
             query_tokens, capability
         )
         relevant_scenes = tuple(
-            sorted(set(capability.scenes).intersection(query_scene_scores))
+            sorted(set(capability.scenes).intersection(query_scene_matches))
         )
         if not relevant_scenes and direct_score < 2.0:
             continue
         score = direct_score
         evidence = list(direct_evidence)
         for scene_id in relevant_scenes:
-            affinity = min(1.5, 0.75 + query_scene_scores[scene_id] / 2.0)
+            scene_score, query_evidence = query_scene_matches[scene_id]
+            affinity = min(1.5, 0.75 + scene_score / 2.0)
             score += 6.0 * capability.classification_confidence * affinity
             evidence.append(f"scene:{scene_id}")
+            evidence.extend(query_evidence)
             _, capability_evidence = _score_capability_scene(
                 capability, scene_by_id[scene_id]
             )

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
@@ -11,11 +12,63 @@ from typing import Any
 
 from .classify import SceneDefinition, load_taxonomy
 from .models import Capability, Diagnostic, InventoryMetadata
-from .sanitize import sanitize, sanitize_text
+from .sanitize import REDACTED, sanitize, sanitize_text
 
 
 DEFAULT_PRESENTATION_CAP = 6
 _MARKDOWN_META_RE = re.compile(r"([`*_\[\]<>#+.!()])")
+
+
+def _sensitive_public_key(value: str) -> bool:
+    expanded = re.sub(
+        r"(?<=[a-z0-9])(?=[A-Z])",
+        "_",
+        unicodedata.normalize("NFKC", value),
+    ).casefold()
+    parts = tuple(re.findall(r"[a-z0-9]+", expanded))
+    sensitive_parts = {
+        "authorization",
+        "cookie",
+        "credential",
+        "credentials",
+        "password",
+        "secret",
+        "token",
+    }
+    if any(part in sensitive_parts for part in parts):
+        return True
+    pairs = set(zip(parts, parts[1:]))
+    return bool(
+        pairs.intersection(
+            {
+                ("api", "key"),
+                ("auth", "header"),
+                ("private", "key"),
+            }
+        )
+    )
+
+
+def _strict_public_sanitize(value: Any) -> Any:
+    """Sanitize recursively, then redact values for broad secret-key families."""
+
+    safe = sanitize(value)
+
+    def redact_keyed_values(item: Any) -> Any:
+        if isinstance(item, dict):
+            return {
+                key: (
+                    REDACTED
+                    if _sensitive_public_key(key)
+                    else redact_keyed_values(child)
+                )
+                for key, child in item.items()
+            }
+        if isinstance(item, list):
+            return [redact_keyed_values(child) for child in item]
+        return item
+
+    return redact_keyed_values(safe)
 
 
 def _capabilities(values: Iterable[Capability]) -> tuple[Capability, ...]:
@@ -30,6 +83,12 @@ def _capabilities(values: Iterable[Capability]) -> tuple[Capability, ...]:
                 item.name.casefold(),
                 item.name,
                 item.id,
+                json.dumps(
+                    item.to_public_dict(),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
             ),
         )
     )
@@ -90,9 +149,16 @@ def _public_metadata(
 def _deduplicate_diagnostics(
     values: Iterable[Diagnostic],
 ) -> tuple[Diagnostic, ...]:
+    """Deduplicate identical strict-public diagnostics by canonical JSON."""
+
     unique: dict[str, Diagnostic] = {}
     for item in values:
-        key = json.dumps(item.to_public_dict(), ensure_ascii=False, sort_keys=True)
+        key = json.dumps(
+            _strict_public_sanitize(item.to_public_dict()),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
         unique[key] = item
     return tuple(unique[key] for key in sorted(unique))
 
@@ -114,8 +180,13 @@ def _inventory_payload(
 ) -> dict[str, Any]:
     ordered = _capabilities(capabilities)
     public_metadata, embedded = _public_metadata(metadata, len(ordered))
+    capability_diagnostics = tuple(
+        diagnostic
+        for capability in ordered
+        for diagnostic in capability.diagnostics
+    )
     global_diagnostics = _deduplicate_diagnostics(
-        (*embedded, *_diagnostics(diagnostics))
+        (*embedded, *_diagnostics(diagnostics), *capability_diagnostics)
     )
     public_capabilities = [item.to_public_dict() for item in ordered]
     unclassified = [
@@ -145,7 +216,9 @@ def render_inventory_json(
 ) -> str:
     """Render the complete sanitized inventory; presentation caps never apply."""
 
-    payload = sanitize(_inventory_payload(capabilities, metadata, diagnostics))
+    payload = _strict_public_sanitize(
+        _inventory_payload(capabilities, metadata, diagnostics)
+    )
     return json.dumps(
         payload,
         ensure_ascii=False,
@@ -224,8 +297,13 @@ def render_capability_map_markdown(
     ordered = _capabilities(capabilities)
     scenes = _taxonomy(taxonomy, taxonomy_path)
     public_metadata, embedded = _public_metadata(metadata, len(ordered))
+    capability_diagnostics = tuple(
+        diagnostic
+        for capability in ordered
+        for diagnostic in capability.diagnostics
+    )
     global_diagnostics = _deduplicate_diagnostics(
-        (*embedded, *_diagnostics(diagnostics))
+        (*embedded, *_diagnostics(diagnostics), *capability_diagnostics)
     )
     diagnostic_counts = _diagnostic_summary(global_diagnostics)
     unclassified = tuple(item for item in ordered if not item.scenes)

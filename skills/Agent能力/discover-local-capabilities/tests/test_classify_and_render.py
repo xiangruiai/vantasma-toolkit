@@ -248,6 +248,44 @@ class QueryRoutingTests(unittest.TestCase):
 
         self.assertIn("Mixed Case Runner", result.unresolved.names)
 
+    def test_chinese_query_phrases_route_to_english_evidenced_capabilities(self) -> None:
+        project = capability(
+            "Milestone Planning Specialist",
+            description="Manage project milestones, roadmaps, and task planning.",
+            tags=("project management", "milestone planning"),
+        )
+        automation = capability(
+            "Workflow Automation Specialist",
+            description="Automate scheduled workflows and event triggers.",
+            tags=("automation", "workflow"),
+        )
+        infrastructure = capability(
+            "Infrastructure Deployment Specialist",
+            description="Deploy and operate cloud infrastructure and servers.",
+            tags=("cloud infrastructure", "deployment"),
+        )
+        classified = classify_capabilities(
+            (infrastructure, automation, project), taxonomy_path=TAXONOMY_PATH
+        )
+        cases = (
+            ("帮我查看里程碑", project.id, "query:phrase:里程碑"),
+            ("请做自动化处理", automation.id, "query:phrase:自动化"),
+            ("检查基础设施", infrastructure.id, "query:phrase:基础设施"),
+        )
+
+        for query, expected_id, expected_evidence in cases:
+            with self.subTest(query=query):
+                result = route_query(
+                    query, classified, taxonomy_path=TAXONOMY_PATH
+                )
+                self.assertEqual(result.matches[0].id, expected_id)
+                self.assertIn(expected_evidence, result.matches[0].evidence)
+
+        one_character = route_query(
+            "项", classified, taxonomy_path=TAXONOMY_PATH
+        )
+        self.assertEqual(one_character.matches, ())
+
 
 class PublicRenderingTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -431,6 +469,117 @@ class PublicRenderingTests(unittest.TestCase):
         self.assertEqual(report_one, report_two)
         self.assertEqual(len(json.loads(inventory_one)["capabilities"]), 2_000)
         self.assertLess(elapsed, 5.0)
+
+    def test_strict_public_render_redacts_sensitive_diagnostic_key_families(self) -> None:
+        canaries = tuple(f"sensitive-value-{index}-937461" for index in range(7))
+        diagnostic = Diagnostic(
+            "warning",
+            "sensitive_details",
+            "Synthetic diagnostic.",
+            {
+                "access_token": canaries[0],
+                "client-secret": canaries[1],
+                "authorization": canaries[2],
+                "auth_header": canaries[3],
+                "nested": {
+                    "cookie": canaries[4],
+                    "private_key_pem": canaries[5],
+                    "credential_hint": canaries[6],
+                },
+            },
+        )
+        item = capability(
+            "Diagnostic Carrier",
+            diagnostics=(diagnostic,),
+        )
+
+        inventory = render_inventory_json((item,), self.metadata, (diagnostic,))
+        markdown = render_capability_map_markdown(
+            (item,),
+            self.metadata,
+            (diagnostic,),
+            taxonomy_path=TAXONOMY_PATH,
+        )
+
+        for canary in canaries:
+            self.assertNotIn(canary, inventory)
+            self.assertNotIn(canary, markdown)
+        self.assertGreaterEqual(inventory.count("<redacted>"), len(canaries))
+
+    def test_diagnostic_summary_merges_all_sources_and_deduplicates(self) -> None:
+        shared = Diagnostic("warning", "shared", "Repeated source diagnostic.")
+        metadata_only = Diagnostic("info", "metadata_only", "Metadata diagnostic.")
+        top_only = Diagnostic("error", "top_only", "Top-level diagnostic.")
+        capability_only = Diagnostic(
+            "warning", "capability_only", "Capability diagnostic."
+        )
+        item = capability(
+            "Diagnostic Sources",
+            diagnostics=(shared, capability_only),
+        )
+        metadata = InventoryMetadata(
+            generated_at="2026-08-14T00:00:00Z",
+            capability_count=1,
+            diagnostics=(shared, metadata_only),
+        )
+
+        inventory = render_inventory_json(
+            (item,), metadata, (shared, top_only)
+        )
+        markdown = render_capability_map_markdown(
+            (item,),
+            metadata,
+            (shared, top_only),
+            taxonomy_path=TAXONOMY_PATH,
+        )
+        parsed = json.loads(inventory)
+
+        self.assertEqual(parsed["summary"]["diagnostics"]["total"], 4)
+        self.assertEqual(len(parsed["diagnostics"]), 4)
+        self.assertEqual(
+            set(parsed["summary"]["diagnostics"]["by_code"]),
+            {"shared", "metadata_only", "top_only", "capability_only"},
+        )
+        self.assertIn("共 4 条诊断", markdown)
+
+    def test_capability_tie_sort_uses_complete_public_record(self) -> None:
+        first = capability(
+            "Same Identity",
+            description="Alpha research workflow.",
+            tags=("research",),
+        )
+        second = capability(
+            "Same Identity",
+            description="Bravo research workflow.",
+            tags=("research",),
+        )
+        self.assertEqual(first.id, second.id)
+        classified = classify_capabilities(
+            (first, second), taxonomy_path=TAXONOMY_PATH
+        )
+
+        inventory_forward = render_inventory_json(
+            classified, self.metadata, ()
+        )
+        inventory_reverse = render_inventory_json(
+            tuple(reversed(classified)), self.metadata, ()
+        )
+        markdown_forward = render_capability_map_markdown(
+            classified,
+            self.metadata,
+            (),
+            taxonomy_path=TAXONOMY_PATH,
+        )
+        markdown_reverse = render_capability_map_markdown(
+            tuple(reversed(classified)),
+            self.metadata,
+            (),
+            taxonomy_path=TAXONOMY_PATH,
+        )
+
+        self.assertEqual(inventory_forward, inventory_reverse)
+        self.assertEqual(markdown_forward, markdown_reverse)
+        self.assertEqual(len(json.loads(inventory_forward)["capabilities"]), 2)
 
 
 if __name__ == "__main__":
