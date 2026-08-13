@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -62,6 +63,7 @@ class _Occurrence:
     logical_parts: tuple[str, ...]
     source: SourceLocation
     origin_key: str
+    via_symlink: bool
 
 
 class _UnsupportedFrontmatter(ValueError):
@@ -75,8 +77,11 @@ def _symlink_failure_code(error: BaseException) -> str:
 
 
 def _safe_location(prefix: str, parts: tuple[str, ...]) -> str:
-    suffix = "/".join(parts)
-    return prefix if not suffix else f"{prefix.rstrip('/')}/{suffix}"
+    if not parts:
+        return prefix
+    if prefix.startswith("<"):
+        return prefix + "::" + "::".join(parts)
+    return prefix.rstrip("/") + "/" + "/".join(parts)
 
 
 def _diagnostic(
@@ -99,6 +104,10 @@ def _contained_by(path: Path, roots: tuple[Path, ...]) -> bool:
     return False
 
 
+def _has_env_segment(path: Path) -> bool:
+    return ".env" in path.parts
+
+
 def _physical_key(path: Path) -> tuple[str, ...]:
     stat_result = path.stat()
     inode = getattr(stat_result, "st_ino", 0)
@@ -115,6 +124,7 @@ def _effective_scope(root: RootSpec, logical_parts: tuple[str, ...]) -> str:
 def _walk_root(
     root: RootSpec,
     allowed_roots: tuple[Path, ...],
+    root_is_symlink: bool,
 ) -> tuple[list[_Occurrence], list[Diagnostic]]:
     occurrences: list[_Occurrence] = []
     diagnostics: list[Diagnostic] = []
@@ -123,6 +133,7 @@ def _walk_root(
         visible_directory: Path,
         logical_parts: tuple[str, ...],
         ancestors: frozenset[tuple[str, ...]],
+        reached_via_symlink: bool,
     ) -> None:
         public_directory = _safe_location(root.public_prefix, logical_parts)
         try:
@@ -185,6 +196,15 @@ def _walk_root(
                             )
                         )
                         continue
+                    if _has_env_segment(resolved):
+                        diagnostics.append(
+                            _diagnostic(
+                                "env_path_blocked",
+                                "A symbolic link resolving through .env was skipped without reading it.",
+                                location=public_child,
+                            )
+                        )
+                        continue
                     if not _contained_by(resolved, allowed_roots):
                         diagnostics.append(
                             _diagnostic(
@@ -195,13 +215,18 @@ def _walk_root(
                         )
                         continue
                     if resolved.is_dir():
-                        walk(visible_path, child_parts, next_ancestors)
+                        walk(visible_path, child_parts, next_ancestors, True)
                         continue
                     if entry.name != "SKILL.md" or not resolved.is_file():
                         continue
                     real_file = resolved
                 elif entry.is_dir(follow_symlinks=False):
-                    walk(visible_path, child_parts, next_ancestors)
+                    walk(
+                        visible_path,
+                        child_parts,
+                        next_ancestors,
+                        reached_via_symlink,
+                    )
                     continue
                 elif entry.name == "SKILL.md" and entry.is_file(
                     follow_symlinks=False
@@ -236,10 +261,11 @@ def _walk_root(
                     logical_parts=skill_parts,
                     source=source,
                     origin_key=f"{root.logical_key}:{relative_key}",
+                    via_symlink=reached_via_symlink or is_link,
                 )
             )
 
-    walk(root.path, (), frozenset())
+    walk(root.path, (), frozenset(), root_is_symlink)
     return occurrences, diagnostics
 
 
@@ -262,6 +288,33 @@ def _parse_quoted_scalar(value: str) -> str:
         raise _UnsupportedFrontmatter("mismatched scalar quotes")
     if value.startswith(("[", "{", "&", "*", "!")):
         raise _UnsupportedFrontmatter("unsupported scalar syntax")
+    return value
+
+
+def _strip_yaml_inline_comment(value: str) -> str:
+    quote: str | None = None
+    escaped = False
+    index = 0
+    while index < len(value):
+        character = value[index]
+        if quote == '"':
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = None
+        elif quote == "'":
+            if character == quote:
+                if index + 1 < len(value) and value[index + 1] == quote:
+                    index += 1
+                else:
+                    quote = None
+        elif character in {"'", '"'}:
+            quote = character
+        elif character == "#" and (index == 0 or value[index - 1].isspace()):
+            return value[:index].rstrip()
+        index += 1
     return value
 
 
@@ -356,7 +409,9 @@ def _parse_metadata_subset(frontmatter: str) -> dict[str, object]:
         if match is None:
             raise _UnsupportedFrontmatter("unsupported top-level YAML syntax")
         key = match.group(1)
-        raw_value = (match.group(2) or "").strip()
+        raw_value = _strip_yaml_inline_comment(
+            (match.group(2) or "").strip()
+        )
         index += 1
         if key not in _METADATA_FIELDS:
             if not raw_value or raw_value in {"|", ">"}:
@@ -527,11 +582,46 @@ def _skill_metadata(path: Path, fallback_name: str) -> _SkillMetadata:
     )
 
 
-def _logical_identity(occurrences: list[_Occurrence]) -> str:
-    evidence = sorted({occurrence.origin_key for occurrence in occurrences})
-    encoded = json.dumps(evidence, ensure_ascii=False, separators=(",", ":")).encode(
-        "utf-8"
+def _occurrence_order(occurrence: _Occurrence) -> tuple[object, ...]:
+    return (
+        occurrence.via_symlink,
+        _SCOPE_PRIORITY.get(occurrence.source.scope, 99),
+        occurrence.source.provider.casefold(),
+        occurrence.origin_key,
     )
+
+
+def _logical_identity(
+    occurrences: list[_Occurrence], canonical: _Occurrence
+) -> str:
+    """Hash path-independent physical evidence, with a deterministic fallback.
+
+    A non-symlink occurrence is canonical before aliases. File IDs make identity
+    invariant to the visible entry set and distinguish byte-identical copies.
+    Filesystems without file IDs fall back to a canonical logical origin plus
+    non-sensitive stat evidence, never a real or absolute path.
+    """
+
+    physical_key = occurrences[0].physical_key
+    if physical_key[0] == "inode":
+        evidence: dict[str, object] = {
+            "kind": "file-id",
+            "device": physical_key[1],
+            "file_id": physical_key[2],
+        }
+    else:
+        stat_result = canonical.real_file.stat()
+        evidence = {
+            "kind": "logical-stat-fallback",
+            "origin": canonical.origin_key,
+            "device": str(getattr(stat_result, "st_dev", 0)),
+            "size": stat_result.st_size,
+            "modified_ns": getattr(stat_result, "st_mtime_ns", 0),
+            "changed_ns": getattr(stat_result, "st_ctime_ns", 0),
+        }
+    encoded = json.dumps(
+        evidence, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
     return "skill-origin-v1:" + hashlib.sha256(encoded).hexdigest()
 
 
@@ -540,30 +630,77 @@ def discover_skills(roots: list[RootSpec] | tuple[RootSpec, ...]) -> SkillDiscov
 
     root_specs = tuple(roots)
     global_diagnostics: list[Diagnostic] = []
-    resolved_roots: list[tuple[RootSpec, Path]] = []
+    resolved_roots: list[tuple[RootSpec, Path, bool]] = []
     for root in root_specs:
         try:
-            real_root = root.path.resolve(strict=True)
-            if not real_root.is_dir():
-                continue
-        except OSError:
-            if root.path.is_symlink():
-                global_diagnostics.append(
-                    _diagnostic(
-                        "broken_symlink",
-                        "A configured Skill root is a broken symbolic link.",
-                        location=root.public_prefix,
-                    )
-                )
+            source_stat = os.lstat(root.path)
+        except FileNotFoundError:
             continue
-        resolved_roots.append((root, real_root))
+        except OSError:
+            global_diagnostics.append(
+                _diagnostic(
+                    "root_stat_error",
+                    "A configured Skill root could not be inspected.",
+                    location=root.public_prefix,
+                )
+            )
+            continue
+        root_is_link = stat.S_ISLNK(source_stat.st_mode)
+        try:
+            real_root = root.path.resolve(strict=True)
+        except (OSError, RuntimeError) as error:
+            if root_is_link and _symlink_failure_code(error) == "symlink_loop":
+                code = "root_symlink_loop"
+                message = "A configured Skill root contains a symbolic link loop."
+            elif root_is_link and isinstance(error, FileNotFoundError):
+                code = "broken_symlink"
+                message = "A configured Skill root is a broken symbolic link."
+            else:
+                code = "root_resolve_error"
+                message = "A configured Skill root could not be resolved."
+            global_diagnostics.append(
+                _diagnostic(code, message, location=root.public_prefix)
+            )
+            continue
+        try:
+            target_stat = real_root.stat()
+        except OSError:
+            global_diagnostics.append(
+                _diagnostic(
+                    "root_stat_error",
+                    "A configured Skill root target could not be inspected.",
+                    location=root.public_prefix,
+                )
+            )
+            continue
+        if not stat.S_ISDIR(target_stat.st_mode):
+            global_diagnostics.append(
+                _diagnostic(
+                    "root_not_directory",
+                    "A configured Skill root is not a directory.",
+                    location=root.public_prefix,
+                )
+            )
+            continue
+        if _has_env_segment(real_root):
+            global_diagnostics.append(
+                _diagnostic(
+                    "env_path_blocked",
+                    "A configured Skill root resolving through .env was skipped without reading it.",
+                    location=root.public_prefix,
+                )
+            )
+            continue
+        resolved_roots.append((root, real_root, root_is_link))
     allowed_roots = tuple(
-        sorted({real for _, real in resolved_roots}, key=lambda path: str(path))
+        sorted({real for _, real, _ in resolved_roots}, key=lambda path: str(path))
     )
 
     grouped: dict[tuple[str, ...], list[_Occurrence]] = {}
-    for root, _ in resolved_roots:
-        root_occurrences, root_diagnostics = _walk_root(root, allowed_roots)
+    for root, _, root_is_link in resolved_roots:
+        root_occurrences, root_diagnostics = _walk_root(
+            root, allowed_roots, root_is_link
+        )
         global_diagnostics.extend(root_diagnostics)
         for occurrence in root_occurrences:
             grouped.setdefault(occurrence.physical_key, []).append(occurrence)
@@ -572,11 +709,7 @@ def discover_skills(roots: list[RootSpec] | tuple[RootSpec, ...]) -> SkillDiscov
     for occurrences in grouped.values():
         ordered_occurrences = sorted(
             occurrences,
-            key=lambda occurrence: (
-                _SCOPE_PRIORITY.get(occurrence.source.scope, 99),
-                occurrence.source.provider.casefold(),
-                occurrence.origin_key,
-            ),
+            key=_occurrence_order,
         )
         representative = ordered_occurrences[0]
         metadata = _skill_metadata(
@@ -611,7 +744,7 @@ def discover_skills(roots: list[RootSpec] | tuple[RootSpec, ...]) -> SkillDiscov
             scope=representative.source.scope,
             provider=representative.source.provider,
             diagnostics=item_diagnostics,
-            logical_identity=_logical_identity(occurrences),
+            logical_identity=_logical_identity(occurrences, representative),
         )
         exact_locations = {
             str(occurrence.visible_file) for occurrence in occurrences

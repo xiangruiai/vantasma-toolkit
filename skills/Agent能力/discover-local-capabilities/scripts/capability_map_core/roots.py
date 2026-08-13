@@ -116,15 +116,25 @@ def skill_root_specs(
         if claude_override
         else injected_home / ".claude"
     )
-    codex_public_home = "<codex-home>" if codex_override else "~/.codex"
-    claude_public_home = "<claude-home>" if claude_override else "~/.claude"
+    codex_skill_prefix = (
+        "<codex-home:skills>" if codex_override else "~/.codex/skills"
+    )
+    claude_skill_prefix = (
+        "<claude-home:skills>" if claude_override else "~/.claude/skills"
+    )
+    codex_plugin_prefix = (
+        "<codex-home:plugins>" if codex_override else "~/.codex/plugins"
+    )
+    claude_plugin_prefix = (
+        "<claude-home:plugins>" if claude_override else "~/.claude/plugins"
+    )
     roots: list[RootSpec] = [
         RootSpec(
             codex_home / "skills",
             "user",
             "codex",
             "user:codex",
-            f"{codex_public_home}/skills",
+            codex_skill_prefix,
         ),
         RootSpec(
             injected_home / ".agents" / "skills",
@@ -138,21 +148,21 @@ def skill_root_specs(
             "user",
             "claude",
             "user:claude",
-            f"{claude_public_home}/skills",
+            claude_skill_prefix,
         ),
         RootSpec(
             codex_home / "plugins",
             "plugin",
             "codex-plugin",
             "plugin:codex",
-            f"{codex_public_home}/plugins",
+            codex_plugin_prefix,
         ),
         RootSpec(
             claude_home / "plugins",
             "plugin",
             "claude-plugin",
             "plugin:claude",
-            f"{claude_public_home}/plugins",
+            claude_plugin_prefix,
         ),
     ]
     if project is not None:
@@ -164,21 +174,21 @@ def skill_root_specs(
                     "project",
                     "codex",
                     "project:codex",
-                    "<project>/.codex/skills",
+                    "<project:codex-skills>",
                 ),
                 RootSpec(
                     project_root / ".agents" / "skills",
                     "project",
                     "shared",
                     "project:shared",
-                    "<project>/.agents/skills",
+                    "<project:shared-skills>",
                 ),
                 RootSpec(
                     project_root / ".claude" / "skills",
                     "project",
                     "claude",
                     "project:claude",
-                    "<project>/.claude/skills",
+                    "<project:claude-skills>",
                 ),
             )
         )

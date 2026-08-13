@@ -195,6 +195,35 @@ class SkillDiscoveryTests(unittest.TestCase):
                 {diagnostic.code for diagnostic in invalid.diagnostics},
             )
 
+    def test_yaml_comments_are_removed_only_outside_quoted_scalars(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "skills"
+            write_skill(
+                root / "plain",
+                frontmatter=(
+                    "name: alpha # unquoted comment\n"
+                    "description: plain description # another comment"
+                ),
+            )
+            write_skill(
+                root / "quoted",
+                frontmatter=(
+                    'name: "alpha # literal" # trailing comment\n'
+                    "description: 'quoted # literal' # trailing comment"
+                ),
+            )
+
+            result = discover_skills(
+                [RootSpec(root, "extra", "fixtures", "extra:fixtures", "<extra>")]
+            )
+
+            by_name = {capability.name: capability for capability in result.capabilities}
+            self.assertEqual(set(by_name), {"alpha", "alpha # literal"})
+            self.assertEqual(by_name["alpha"].description, "plain description")
+            self.assertEqual(
+                by_name["alpha # literal"].description, "quoted # literal"
+            )
+
     def test_reads_only_a_bounded_skill_frontmatter_prefix_and_never_env(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "skills"
@@ -308,6 +337,63 @@ class SkillDiscoveryTests(unittest.TestCase):
             public_json = json.dumps(capability.to_public_dict(), ensure_ascii=False)
             self.assertNotIn(str(base), public_json)
 
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are required")
+    def test_symlink_targets_with_env_segments_are_never_read_or_traversed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "skills"
+            file_case = root / "file-case"
+            file_case.mkdir(parents=True)
+            env_file = file_case / ".env"
+            env_file.write_bytes(
+                b"---\nname: forbidden-file-target\n---\nprivate target bytes"
+            )
+            linked_skill = file_case / "skill"
+            linked_skill.mkdir()
+            (linked_skill / "SKILL.md").symlink_to("../.env")
+
+            env_directory = root / "directory-case" / ".env"
+            write_skill(
+                env_directory / "nested" / "skill",
+                frontmatter="name: forbidden-directory-target",
+            )
+            (root / "directory-case" / "exposed").symlink_to(
+                env_directory, target_is_directory=True
+            )
+            write_skill(root / "healthy", frontmatter="name: healthy")
+            real_open = open
+            real_scandir = os.scandir
+            env_reads: list[Path] = []
+            env_scans: list[Path] = []
+
+            def recording_open(
+                path: object, *args: object, **kwargs: object
+            ) -> object:
+                resolved = Path(path).resolve(strict=True)  # type: ignore[arg-type]
+                if ".env" in resolved.parts:
+                    env_reads.append(resolved)
+                return real_open(path, *args, **kwargs)
+
+            def recording_scandir(path: object) -> object:
+                resolved = Path(path).resolve(strict=True)  # type: ignore[arg-type]
+                if ".env" in resolved.parts:
+                    env_scans.append(resolved)
+                return real_scandir(path)
+
+            with mock.patch(
+                "capability_map_core.skills.open", recording_open
+            ), mock.patch("capability_map_core.skills.os.scandir", recording_scandir):
+                result = discover_skills(
+                    [RootSpec(root, "extra", "fixtures", "extra:fixtures", "<extra>")]
+                )
+
+            self.assertEqual([item.name for item in result.capabilities], ["healthy"])
+            self.assertEqual(env_reads, [])
+            self.assertEqual(env_scans, [])
+            self.assertGreaterEqual(
+                [item.code for item in result.diagnostics].count("env_path_blocked"),
+                2,
+            )
+
     def test_same_metadata_on_distinct_physical_skills_has_distinct_ids(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
@@ -326,6 +412,89 @@ class SkillDiscoveryTests(unittest.TestCase):
             self.assertEqual(len(result.capabilities), 2)
             self.assertEqual(len({item.id for item in result.capabilities}), 2)
             self.assertEqual(len({item.resolver_id for item in result.capabilities}), 2)
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are required")
+    def test_adding_an_earlier_alias_does_not_change_physical_skill_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "skills"
+            physical_directory = root / "z-canonical"
+            write_skill(
+                physical_directory,
+                frontmatter="name: stable-physical\ndescription: stable",
+            )
+            roots = [
+                RootSpec(root, "extra", "fixtures", "root:fixtures", "<root>")
+            ]
+
+            before = discover_skills(roots)
+            (root / "a-earlier-alias").symlink_to(
+                physical_directory, target_is_directory=True
+            )
+            after = discover_skills(roots)
+
+            self.assertEqual(len(before.capabilities), 1)
+            self.assertEqual(len(after.capabilities), 1)
+            self.assertEqual(before.capabilities[0].id, after.capabilities[0].id)
+            self.assertEqual(
+                before.capabilities[0].resolver_id,
+                after.capabilities[0].resolver_id,
+            )
+            self.assertEqual(len(after.capabilities[0].source_locations), 2)
+
+    def test_identical_physical_copies_never_collide_across_root_namespaces(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            first_root = base / "first"
+            second_root = base / "second"
+            metadata = "name: identical-copy\ndescription: byte-for-byte identical"
+            write_skill(first_root / "same-relative", frontmatter=metadata)
+            write_skill(second_root / "same-relative", frontmatter=metadata)
+
+            distinct_namespaces = discover_skills(
+                [
+                    RootSpec(
+                        first_root,
+                        "extra",
+                        "same-provider",
+                        "extra:one",
+                        "<one>",
+                    ),
+                    RootSpec(
+                        second_root,
+                        "extra",
+                        "same-provider",
+                        "extra:two",
+                        "<two>",
+                    ),
+                ]
+            )
+            same_namespace_evidence = discover_skills(
+                [
+                    RootSpec(
+                        first_root,
+                        "extra",
+                        "same-provider",
+                        "extra:duplicate",
+                        "<one>",
+                    ),
+                    RootSpec(
+                        second_root,
+                        "extra",
+                        "same-provider",
+                        "extra:duplicate",
+                        "<two>",
+                    ),
+                ]
+            )
+
+            self.assertEqual(len(distinct_namespaces.capabilities), 2)
+            self.assertEqual(
+                len({item.id for item in distinct_namespaces.capabilities}), 2
+            )
+            self.assertEqual(len(same_namespace_evidence.capabilities), 2)
+            self.assertEqual(
+                len({item.id for item in same_namespace_evidence.capabilities}), 2
+            )
 
     @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are required")
     def test_symlinks_follow_allowed_roots_but_report_loops_breakage_and_escape(self) -> None:
@@ -412,6 +581,124 @@ class SkillDiscoveryTests(unittest.TestCase):
                 "skill_read_error",
                 {diagnostic.code for diagnostic in unreadable_capability.diagnostics},
             )
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are required")
+    def test_root_stat_resolve_readlink_and_scandir_errors_are_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            stat_denied = base / "stat-denied"
+            resolve_denied = base / "resolve-denied"
+            readlink_target = base / "readlink-target"
+            readlink_denied = base / "readlink-denied"
+            scandir_denied = base / "scandir-denied"
+            healthy = base / "healthy"
+            for directory in (
+                stat_denied,
+                resolve_denied,
+                readlink_target,
+                scandir_denied,
+            ):
+                directory.mkdir()
+            readlink_denied.symlink_to(readlink_target, target_is_directory=True)
+            write_skill(healthy / "skill", frontmatter="name: healthy-root")
+            roots = [
+                RootSpec(stat_denied, "extra", "stat", "root:stat", "<stat>"),
+                RootSpec(
+                    resolve_denied,
+                    "extra",
+                    "resolve",
+                    "root:resolve",
+                    "<resolve>",
+                ),
+                RootSpec(
+                    readlink_denied,
+                    "extra",
+                    "readlink",
+                    "root:readlink",
+                    "<readlink>",
+                ),
+                RootSpec(
+                    scandir_denied,
+                    "extra",
+                    "scandir",
+                    "root:scandir",
+                    "<scandir>",
+                ),
+                RootSpec(healthy, "extra", "healthy", "root:healthy", "<healthy>"),
+            ]
+            real_lstat = os.lstat
+            real_resolve = Path.resolve
+            real_scandir = os.scandir
+
+            def guarded_lstat(path: object, *args: object, **kwargs: object) -> object:
+                if Path(path) == stat_denied:
+                    raise PermissionError("synthetic root stat denial")
+                return real_lstat(path, *args, **kwargs)
+
+            def guarded_resolve(path: Path, strict: bool = False) -> Path:
+                if path in {resolve_denied, readlink_denied}:
+                    raise PermissionError("synthetic root resolve/readlink denial")
+                return real_resolve(path, strict=strict)
+
+            def guarded_scandir(path: object) -> object:
+                if Path(path) == scandir_denied:
+                    raise PermissionError("synthetic root scandir denial")
+                return real_scandir(path)
+
+            with mock.patch(
+                "capability_map_core.skills.os.lstat", guarded_lstat
+            ), mock.patch.object(Path, "resolve", guarded_resolve), mock.patch(
+                "capability_map_core.skills.os.scandir", guarded_scandir
+            ):
+                result = discover_skills(roots)
+
+            self.assertEqual(
+                [capability.name for capability in result.capabilities],
+                ["healthy-root"],
+            )
+            codes = [diagnostic.code for diagnostic in result.diagnostics]
+            self.assertIn("root_stat_error", codes)
+            self.assertGreaterEqual(codes.count("root_resolve_error"), 2)
+            self.assertIn("directory_read_error", codes)
+            self.assertNotIn("broken_symlink", codes)
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are required")
+    def test_root_symlink_loop_is_diagnostic_and_does_not_stop_other_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            first_link = base / "loop-a"
+            second_link = base / "loop-b"
+            first_link.symlink_to(second_link, target_is_directory=True)
+            second_link.symlink_to(first_link, target_is_directory=True)
+            healthy = base / "healthy"
+            write_skill(healthy / "skill", frontmatter="name: healthy-root")
+
+            result = discover_skills(
+                [
+                    RootSpec(
+                        first_link,
+                        "extra",
+                        "loop",
+                        "root:loop",
+                        "<loop>",
+                    ),
+                    RootSpec(
+                        healthy,
+                        "extra",
+                        "healthy",
+                        "root:healthy",
+                        "<healthy>",
+                    ),
+                ]
+            )
+
+            self.assertEqual(
+                [capability.name for capability in result.capabilities],
+                ["healthy-root"],
+            )
+            codes = [diagnostic.code for diagnostic in result.diagnostics]
+            self.assertIn("root_symlink_loop", codes)
+            self.assertNotIn("broken_symlink", codes)
 
 
 if __name__ == "__main__":
