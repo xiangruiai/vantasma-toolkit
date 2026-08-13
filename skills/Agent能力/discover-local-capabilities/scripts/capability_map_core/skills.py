@@ -66,6 +66,17 @@ class _Occurrence:
     source: SourceLocation
     origin_key: str
     via_symlink: bool
+    expected_file_id: tuple[int, int] | None
+    expected_stat: tuple[tuple[str, int], ...]
+
+
+@dataclass(frozen=True)
+class _PreparedSkill:
+    occurrences: tuple[_Occurrence, ...]
+    representative: _Occurrence
+    metadata: _SkillMetadata
+    logical_identity: str
+    weak_identity: bool
 
 
 class _UnsupportedFrontmatter(ValueError):
@@ -73,6 +84,10 @@ class _UnsupportedFrontmatter(ValueError):
 
 
 class _EnvPathBlocked(Exception):
+    pass
+
+
+class _SourceChanged(Exception):
     pass
 
 
@@ -165,6 +180,29 @@ def _physical_key(path: Path) -> tuple[str, ...]:
     return ("realpath", os.path.normcase(str(path.resolve(strict=True))))
 
 
+def _file_id(stat_result: os.stat_result) -> tuple[int, int] | None:
+    inode = getattr(stat_result, "st_ino", 0)
+    if not inode:
+        return None
+    return (getattr(stat_result, "st_dev", 0), inode)
+
+
+def _stat_evidence(stat_result: os.stat_result) -> tuple[tuple[str, int], ...]:
+    return tuple(
+        (field_name, int(getattr(stat_result, field_name)))
+        for field_name in (
+            "st_dev",
+            "st_size",
+            "st_mode",
+            "st_nlink",
+            "st_birthtime_ns",
+            "st_ctime_ns",
+            "st_mtime_ns",
+        )
+        if hasattr(stat_result, field_name)
+    )
+
+
 def _effective_scope(root: RootSpec, logical_parts: tuple[str, ...]) -> str:
     return "system" if ".system" in logical_parts else root.scope
 
@@ -248,6 +286,15 @@ def _walk_root(
                             )
                         )
                         continue
+                    except PermissionError:
+                        diagnostics.append(
+                            _diagnostic(
+                                "permission_denied",
+                                "A symbolic link chain could not be inspected due to permissions.",
+                                location=public_child,
+                            )
+                        )
+                        continue
                     except (OSError, RuntimeError) as error:
                         code = _symlink_failure_code(error)
                         diagnostics.append(
@@ -301,6 +348,7 @@ def _walk_root(
                 else:
                     continue
                 file_key = _physical_key(real_file)
+                observed_stat = real_file.stat()
             except OSError:
                 diagnostics.append(
                     _diagnostic(
@@ -328,6 +376,8 @@ def _walk_root(
                     source=source,
                     origin_key=f"{root.logical_key}:{relative_key}",
                     via_symlink=reached_via_symlink or is_link,
+                    expected_file_id=_file_id(observed_stat),
+                    expected_stat=_stat_evidence(observed_stat),
                 )
             )
 
@@ -525,14 +575,71 @@ def _parse_metadata_subset(frontmatter: str) -> dict[str, object]:
     return values
 
 
-def _read_frontmatter_prefix(path: Path) -> tuple[bytes, bool]:
-    with open(path, "rb") as handle:
+def _opened_source_matches(
+    stat_result: os.stat_result,
+    expected_file_id: tuple[int, int] | None,
+    expected_stat: tuple[tuple[str, int], ...],
+) -> bool:
+    opened_file_id = _file_id(stat_result)
+    if expected_file_id is not None:
+        return opened_file_id == expected_file_id
+    return _stat_evidence(stat_result) == expected_stat
+
+
+def _open_verified_source(occurrence: _Occurrence) -> int:
+    path = occurrence.real_file
+    flags = os.O_RDONLY
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    try:
+        before = os.lstat(path)
+        if stat.S_ISLNK(before.st_mode) or not _opened_source_matches(
+            before, occurrence.expected_file_id, occurrence.expected_stat
+        ):
+            raise _SourceChanged
+        fd = os.open(path, flags | nofollow)
+    except _SourceChanged:
+        raise
+    except OSError as error:
+        if error.errno in {errno.ELOOP, errno.ENOENT, errno.ENOTDIR}:
+            raise _SourceChanged from error
+        raise
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode) or not _opened_source_matches(
+            opened, occurrence.expected_file_id, occurrence.expected_stat
+        ):
+            raise _SourceChanged
+        if not nofollow:
+            after = os.lstat(path)
+            if stat.S_ISLNK(after.st_mode) or not _opened_source_matches(
+                after, occurrence.expected_file_id, occurrence.expected_stat
+            ):
+                raise _SourceChanged
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _read_frontmatter_prefix(occurrence: _Occurrence) -> tuple[bytes, bool]:
+    fd = _open_verified_source(occurrence)
+    try:
         chunks: list[bytes] = []
         total = 0
         line_number = 0
         while total <= MAX_FRONTMATTER_BYTES:
             remaining = MAX_FRONTMATTER_BYTES - total
-            line = handle.readline(remaining + 1)
+            line_chunks: list[bytes] = []
+            while len(line_chunks) <= remaining:
+                byte = os.read(fd, 1)
+                if not byte:
+                    break
+                line_chunks.append(byte)
+                if byte == b"\n":
+                    break
+            line = b"".join(line_chunks)
             if not line:
                 return b"".join(chunks), False
             if len(line) > remaining:
@@ -549,9 +656,13 @@ def _read_frontmatter_prefix(path: Path) -> tuple[bytes, bool]:
                 return b"".join(chunks), False
             line_number += 1
         return b"".join(chunks), True
+    finally:
+        os.close(fd)
 
 
-def _skill_metadata(path: Path, fallback_name: str) -> _SkillMetadata:
+def _skill_metadata(
+    occurrence: _Occurrence, fallback_name: str
+) -> _SkillMetadata:
     issues: list[_MetadataIssue] = []
     if not sanitize_text(fallback_name, max_length=512):
         fallback_name = "unnamed-skill"
@@ -562,7 +673,9 @@ def _skill_metadata(path: Path, fallback_name: str) -> _SkillMetadata:
             )
         )
     try:
-        payload, truncated = _read_frontmatter_prefix(path)
+        payload, truncated = _read_frontmatter_prefix(occurrence)
+    except _SourceChanged:
+        raise
     except OSError:
         issues.append(
             _MetadataIssue(
@@ -685,24 +798,10 @@ def _logical_identity(
         }
         weak = False
     else:
-        stat_result = canonical.real_file.stat()
-        stat_evidence = {
-            field_name: getattr(stat_result, field_name)
-            for field_name in (
-                "st_dev",
-                "st_size",
-                "st_mode",
-                "st_nlink",
-                "st_birthtime_ns",
-                "st_ctime_ns",
-                "st_mtime_ns",
-            )
-            if hasattr(stat_result, field_name)
-        }
         evidence = {
             "kind": "content-stat-fallback",
             "content_digest": content_digest,
-            "stat": stat_evidence,
+            "stat": dict(canonical.expected_stat),
         }
         weak = True
     encoded = json.dumps(
@@ -733,7 +832,25 @@ def discover_skills(roots: list[RootSpec] | tuple[RootSpec, ...]) -> SkillDiscov
             continue
         root_is_link = stat.S_ISLNK(source_stat.st_mode)
         try:
-            real_root = root.path.resolve(strict=True)
+            real_root = _resolve_symlink_chain(root.path)
+        except _EnvPathBlocked:
+            global_diagnostics.append(
+                _diagnostic(
+                    "env_path_blocked",
+                    "A configured Skill root chain passing through .env was skipped without reading it.",
+                    location=root.public_prefix,
+                )
+            )
+            continue
+        except PermissionError:
+            global_diagnostics.append(
+                _diagnostic(
+                    "permission_denied",
+                    "A configured Skill root symlink chain could not be inspected due to permissions.",
+                    location=root.public_prefix,
+                )
+            )
+            continue
         except (OSError, RuntimeError) as error:
             if root_is_link and _symlink_failure_code(error) == "symlink_loop":
                 code = "root_symlink_loop"
@@ -791,19 +908,62 @@ def discover_skills(roots: list[RootSpec] | tuple[RootSpec, ...]) -> SkillDiscov
         for occurrence in root_occurrences:
             grouped.setdefault(occurrence.physical_key, []).append(occurrence)
 
-    capability_pairs: list[tuple[Capability, ResolverRecord]] = []
+    prepared_skills: list[_PreparedSkill] = []
     for occurrences in grouped.values():
         ordered_occurrences = sorted(
             occurrences,
             key=_occurrence_order,
         )
         representative = ordered_occurrences[0]
-        metadata = _skill_metadata(
-            representative.visible_file, representative.real_file.parent.name
-        )
+        try:
+            metadata = _skill_metadata(
+                representative, representative.real_file.parent.name
+            )
+        except _SourceChanged:
+            global_diagnostics.append(
+                _diagnostic(
+                    "source_changed",
+                    "A Skill source changed after discovery and was skipped without reading it.",
+                    location=representative.source.location,
+                )
+            )
+            continue
         logical_identity, weak_identity = _logical_identity(
             occurrences, representative, metadata.content_digest
         )
+        prepared_skills.append(
+            _PreparedSkill(
+                tuple(occurrences),
+                representative,
+                metadata,
+                logical_identity,
+                weak_identity,
+            )
+        )
+
+    duplicate_ordinals: dict[int, tuple[int, int]] = {}
+    weak_groups: dict[str, list[int]] = {}
+    for index, prepared in enumerate(prepared_skills):
+        if prepared.weak_identity:
+            weak_groups.setdefault(prepared.logical_identity, []).append(index)
+    for indexes in weak_groups.values():
+        if len(indexes) < 2:
+            continue
+        ordered_indexes = sorted(
+            indexes,
+            key=lambda index: str(
+                prepared_skills[index].representative.real_file
+            ),
+        )
+        for ordinal, index in enumerate(ordered_indexes, start=1):
+            duplicate_ordinals[index] = (ordinal, len(ordered_indexes))
+
+    capability_pairs: list[tuple[Capability, ResolverRecord]] = []
+    for index, prepared in enumerate(prepared_skills):
+        occurrences = prepared.occurrences
+        representative = prepared.representative
+        metadata = prepared.metadata
+        logical_identity = prepared.logical_identity
         item_diagnostics = [
             _diagnostic(
                 issue.code,
@@ -812,13 +972,24 @@ def discover_skills(roots: list[RootSpec] | tuple[RootSpec, ...]) -> SkillDiscov
             )
             for issue in metadata.issues
         ]
-        if weak_identity:
+        if prepared.weak_identity:
             item_diagnostics.append(
                 _diagnostic(
                     "weak_physical_identity",
                     "No stable file ID was available; identity uses bounded content and non-path stat evidence.",
                     location=representative.source.location,
                     severity="info",
+                )
+            )
+        duplicate = duplicate_ordinals.get(index)
+        if duplicate is not None:
+            ordinal, duplicate_count = duplicate
+            logical_identity += f":ambiguous-duplicate-{ordinal}-of-{duplicate_count}"
+            item_diagnostics.append(
+                _diagnostic(
+                    "ambiguous_physical_identity",
+                    "Multiple physical Skills had identical fallback evidence; opaque per-scan duplicate identities were assigned.",
+                    location=representative.source.location,
                 )
             )
         immutable_item_diagnostics = tuple(item_diagnostics)

@@ -270,43 +270,31 @@ class SkillDiscoveryTests(unittest.TestCase):
             env_file.write_text("name: must-not-be-read", encoding="utf-8")
             env_directory = root / "nested" / ".env"
             write_skill(env_directory / "hidden-skill", frontmatter="name: forbidden")
-            real_open = open
+            real_os_open = os.open
+            real_os_read = os.read
             reads: list[tuple[Path, int, int]] = []
             payload = skill.read_bytes()
             body_start = payload.index(b"\n---\n") + len(b"\n---\n")
+            opened_paths: dict[int, Path] = {}
 
-            class RecordingReader:
-                def __init__(self, handle: object, opened_path: Path) -> None:
-                    self._handle = handle
-                    self._path = opened_path
-
-                def __enter__(self) -> "RecordingReader":
-                    self._handle.__enter__()
-                    return self
-
-                def __exit__(self, *args: object) -> object:
-                    return self._handle.__exit__(*args)
-
-                def read(self, size: int = -1) -> bytes:
-                    chunk = self._handle.read(size)
-                    reads.append((self._path, size, self._handle.tell()))
-                    return chunk
-
-                def readline(self, size: int = -1) -> bytes:
-                    line = self._handle.readline(size)
-                    reads.append((self._path, size, self._handle.tell()))
-                    return line
-
-            def recording_open(path: object, mode: str = "r", *args: object, **kwargs: object) -> object:
+            def recording_open(
+                path: object, flags: int, *args: object, **kwargs: object
+            ) -> int:
                 opened_path = Path(path)  # type: ignore[arg-type]
-                if opened_path.name == ".env" or ".env" in opened_path.parts:
+                if ".env" in {part.casefold() for part in opened_path.parts}:
                     raise AssertionError("discovery attempted to read .env")
-                handle = real_open(path, mode, *args, **kwargs)
-                if "b" in mode:
-                    return RecordingReader(handle, opened_path)
-                return handle
+                fd = real_os_open(path, flags, *args, **kwargs)
+                opened_paths[fd] = opened_path
+                return fd
 
-            with mock.patch("capability_map_core.skills.open", recording_open):
+            def recording_read(fd: int, size: int) -> bytes:
+                chunk = real_os_read(fd, size)
+                reads.append((opened_paths[fd], size, os.lseek(fd, 0, os.SEEK_CUR)))
+                return chunk
+
+            with mock.patch(
+                "capability_map_core.skills.os.open", recording_open
+            ), mock.patch("capability_map_core.skills.os.read", recording_read):
                 result = discover_skills(
                     [RootSpec(root, "extra", "fixtures", "extra:fixtures", "<extra>")]
                 )
@@ -316,7 +304,10 @@ class SkillDiscoveryTests(unittest.TestCase):
             self.assertTrue(
                 all(0 < size <= MAX_FRONTMATTER_BYTES + 1 for _, size, _ in reads)
             )
-            self.assertEqual({path for path, _, _ in reads}, {skill})
+            self.assertEqual(
+                {path.resolve() for path, _, _ in reads},
+                {skill.resolve()},
+            )
             self.assertLessEqual(max(position for _, _, position in reads), body_start)
 
     @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are required")
@@ -405,7 +396,7 @@ class SkillDiscoveryTests(unittest.TestCase):
                 "middle", target_is_directory=True
             )
             write_skill(root / "healthy", frontmatter="name: healthy")
-            real_open = open
+            real_os_read = os.read
             real_scandir = os.scandir
             real_readlink = os.readlink
             read_chunks: list[bytes] = []
@@ -416,26 +407,10 @@ class SkillDiscoveryTests(unittest.TestCase):
                 payload_directory.stat().st_ino,
             )
 
-            class ReadSpy:
-                def __init__(self, handle: object) -> None:
-                    self._handle = handle
-
-                def __enter__(self) -> "ReadSpy":
-                    self._handle.__enter__()
-                    return self
-
-                def __exit__(self, *args: object) -> object:
-                    return self._handle.__exit__(*args)
-
-                def readline(self, size: int = -1) -> bytes:
-                    chunk = self._handle.readline(size)
-                    read_chunks.append(chunk)
-                    return chunk
-
-            def recording_open(
-                path: object, *args: object, **kwargs: object
-            ) -> object:
-                return ReadSpy(real_open(path, *args, **kwargs))
+            def recording_read(fd: int, size: int) -> bytes:
+                chunk = real_os_read(fd, size)
+                read_chunks.append(chunk)
+                return chunk
 
             def recording_scandir(path: object) -> object:
                 if Path(path) == allowed_targets:
@@ -453,7 +428,7 @@ class SkillDiscoveryTests(unittest.TestCase):
                 return target
 
             with mock.patch(
-                "capability_map_core.skills.open", recording_open
+                "capability_map_core.skills.os.read", recording_read
             ), mock.patch(
                 "capability_map_core.skills.os.scandir", recording_scandir
             ), mock.patch(
@@ -479,12 +454,62 @@ class SkillDiscoveryTests(unittest.TestCase):
                 )
 
             self.assertEqual([item.name for item in result.capabilities], ["healthy"])
-            self.assertFalse(any(payload_canary in chunk for chunk in read_chunks))
+            self.assertNotIn(payload_canary, b"".join(read_chunks))
             self.assertEqual(payload_scans, [])
             self.assertTrue(readlink_steps)
             self.assertGreaterEqual(
                 [item.code for item in result.diagnostics].count("env_path_blocked"),
                 2,
+            )
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are required")
+    def test_source_replaced_after_scan_is_rejected_before_reading(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root = base / "skills"
+            skill_file = write_skill(
+                root / "raced", frontmatter="name: original-safe-skill"
+            )
+            secret_canary = b"toctou-secret-canary"
+            secret_file = base / "outside-secret"
+            secret_file.write_bytes(
+                b"---\nname: " + secret_canary + b"\n---\nprivate bytes"
+            )
+            original_backup = base / "original-SKILL.md"
+            real_os_open = os.open
+            real_os_read = os.read
+            raced = False
+            read_chunks: list[bytes] = []
+
+            def racing_open(
+                path: object, flags: int, *args: object, **kwargs: object
+            ) -> int:
+                nonlocal raced
+                opened_path = Path(path)  # type: ignore[arg-type]
+                if opened_path.name == "SKILL.md" and not raced:
+                    skill_file.rename(original_backup)
+                    skill_file.symlink_to(secret_file)
+                    raced = True
+                return real_os_open(path, flags, *args, **kwargs)
+
+            def recording_read(fd: int, size: int) -> bytes:
+                chunk = real_os_read(fd, size)
+                read_chunks.append(chunk)
+                return chunk
+
+            with mock.patch(
+                "capability_map_core.skills.os.open", racing_open
+            ), mock.patch("capability_map_core.skills.os.read", recording_read):
+                result = discover_skills(
+                    [RootSpec(root, "extra", "fixtures", "extra:fixtures", "<extra>")]
+                )
+
+            self.assertTrue(raced)
+            self.assertEqual(result.capabilities, ())
+            self.assertNotIn(secret_canary, b"".join(read_chunks))
+            self.assertIn(
+                "source_changed",
+                {diagnostic.code for diagnostic in result.diagnostics},
             )
 
     def test_same_metadata_on_distinct_physical_skills_has_distinct_ids(self) -> None:
@@ -713,6 +738,64 @@ class SkillDiscoveryTests(unittest.TestCase):
                 {item.code for item in after_move.diagnostics},
             )
 
+    def test_exact_fallback_collisions_get_distinct_ids_and_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            first_root = base / "copy-one"
+            second_root = base / "copy-two"
+            metadata = "name: exact-copy\ndescription: identical fallback evidence"
+            write_skill(first_root / "same-relative", frontmatter=metadata)
+            write_skill(second_root / "same-relative", frontmatter=metadata)
+
+            def no_file_id(path: Path) -> tuple[str, ...]:
+                return ("realpath", os.path.normcase(str(path.resolve(strict=True))))
+
+            uniform_evidence = (
+                ("st_dev", 7),
+                ("st_size", 123),
+                ("st_mode", 33188),
+                ("st_nlink", 1),
+                ("st_birthtime_ns", 11),
+                ("st_ctime_ns", 11),
+                ("st_mtime_ns", 11),
+            )
+            with mock.patch(
+                "capability_map_core.skills._physical_key", no_file_id
+            ), mock.patch(
+                "capability_map_core.skills._file_id", return_value=None
+            ), mock.patch(
+                "capability_map_core.skills._stat_evidence",
+                return_value=uniform_evidence,
+            ):
+                result = discover_skills(
+                    [
+                        RootSpec(
+                            first_root,
+                            "extra",
+                            "same-provider",
+                            "extra:duplicate",
+                            "<one>",
+                        ),
+                        RootSpec(
+                            second_root,
+                            "extra",
+                            "same-provider",
+                            "extra:duplicate",
+                            "<two>",
+                        ),
+                    ]
+                )
+
+            self.assertEqual(len(result.capabilities), 2)
+            self.assertEqual(len({item.id for item in result.capabilities}), 2)
+            self.assertEqual(len({item.resolver_id for item in result.resolvers}), 2)
+            self.assertGreaterEqual(
+                [item.code for item in result.diagnostics].count(
+                    "ambiguous_physical_identity"
+                ),
+                2,
+            )
+
     @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are required")
     def test_symlinks_follow_allowed_roots_but_report_loops_breakage_and_escape(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -765,20 +848,26 @@ class SkillDiscoveryTests(unittest.TestCase):
             unreadable_file = write_skill(unreadable, frontmatter="name: unreadable")
             write_skill(healthy, frontmatter="name: healthy")
             real_scandir = os.scandir
-            real_open = open
+            real_os_open = os.open
 
             def guarded_scandir(path: object) -> object:
                 if Path(path) == blocked:
                     raise PermissionError("synthetic traversal denial")
                 return real_scandir(path)
 
-            def guarded_open(path: object, *args: object, **kwargs: object) -> object:
-                if Path(path) == unreadable_file:
+            def guarded_open(
+                path: object, flags: int, *args: object, **kwargs: object
+            ) -> int:
+                opened_path = Path(path)  # type: ignore[arg-type]
+                if (
+                    opened_path.name == unreadable_file.name
+                    and opened_path.parent.name == unreadable_file.parent.name
+                ):
                     raise PermissionError("synthetic read denial")
-                return real_open(path, *args, **kwargs)
+                return real_os_open(path, flags, *args, **kwargs)
 
             with mock.patch("capability_map_core.skills.os.scandir", guarded_scandir), mock.patch(
-                "capability_map_core.skills.open", guarded_open
+                "capability_map_core.skills.os.open", guarded_open
             ):
                 result = discover_skills(
                     [RootSpec(root, "extra", "fixtures", "extra:fixtures", "<extra>")]
@@ -800,7 +889,7 @@ class SkillDiscoveryTests(unittest.TestCase):
             )
 
     @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are required")
-    def test_root_stat_resolve_readlink_and_scandir_errors_are_diagnostic(self) -> None:
+    def test_root_stat_readlink_and_scandir_errors_are_diagnostic(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
             stat_denied = base / "stat-denied"
@@ -844,18 +933,21 @@ class SkillDiscoveryTests(unittest.TestCase):
                 RootSpec(healthy, "extra", "healthy", "root:healthy", "<healthy>"),
             ]
             real_lstat = os.lstat
-            real_resolve = Path.resolve
             real_scandir = os.scandir
 
             def guarded_lstat(path: object, *args: object, **kwargs: object) -> object:
-                if Path(path) == stat_denied:
+                if Path(path).name == stat_denied.name:
                     raise PermissionError("synthetic root stat denial")
                 return real_lstat(path, *args, **kwargs)
 
-            def guarded_resolve(path: Path, strict: bool = False) -> Path:
-                if path in {resolve_denied, readlink_denied}:
-                    raise PermissionError("synthetic root resolve/readlink denial")
-                return real_resolve(path, strict=strict)
+            real_readlink = os.readlink
+
+            def guarded_readlink(
+                path: object, *args: object, **kwargs: object
+            ) -> str:
+                if Path(path).name == readlink_denied.name:
+                    raise PermissionError("synthetic root readlink denial")
+                return real_readlink(path, *args, **kwargs)
 
             def guarded_scandir(path: object) -> object:
                 if Path(path) == scandir_denied:
@@ -864,7 +956,9 @@ class SkillDiscoveryTests(unittest.TestCase):
 
             with mock.patch(
                 "capability_map_core.skills.os.lstat", guarded_lstat
-            ), mock.patch.object(Path, "resolve", guarded_resolve), mock.patch(
+            ), mock.patch(
+                "capability_map_core.skills.os.readlink", guarded_readlink
+            ), mock.patch(
                 "capability_map_core.skills.os.scandir", guarded_scandir
             ):
                 result = discover_skills(roots)
@@ -875,7 +969,7 @@ class SkillDiscoveryTests(unittest.TestCase):
             )
             codes = [diagnostic.code for diagnostic in result.diagnostics]
             self.assertIn("root_stat_error", codes)
-            self.assertGreaterEqual(codes.count("root_resolve_error"), 2)
+            self.assertIn("permission_denied", codes)
             self.assertIn("directory_read_error", codes)
             self.assertNotIn("broken_symlink", codes)
 
@@ -915,6 +1009,144 @@ class SkillDiscoveryTests(unittest.TestCase):
             )
             codes = [diagnostic.code for diagnostic in result.diagnostics]
             self.assertIn("root_symlink_loop", codes)
+            self.assertNotIn("broken_symlink", codes)
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are required")
+    def test_configured_root_env_chain_is_rejected_before_scandir(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            payload_root = base / "payload-root"
+            payload_canary = b"configured-root-secret-canary"
+            write_raw_skill(
+                payload_root / "secret",
+                b"---\nname: " + payload_canary + b"\n---\nprivate bytes",
+            )
+            root_alias = base / "root-alias"
+            middle = base / "middle"
+            env_hop = base / ".ENV"
+            env_hop.symlink_to(payload_root, target_is_directory=True)
+            middle.symlink_to(env_hop, target_is_directory=True)
+            root_alias.symlink_to(middle, target_is_directory=True)
+            healthy_root = base / "healthy"
+            write_skill(healthy_root / "skill", frontmatter="name: healthy-root")
+            payload_id = (payload_root.stat().st_dev, payload_root.stat().st_ino)
+            real_scandir = os.scandir
+            real_os_read = os.read
+            payload_scans: list[Path] = []
+            read_chunks: list[bytes] = []
+
+            def recording_scandir(path: object) -> object:
+                opened_stat = os.stat(path)
+                if (opened_stat.st_dev, opened_stat.st_ino) == payload_id:
+                    payload_scans.append(Path(path))  # type: ignore[arg-type]
+                return real_scandir(path)
+
+            def recording_read(fd: int, size: int) -> bytes:
+                chunk = real_os_read(fd, size)
+                read_chunks.append(chunk)
+                return chunk
+
+            with mock.patch(
+                "capability_map_core.skills.os.scandir", recording_scandir
+            ), mock.patch(
+                "capability_map_core.skills.os.read", recording_read
+            ):
+                result = discover_skills(
+                    [
+                        RootSpec(
+                            root_alias,
+                            "extra",
+                            "blocked",
+                            "root:blocked",
+                            "<blocked>",
+                        ),
+                        RootSpec(
+                            healthy_root,
+                            "extra",
+                            "healthy",
+                            "root:healthy",
+                            "<healthy>",
+                        ),
+                    ]
+                )
+
+            self.assertEqual(
+                [capability.name for capability in result.capabilities],
+                ["healthy-root"],
+            )
+            self.assertEqual(payload_scans, [])
+            self.assertNotIn(payload_canary, b"".join(read_chunks))
+            self.assertIn(
+                "env_path_blocked",
+                {diagnostic.code for diagnostic in result.diagnostics},
+            )
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are required")
+    def test_symlink_hop_permission_errors_are_not_reported_as_broken(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            target = base / "target"
+            target.mkdir()
+            lstat_hop = base / "lstat-hop"
+            lstat_root = base / "lstat-root"
+            lstat_hop.symlink_to(target, target_is_directory=True)
+            lstat_root.symlink_to(lstat_hop, target_is_directory=True)
+            readlink_root = base / "readlink-root"
+            readlink_root.symlink_to(target, target_is_directory=True)
+            healthy_root = base / "healthy"
+            write_skill(healthy_root / "skill", frontmatter="name: healthy-root")
+            real_lstat = os.lstat
+            real_readlink = os.readlink
+
+            def guarded_lstat(path: object, *args: object, **kwargs: object) -> object:
+                if Path(path).name == lstat_hop.name:
+                    raise PermissionError("synthetic symlink-hop lstat denial")
+                return real_lstat(path, *args, **kwargs)
+
+            def guarded_readlink(
+                path: object, *args: object, **kwargs: object
+            ) -> str:
+                if Path(path).name == readlink_root.name:
+                    raise PermissionError("synthetic symlink-hop readlink denial")
+                return real_readlink(path, *args, **kwargs)
+
+            with mock.patch(
+                "capability_map_core.skills.os.lstat", guarded_lstat
+            ), mock.patch(
+                "capability_map_core.skills.os.readlink", guarded_readlink
+            ):
+                result = discover_skills(
+                    [
+                        RootSpec(
+                            lstat_root,
+                            "extra",
+                            "lstat",
+                            "root:lstat-hop",
+                            "<lstat>",
+                        ),
+                        RootSpec(
+                            readlink_root,
+                            "extra",
+                            "readlink",
+                            "root:readlink-hop",
+                            "<readlink>",
+                        ),
+                        RootSpec(
+                            healthy_root,
+                            "extra",
+                            "healthy",
+                            "root:healthy",
+                            "<healthy>",
+                        ),
+                    ]
+                )
+
+            self.assertEqual(
+                [capability.name for capability in result.capabilities],
+                ["healthy-root"],
+            )
+            codes = [diagnostic.code for diagnostic in result.diagnostics]
+            self.assertGreaterEqual(codes.count("permission_denied"), 2)
             self.assertNotIn("broken_symlink", codes)
 
 
