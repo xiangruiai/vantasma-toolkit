@@ -583,15 +583,20 @@ class _SpoolCapture:
         self._spool = spool
         self._limit = limit
         self._overflow = overflow
+        self._written = 0
         self.size = 0
         self.truncated = False
 
     def add(self, chunk: bytes) -> None:
         if not chunk:
             return
-        self._spool.write(chunk)
+        remaining = max(0, self._limit - self._written)
+        if remaining:
+            retained = chunk[:remaining]
+            self._spool.write(retained)
+            self._written += len(retained)
         self.size += len(chunk)
-        if self.size > self._limit:
+        if len(chunk) > remaining:
             self.truncated = True
             self._overflow.set()
 
@@ -829,7 +834,9 @@ def probe_cli_version(
     current_probe_platform = (
         platform.system() if probe_platform is None else probe_platform
     )
-    if current_probe_platform.casefold().startswith(("win", "nt")):
+    if os.name == "nt" or current_probe_platform.casefold().startswith(
+        ("win", "nt")
+    ):
         return CliVersionProbeResult(
             "error",
             diagnostics=(

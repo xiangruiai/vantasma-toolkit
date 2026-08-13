@@ -97,6 +97,19 @@ class _TrackingPipe:
         self.closed = True
 
 
+class _TrackingTemporaryFile:
+    def __init__(self, wrapped) -> None:
+        self._wrapped = wrapped
+        self.bytes_written = 0
+
+    def write(self, data: bytes) -> int:
+        self.bytes_written += len(data)
+        return self._wrapped.write(data)
+
+    def __getattr__(self, name: str):
+        return getattr(self._wrapped, name)
+
+
 class _FakeDirEntry:
     def __init__(self, name: str, file_stat: os.stat_result) -> None:
         self.name = name
@@ -470,6 +483,26 @@ class CliVersionProbeTests(unittest.TestCase):
                 [diagnostic.code for diagnostic in result.diagnostics],
             )
 
+    def test_real_windows_host_cannot_be_overridden_to_enable_probe(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = _write_file(Path(temporary) / "tool")
+
+            with (
+                mock.patch.object(cli_module.os, "name", "nt"),
+                mock.patch("capability_map_core.clis.subprocess.Popen") as popen,
+            ):
+                result = probe_cli_version(
+                    executable,
+                    probe_platform="linux",
+                )
+
+            popen.assert_not_called()
+            self.assertEqual(result.status, "error")
+            self.assertIn(
+                "unsupported_secure_containment",
+                [diagnostic.code for diagnostic in result.diagnostics],
+            )
+
     def test_probe_uses_exact_argv_minimal_environment_limits_and_sanitizes_output(
         self,
     ) -> None:
@@ -821,6 +854,49 @@ class CliVersionProbeTests(unittest.TestCase):
             self.assertEqual(result.output, "z" * 257)
             self.assertTrue(spools)
             self.assertTrue(all(spool.closed for spool in spools))
+
+    def test_stderr_spool_never_writes_beyond_output_limit(self) -> None:
+        if os.name == "nt":
+            self.skipTest("Windows probing is securely unsupported")
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = _write_python_executable(
+                Path(temporary) / "noisy-stderr",
+                "import os\n"
+                "chunk = b'e' * 4096\n"
+                "for _ in range(1024):\n"
+                "    os.write(2, chunk)",
+            )
+            tracked_spools: list[_TrackingTemporaryFile] = []
+            real_temporary_file = tempfile.TemporaryFile
+
+            def tracking_temporary_file(*args, **kwargs):
+                tracked = _TrackingTemporaryFile(
+                    real_temporary_file(*args, **kwargs)
+                )
+                tracked_spools.append(tracked)
+                return tracked
+
+            with mock.patch(
+                "capability_map_core.clis.tempfile.TemporaryFile",
+                side_effect=tracking_temporary_file,
+            ):
+                result = probe_cli_version(
+                    executable,
+                    output_limit=257,
+                    timeout=2.0,
+                )
+
+            self.assertTrue(tracked_spools)
+            self.assertLessEqual(
+                sum(spool.bytes_written for spool in tracked_spools),
+                257,
+            )
+            self.assertLessEqual(len(result.output.encode("utf-8")), 257)
+            self.assertIn(
+                "version_output_truncated",
+                [diagnostic.code for diagnostic in result.diagnostics],
+            )
+            self.assertTrue(all(spool.closed for spool in tracked_spools))
 
 
 if __name__ == "__main__":
