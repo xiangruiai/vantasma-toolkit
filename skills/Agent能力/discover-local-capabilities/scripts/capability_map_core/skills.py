@@ -192,6 +192,13 @@ def _file_id(stat_result: os.stat_result) -> tuple[int, int] | None:
     return (getattr(stat_result, "st_dev", 0), inode)
 
 
+def _root_file_id(stat_result: os.stat_result) -> tuple[int, int] | None:
+    inode = getattr(stat_result, "st_ino", 0)
+    if not inode:
+        return None
+    return (getattr(stat_result, "st_dev", 0), inode)
+
+
 def _stat_evidence(stat_result: os.stat_result) -> tuple[tuple[str, int], ...]:
     return tuple(
         (field_name, int(getattr(stat_result, field_name)))
@@ -215,6 +222,7 @@ def _effective_scope(root: RootSpec, logical_parts: tuple[str, ...]) -> str:
 def _walk_root(
     root: RootSpec,
     physical_root: Path,
+    expected_root_id: tuple[int, int],
     allowed_roots: tuple[Path, ...],
     root_is_symlink: bool,
 ) -> tuple[list[_Occurrence], list[Diagnostic]]:
@@ -249,9 +257,23 @@ def _walk_root(
             )
             return
         next_ancestors = ancestors | {directory_key}
+        iterator = None
         try:
-            with os.scandir(physical_directory) as iterator:
-                entries = sorted(iterator, key=lambda entry: entry.name)
+            iterator = os.scandir(physical_directory)
+            if not logical_parts:
+                opened_path_stat = os.lstat(physical_directory)
+                if stat.S_ISLNK(opened_path_stat.st_mode) or (
+                    _root_file_id(opened_path_stat) != expected_root_id
+                ):
+                    diagnostics.append(
+                        _diagnostic(
+                            "root_changed",
+                            "A verified Skill root changed before scanning and was skipped.",
+                            location=public_directory,
+                        )
+                    )
+                    return
+            entries = sorted(iterator, key=lambda entry: entry.name)
         except OSError:
             diagnostics.append(
                 _diagnostic(
@@ -261,6 +283,9 @@ def _walk_root(
                 )
             )
             return
+        finally:
+            if iterator is not None:
+                iterator.close()
 
         for entry in entries:
             if _is_env_segment(entry.name):
@@ -827,7 +852,7 @@ def discover_skills(roots: list[RootSpec] | tuple[RootSpec, ...]) -> SkillDiscov
 
     root_specs = tuple(roots)
     global_diagnostics: list[Diagnostic] = []
-    resolved_roots: list[tuple[RootSpec, Path, bool]] = []
+    resolved_roots: list[tuple[RootSpec, Path, bool, tuple[int, int]]] = []
     for root in root_specs:
         try:
             source_stat = os.lstat(root.path)
@@ -897,6 +922,16 @@ def discover_skills(roots: list[RootSpec] | tuple[RootSpec, ...]) -> SkillDiscov
                 )
             )
             continue
+        root_file_id = _root_file_id(target_stat)
+        if root_file_id is None:
+            global_diagnostics.append(
+                _diagnostic(
+                    "root_unverifiable",
+                    "A configured Skill root had no strong physical identity and was skipped.",
+                    location=root.public_prefix,
+                )
+            )
+            continue
         if _has_env_segment(real_root):
             global_diagnostics.append(
                 _diagnostic(
@@ -906,15 +941,17 @@ def discover_skills(roots: list[RootSpec] | tuple[RootSpec, ...]) -> SkillDiscov
                 )
             )
             continue
-        resolved_roots.append((root, real_root, root_is_link))
+        resolved_roots.append((root, real_root, root_is_link, root_file_id))
     allowed_roots = tuple(
-        sorted({real for _, real, _ in resolved_roots}, key=lambda path: str(path))
+        sorted(
+            {real for _, real, _, _ in resolved_roots}, key=lambda path: str(path)
+        )
     )
 
     grouped: dict[tuple[str, ...], list[_Occurrence]] = {}
-    for root, physical_root, root_is_link in resolved_roots:
+    for root, physical_root, root_is_link, root_file_id in resolved_roots:
         root_occurrences, root_diagnostics = _walk_root(
-            root, physical_root, allowed_roots, root_is_link
+            root, physical_root, root_file_id, allowed_roots, root_is_link
         )
         global_diagnostics.extend(root_diagnostics)
         for occurrence in root_occurrences:

@@ -1233,6 +1233,153 @@ class SkillDiscoveryTests(unittest.TestCase):
             self.assertNotIn(secret_canary, b"".join(read_chunks))
 
     @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are required")
+    def test_physical_root_replaced_before_scandir_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            physical_root = base / "verified-root"
+            write_skill(physical_root / "original", frontmatter="name: original-root")
+            external_root = base / "external-root"
+            secret_canary = b"physical-root-replacement-canary"
+            write_raw_skill(
+                external_root / "escaped",
+                b"---\nname: " + secret_canary + b"\n---\nprivate bytes",
+            )
+            original_backup = base / "verified-root-backup"
+            skills_module = sys.modules["capability_map_core.skills"]
+            real_physical_key = skills_module._physical_key
+            real_os_read = os.read
+            replaced = False
+            read_chunks: list[bytes] = []
+
+            def replace_after_physical_key(path: Path) -> tuple[str, ...]:
+                nonlocal replaced
+                key = real_physical_key(path)
+                if Path(path).name == physical_root.name and not replaced:
+                    Path(path).rename(original_backup)
+                    Path(path).symlink_to(external_root, target_is_directory=True)
+                    replaced = True
+                return key
+
+            def recording_read(fd: int, size: int) -> bytes:
+                chunk = real_os_read(fd, size)
+                read_chunks.append(chunk)
+                return chunk
+
+            with mock.patch(
+                "capability_map_core.skills._physical_key",
+                replace_after_physical_key,
+            ), mock.patch(
+                "capability_map_core.skills.os.read", recording_read
+            ):
+                result = discover_skills(
+                    [
+                        RootSpec(
+                            physical_root,
+                            "extra",
+                            "verified",
+                            "root:verified",
+                            "<verified>",
+                        )
+                    ]
+                )
+
+            self.assertTrue(replaced)
+            self.assertEqual(result.capabilities, ())
+            self.assertNotIn(secret_canary, b"".join(read_chunks))
+            self.assertIn(
+                "root_changed",
+                {diagnostic.code for diagnostic in result.diagnostics},
+            )
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are required")
+    def test_root_replaced_after_iterator_open_is_safely_rejected_and_closed(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            physical_root = base / "verified-root"
+            write_skill(physical_root / "original", frontmatter="name: original-root")
+            external_root = base / "external-root"
+            write_skill(external_root / "escaped", frontmatter="name: escaped-root")
+            original_backup = base / "verified-root-backup"
+            real_scandir = os.scandir
+            replaced = False
+            closed = False
+
+            class TrackingIterator:
+                def __init__(self, iterator: object) -> None:
+                    self._iterator = iterator
+
+                def __iter__(self) -> "TrackingIterator":
+                    return self
+
+                def __next__(self) -> object:
+                    return next(self._iterator)  # type: ignore[arg-type]
+
+                def __enter__(self) -> "TrackingIterator":
+                    return self
+
+                def __exit__(self, *args: object) -> None:
+                    self.close()
+
+                def close(self) -> None:
+                    nonlocal closed
+                    closed = True
+                    self._iterator.close()  # type: ignore[attr-defined]
+
+            def replace_after_open(path: object) -> TrackingIterator:
+                nonlocal replaced
+                iterator = real_scandir(path)
+                if Path(path).name == physical_root.name and not replaced:
+                    Path(path).rename(original_backup)  # type: ignore[arg-type]
+                    Path(path).symlink_to(external_root, target_is_directory=True)
+                    replaced = True
+                return TrackingIterator(iterator)
+
+            with mock.patch(
+                "capability_map_core.skills.os.scandir", replace_after_open
+            ):
+                result = discover_skills(
+                    [
+                        RootSpec(
+                            physical_root,
+                            "extra",
+                            "verified",
+                            "root:verified",
+                            "<verified>",
+                        )
+                    ]
+                )
+
+            self.assertTrue(replaced)
+            self.assertTrue(closed)
+            self.assertEqual(result.capabilities, ())
+            self.assertIn(
+                "root_changed",
+                {diagnostic.code for diagnostic in result.diagnostics},
+            )
+
+    def test_root_without_strong_identity_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "root"
+            write_skill(root / "skill", frontmatter="name: unverifiable-root")
+
+            with mock.patch(
+                "capability_map_core.skills._root_file_id",
+                return_value=None,
+                create=True,
+            ):
+                result = discover_skills(
+                    [RootSpec(root, "extra", "root", "root:weak", "<root>")]
+                )
+
+            self.assertEqual(result.capabilities, ())
+            self.assertIn(
+                "root_unverifiable",
+                {diagnostic.code for diagnostic in result.diagnostics},
+            )
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are required")
     def test_symlink_hop_permission_errors_are_not_reported_as_broken(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
