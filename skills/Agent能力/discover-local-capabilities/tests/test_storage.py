@@ -9,7 +9,7 @@ import sys
 import tempfile
 import time
 import unittest
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from unittest import mock
 
 
@@ -108,6 +108,20 @@ class DefaultStoragePathTests(unittest.TestCase):
         )
         for platform_name, environment, expected in cases:
             with self.subTest(platform_name=platform_name, environment=environment):
+                if platform_name == "Windows" and os.name != "nt":
+                    self.assertEqual(
+                        storage_module.default_storage_root_text(
+                            platform_name=platform_name,
+                            environ=environment,
+                            home=home,
+                        ),
+                        str(
+                            PureWindowsPath(environment["localappdata"])
+                            / "Vantasma"
+                            / "Agent能力地图"
+                        ),
+                    )
+                    continue
                 paths = default_storage_paths(
                     platform_name=platform_name,
                     environ=environment,
@@ -131,6 +145,14 @@ class DefaultStoragePathTests(unittest.TestCase):
 
     def test_windows_falls_back_to_injected_home_and_expands_tilde(self) -> None:
         home = Path("/fixture/Windows User")
+        if os.name != "nt":
+            self.assertEqual(
+                storage_module.default_storage_root_text(
+                    platform_name="win32", environ={}, home=home
+                ),
+                r"\fixture\Windows User\AppData\Local\Vantasma\Agent能力地图",
+            )
+            return
         paths = default_storage_paths(
             platform_name="win32",
             environ={},
@@ -142,6 +164,36 @@ class DefaultStoragePathTests(unittest.TestCase):
         self.assertEqual(
             paths.private_root,
             home / "AppData" / "Local" / "Vantasma" / "Agent能力地图" / ".private",
+        )
+
+    def test_cross_host_windows_path_semantics_fail_closed(self) -> None:
+        if os.name == "nt":
+            self.skipTest("this test requires a non-Windows host")
+        with self.assertRaisesRegex(ValueError, "path_semantics_unavailable"):
+            default_storage_paths(
+                platform_name="Windows",
+                environ={"LOCALAPPDATA": r"C:\Fixture\Local Data"},
+                home=Path("/fixture/non-windows-home"),
+            )
+
+    def test_windows_default_root_text_needs_no_host_path_resolution(self) -> None:
+        helper = getattr(storage_module, "default_storage_root_text", None)
+        self.assertIsNotNone(helper)
+        self.assertEqual(
+            helper(
+                platform_name="Windows",
+                environ={"localappdata": r"C:\Fixture\Local Data"},
+                home=r"C:\Fixture\Home",
+            ),
+            r"C:\Fixture\Local Data\Vantasma\Agent能力地图",
+        )
+        self.assertEqual(
+            helper(
+                platform_name="Windows",
+                environ={},
+                home=r"C:\Fixture\Home",
+            ),
+            r"C:\Fixture\Home\AppData\Local\Vantasma\Agent能力地图",
         )
 
     def test_explicit_local_and_obsidian_roots_are_distinct_modes(self) -> None:
@@ -180,6 +232,60 @@ class DefaultStoragePathTests(unittest.TestCase):
                         selected_vault=vault,
                         vault_subdirectory=unsafe,
                     )
+
+    def test_staging_root_accepts_only_safe_public_relative_components(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            public_root = base / "public"
+            for unsafe in (".", "../outside", base / "absolute-stage"):
+                with self.subTest(unsafe=unsafe), self.assertRaises(ValueError):
+                    default_storage_paths(
+                        home=base / "home",
+                        local_root=public_root,
+                        private_root=base / "private",
+                        staging_root=unsafe,
+                    )
+
+    def test_staging_root_is_created_via_public_handle_without_following_symlink(self) -> None:
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlinks unsupported")
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            public_root = base / "public"
+            outside = base / "outside"
+            public_root.mkdir()
+            outside.mkdir()
+            (public_root / "redirect").symlink_to(
+                outside, target_is_directory=True
+            )
+            paths = default_storage_paths(
+                home=base / "home",
+                local_root=public_root,
+                private_root=base / "private",
+                staging_root="redirect/nested",
+            )
+
+            self.assertEqual(
+                paths.staging_root, paths.public_root / "redirect" / "nested"
+            )
+            with self.assertRaises((OSError, ValueError)):
+                write_storage_bundle(paths, _artifacts("must-not-write"), ())
+
+            self.assertFalse((outside / "nested").exists())
+            self.assertEqual(list(outside.glob(".capability-stage-*")), [])
+            self.assertEqual(list(public_root.glob(".capability-stage-*")), [])
+            self.assertTrue(
+                all(
+                    not path.exists()
+                    for path in (
+                        paths.map_path,
+                        paths.inventory_path,
+                        paths.config_path,
+                        paths.receipt_path,
+                        paths.resolver_path,
+                    )
+                )
+            )
 
     def test_storage_paths_reject_wrong_filenames_and_escape_paths(self) -> None:
         root = Path("/fixture/root")
@@ -904,6 +1010,47 @@ class AtomicStorageWriterTests(unittest.TestCase):
             self.assertEqual(
                 {path: self._file_evidence(path) for path in untouched},
                 untouched_before,
+            )
+
+    def test_rollback_preserves_concurrent_overwrite_of_replaced_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            paths = default_storage_paths(
+                home=base / "home",
+                local_root=base / "map",
+                private_root=base / "private",
+            )
+            records = (ResolverRecord("res_fixture", ["/old"]),)
+            write_storage_bundle(paths, _artifacts("old"), records)
+            old_inventory = self._file_evidence(paths.inventory_path)
+            concurrent_payload = b"concurrent map owner\n"
+            concurrent_evidence: tuple[int, int] | None = None
+
+            def overwrite_map_then_fail(label: str, _target: Path) -> None:
+                nonlocal concurrent_evidence
+                if label != "config":
+                    return
+                replacement = paths.public_root / ".concurrent-map"
+                replacement.write_bytes(concurrent_payload)
+                os.replace(replacement, paths.map_path)
+                metadata = os.lstat(paths.map_path)
+                concurrent_evidence = (metadata.st_dev, metadata.st_ino)
+                raise OSError("later target failed")
+
+            with self.assertRaises(RuntimeError) as caught:
+                write_storage_bundle(
+                    paths,
+                    _artifacts("new"),
+                    (ResolverRecord("res_fixture", ["/new"]),),
+                    failure_injector=overwrite_map_then_fail,
+                )
+
+            self.assertRegex(str(caught.exception), "rollback_conflict.*map")
+            current = os.lstat(paths.map_path)
+            self.assertEqual(paths.map_path.read_bytes(), concurrent_payload)
+            self.assertEqual((current.st_dev, current.st_ino), concurrent_evidence)
+            self.assertEqual(
+                self._file_evidence(paths.inventory_path)[-2:], old_inventory[-2:]
             )
 
     def test_concurrent_target_change_aborts_before_replace_and_is_preserved(self) -> None:

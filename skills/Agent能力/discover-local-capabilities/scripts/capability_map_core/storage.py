@@ -207,6 +207,26 @@ class StoragePaths:
             if value is not None:
                 object.__setattr__(self, name, Path(value))
 
+        staging_relative: Path | None = None
+        if self.staging_root is not None:
+            if self.staging_root.is_absolute():
+                try:
+                    staging_relative = self.staging_root.relative_to(self.public_root)
+                except ValueError as error:
+                    raise ValueError(
+                        "staging_root must remain inside public_root"
+                    ) from error
+            else:
+                staging_relative = self.staging_root
+            if (
+                not staging_relative.parts
+                or any(part in {"", ".", ".."} for part in staging_relative.parts)
+            ):
+                raise ValueError("staging_root must contain safe relative components")
+            object.__setattr__(
+                self, "staging_root", self.public_root / staging_relative
+            )
+
         expected_public = {
             "map_path": self.public_root / MAP_FILENAME,
             "inventory_path": self.public_root / INVENTORY_FILENAME,
@@ -250,6 +270,10 @@ class StoragePaths:
                     object.__setattr__(
                         self, "resolver_path", evidence.resolved_path / RESOLVER_FILENAME
                     )
+        if staging_relative is not None:
+            object.__setattr__(
+                self, "staging_root", self.public_root / staging_relative
+            )
         if self.vault_root is not None:
             vault_evidence = self.vault_root_evidence
             if vault_evidence is None:
@@ -355,6 +379,15 @@ class _Snapshot:
 
 
 @dataclass(frozen=True)
+class _CommittedEvidence:
+    device: int
+    inode: int
+    size: int
+    ctime_ns: int
+    sha256: str
+
+
+@dataclass(frozen=True)
 class _PreparedTarget:
     label: str
     target: Path
@@ -398,6 +431,66 @@ def _safe_vault_subdirectory(value: str | os.PathLike[str]) -> Path:
     if not parts or any(part in {"", ".", ".."} for part in parts):
         raise ValueError("vault_subdirectory must not contain traversal segments")
     return Path(*parts)
+
+
+def _safe_staging_subdirectory(value: str | os.PathLike[str]) -> Path:
+    raw = os.fspath(value)
+    normalized = raw.replace("\\", "/")
+    if (
+        not normalized
+        or normalized.startswith("/")
+        or Path(raw).is_absolute()
+        or PureWindowsPath(raw).is_absolute()
+        or bool(PureWindowsPath(raw).drive)
+    ):
+        raise ValueError("staging_root must be relative to public_root")
+    parts = normalized.split("/")
+    if any(part in {"", ".", ".."} for part in parts):
+        raise ValueError("staging_root must contain safe relative components")
+    if any(part.casefold() == ".env" for part in parts):
+        raise ValueError("staging_root must not traverse .env")
+    return Path(*parts)
+
+
+def default_storage_root_text(
+    *,
+    platform_name: str | None = None,
+    environ: Mapping[str, str] | None = None,
+    home: str | os.PathLike[str] | None = None,
+) -> str:
+    """Return the platform default as text without host path resolution."""
+
+    operating_system = platform.system() if platform_name is None else platform_name
+    environment = os.environ if environ is None else environ
+    home_text = os.fspath(Path.home() if home is None else home)
+    if operating_system.casefold().startswith("win"):
+        local_app_data = _environment_value(
+            environment, "LOCALAPPDATA", case_insensitive=True
+        )
+        data_home = (
+            PureWindowsPath(local_app_data)
+            if local_app_data
+            else PureWindowsPath(home_text) / "AppData" / "Local"
+        )
+        return str(data_home / "Vantasma" / "Agent能力地图")
+    pure_home = PurePosixPath(home_text)
+    if operating_system.casefold() in {"darwin", "mac", "macos"}:
+        return str(
+            pure_home
+            / "Library"
+            / "Application Support"
+            / "Vantasma"
+            / "Agent能力地图"
+        )
+    xdg_data_home = _environment_value(
+        environment, "XDG_DATA_HOME", case_insensitive=False
+    )
+    data_home = (
+        PurePosixPath(xdg_data_home)
+        if xdg_data_home
+        else pure_home / ".local" / "share"
+    )
+    return str(data_home / "vantasma" / "agent-capabilities")
 
 
 def _normalized_compare_path(path: Path) -> str:
@@ -484,6 +577,10 @@ def default_storage_paths(
     environment = os.environ if environ is None else environ
     operating_system = platform.system() if platform_name is None else platform_name
     windows = operating_system.casefold().startswith("win")
+    if windows and os.name != "nt":
+        raise ValueError(
+            "path_semantics_unavailable: Windows storage paths require a Windows host"
+        )
 
     if local_root is not None and public_root is not None:
         left = _expand_injected_path(local_root, injected_home)
@@ -568,9 +665,7 @@ def default_storage_paths(
         else _expand_injected_path(backup_root, injected_home)
     )
     selected_staging = (
-        None
-        if staging_root is None
-        else _expand_injected_path(staging_root, injected_home)
+        None if staging_root is None else _safe_staging_subdirectory(staging_root)
     )
     return StoragePaths(
         public_root=selected_public_root,
@@ -1303,7 +1398,10 @@ def _stage_target_at(parent_fd: int, target: _PreparedTarget) -> str:
 
 
 def _sync_committed_target_at(
-    parent_fd: int, target: _PreparedTarget, staged: _Snapshot
+    parent_fd: int,
+    target: _PreparedTarget,
+    staged: _Snapshot,
+    committed_evidence: dict[str, _CommittedEvidence],
 ) -> None:
     name = target.target.name
     flags = (
@@ -1334,8 +1432,14 @@ def _sync_committed_target_at(
             total += len(chunk)
         if digest.hexdigest() != target.expected_hash:
             raise OSError(f"committed hash mismatch for {target.label}")
+        committed_evidence[target.label] = _CommittedEvidence(
+            opened.st_dev,
+            opened.st_ino,
+            opened.st_size,
+            opened.st_ctime_ns,
+            digest.hexdigest(),
+        )
         os.fchmod(descriptor, target.mode)
-        os.fsync(descriptor)
         after = os.fstat(descriptor)
         linked = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
         if (
@@ -1347,9 +1451,38 @@ def _sync_committed_target_at(
             or linked.st_ino != after.st_ino
         ):
             raise OSError(f"committed target changed for {target.label}")
+        committed_evidence[target.label] = _CommittedEvidence(
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_ctime_ns,
+            digest.hexdigest(),
+        )
+        os.fsync(descriptor)
     finally:
         os.close(descriptor)
     _fsync_directory_fd(parent_fd)
+
+
+def _committed_evidence_from_snapshot(
+    snapshot: _Snapshot,
+) -> _CommittedEvidence | None:
+    if (
+        not snapshot.existed
+        or snapshot.payload is None
+        or snapshot.device is None
+        or snapshot.inode is None
+        or snapshot.size is None
+        or snapshot.ctime_ns is None
+    ):
+        return None
+    return _CommittedEvidence(
+        snapshot.device,
+        snapshot.inode,
+        snapshot.size,
+        snapshot.ctime_ns,
+        _sha256(snapshot.payload),
+    )
 
 
 @contextmanager
@@ -1407,7 +1540,24 @@ def _relative_directory_handle(
     parent_fd = root_fd
     try:
         for part in parts:
-            descriptor = os.open(part, flags, dir_fd=parent_fd)
+            try:
+                descriptor = os.open(part, flags, dir_fd=parent_fd)
+            except FileNotFoundError:
+                try:
+                    os.mkdir(part, 0o700, dir_fd=parent_fd)
+                    _fsync_directory_fd(parent_fd)
+                except FileExistsError:
+                    pass
+                try:
+                    descriptor = os.open(part, flags, dir_fd=parent_fd)
+                except OSError as error:
+                    raise ValueError(
+                        "storage staging path could not be opened safely"
+                    ) from error
+            except OSError as error:
+                raise ValueError(
+                    "storage staging path could not be opened safely"
+                ) from error
             metadata = os.fstat(descriptor)
             if not stat.S_ISDIR(metadata.st_mode):  # pragma: no cover - O_DIRECTORY
                 raise ValueError("storage staging path is not a directory")
@@ -1594,7 +1744,6 @@ def write_storage_bundle(
     if paths.staging_root is not None:
         if not _is_within(paths.staging_root, paths.public_root):
             raise ValueError("staging_root must be inside public_root")
-        _prepare_root(paths.staging_root)
     for _, target, _, _ in raw_targets:
         if target.parent not in {paths.public_root, paths.private_root}:
             raise ValueError("storage target escaped its declared root")
@@ -1670,6 +1819,7 @@ def write_storage_bundle(
         _fsync_directory_fd(private_stage_fd)
 
         replaced_targets: list[_PreparedTarget] = []
+        committed_evidence: dict[str, _CommittedEvidence] = {}
         try:
             for target in prepared:
                 if failure_injector is not None:
@@ -1704,7 +1854,12 @@ def write_storage_bundle(
                     dst_dir_fd=destination_fd,
                 )
                 replaced_targets.append(target)
-                _sync_committed_target_at(destination_fd, target, staged_snapshot)
+                _sync_committed_target_at(
+                    destination_fd,
+                    target,
+                    staged_snapshot,
+                    committed_evidence,
+                )
                 _validate_storage_roots(
                     paths,
                     public_operation_evidence=public_operation_evidence,
@@ -1712,21 +1867,40 @@ def write_storage_bundle(
                 )
         except BaseException as original_error:
             rollback_errors: list[BaseException] = []
+            rollback_conflicts: list[str] = []
             for target in reversed(replaced_targets):
+                parent_fd = (
+                    private_root_fd
+                    if target.target.parent == paths.private_root
+                    else public_root_fd
+                )
                 try:
-                    parent_fd = (
-                        private_root_fd
-                        if target.target.parent == paths.private_root
-                        else public_root_fd
-                    )
+                    current = _target_snapshot_at(parent_fd, target.target.name)
+                except (OSError, ValueError):
+                    rollback_conflicts.append(target.label)
+                    continue
+                if (
+                    _committed_evidence_from_snapshot(current)
+                    != committed_evidence.get(target.label)
+                ):
+                    rollback_conflicts.append(target.label)
+                    continue
+                try:
                     _restore_snapshot_at(
                         parent_fd, target.target, snapshots[target.target]
                     )
                 except BaseException as rollback_error:
                     rollback_errors.append(rollback_error)
-            if rollback_errors:
+            if rollback_conflicts or rollback_errors:
+                details: list[str] = []
+                if rollback_conflicts:
+                    details.append(
+                        "rollback_conflict: " + ", ".join(rollback_conflicts)
+                    )
+                if rollback_errors:
+                    details.append("rollback_incomplete")
                 raise RuntimeError(
-                    "storage bundle failed and rollback was incomplete"
+                    "storage bundle failed; " + "; ".join(details)
                 ) from original_error
             raise
 
@@ -1759,5 +1933,6 @@ __all__ = [
     "build_private_resolver_document",
     "default_storage_paths",
     "discover_obsidian_vaults",
+    "default_storage_root_text",
     "write_storage_bundle",
 ]
