@@ -138,11 +138,12 @@ class SkillDiscoveryTests(unittest.TestCase):
             self.assertEqual(system.description, "第一行 第二行")
             self.assertEqual(system.tags, ("automation", "中文"))
             self.assertEqual(system.aliases, ("Tool Box", "工具箱"))
-            self.assertEqual(system.scope, "system")
+            self.assertEqual(system.scope, "extra")
+            self.assertEqual(system.provider, "local-skill")
             self.assertEqual(system.source_locations[0].scope, "system")
             self.assertEqual(by_name["deep-skill"].description, "folded description")
-            self.assertEqual(by_name["embedded"].scope, "plugin")
-            self.assertEqual(by_name["能力"].provider, "extra")
+            self.assertEqual(by_name["embedded"].source_locations[0].scope, "plugin")
+            self.assertEqual(by_name["能力"].source_locations[0].provider, "extra")
             self.assertEqual(len(result.resolvers), 6)
 
     def test_invalid_and_non_utf8_frontmatter_falls_back_without_stopping(self) -> None:
@@ -222,6 +223,38 @@ class SkillDiscoveryTests(unittest.TestCase):
             self.assertEqual(by_name["alpha"].description, "plain description")
             self.assertEqual(
                 by_name["alpha # literal"].description, "quoted # literal"
+            )
+
+    def test_yaml_block_list_comments_preserve_quoted_literals(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "skills"
+            write_skill(
+                root / "list-comments",
+                frontmatter=(
+                    "name: list-comments\n"
+                    "aliases:\n"
+                    "  - first # unquoted comment\n"
+                    '  - "first # literal" # trailing comment'
+                ),
+            )
+            write_skill(
+                root / "ambiguous-list",
+                frontmatter="name: ignored\ntags:\n  - [nested] # unsupported",
+            )
+
+            result = discover_skills(
+                [RootSpec(root, "extra", "fixtures", "extra:fixtures", "<extra>")]
+            )
+
+            by_name = {capability.name: capability for capability in result.capabilities}
+            self.assertEqual(
+                by_name["list-comments"].aliases,
+                ("first", "first # literal"),
+            )
+            fallback = by_name["ambiguous-list"]
+            self.assertIn(
+                "invalid_frontmatter",
+                {diagnostic.code for diagnostic in fallback.diagnostics},
             )
 
     def test_reads_only_a_bounded_skill_frontmatter_prefix_and_never_env(self) -> None:
@@ -340,55 +373,115 @@ class SkillDiscoveryTests(unittest.TestCase):
     @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are required")
     def test_symlink_targets_with_env_segments_are_never_read_or_traversed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary) / "skills"
+            base = Path(temporary)
+            root = base / "skills"
+            allowed_targets = base / "allowed-targets"
+            allowed_targets.mkdir()
             file_case = root / "file-case"
             file_case.mkdir(parents=True)
-            env_file = file_case / ".env"
-            env_file.write_bytes(
-                b"---\nname: forbidden-file-target\n---\nprivate target bytes"
+            payload_canary = b"forbidden-chain-payload"
+            payload_file = allowed_targets / "payload.md"
+            payload_file.write_bytes(
+                b"---\nname: " + payload_canary + b"\n---\nprivate target bytes"
             )
+            (file_case / ".env").symlink_to(payload_file)
+            (file_case / "middle").symlink_to(".env")
             linked_skill = file_case / "skill"
             linked_skill.mkdir()
-            (linked_skill / "SKILL.md").symlink_to("../.env")
+            (linked_skill / "SKILL.md").symlink_to("../middle")
 
-            env_directory = root / "directory-case" / ".env"
+            directory_case = root / "directory-case"
+            directory_case.mkdir()
+            payload_directory = allowed_targets / "payload-directory"
             write_skill(
-                env_directory / "nested" / "skill",
+                payload_directory / "nested" / "skill",
                 frontmatter="name: forbidden-directory-target",
             )
-            (root / "directory-case" / "exposed").symlink_to(
-                env_directory, target_is_directory=True
+            (directory_case / ".ENV").symlink_to(
+                payload_directory, target_is_directory=True
+            )
+            (directory_case / "middle").symlink_to(".ENV", target_is_directory=True)
+            (directory_case / "exposed").symlink_to(
+                "middle", target_is_directory=True
             )
             write_skill(root / "healthy", frontmatter="name: healthy")
             real_open = open
             real_scandir = os.scandir
-            env_reads: list[Path] = []
-            env_scans: list[Path] = []
+            real_readlink = os.readlink
+            read_chunks: list[bytes] = []
+            payload_scans: list[Path] = []
+            readlink_steps: list[tuple[Path, str]] = []
+            payload_directory_id = (
+                payload_directory.stat().st_dev,
+                payload_directory.stat().st_ino,
+            )
+
+            class ReadSpy:
+                def __init__(self, handle: object) -> None:
+                    self._handle = handle
+
+                def __enter__(self) -> "ReadSpy":
+                    self._handle.__enter__()
+                    return self
+
+                def __exit__(self, *args: object) -> object:
+                    return self._handle.__exit__(*args)
+
+                def readline(self, size: int = -1) -> bytes:
+                    chunk = self._handle.readline(size)
+                    read_chunks.append(chunk)
+                    return chunk
 
             def recording_open(
                 path: object, *args: object, **kwargs: object
             ) -> object:
-                resolved = Path(path).resolve(strict=True)  # type: ignore[arg-type]
-                if ".env" in resolved.parts:
-                    env_reads.append(resolved)
-                return real_open(path, *args, **kwargs)
+                return ReadSpy(real_open(path, *args, **kwargs))
 
             def recording_scandir(path: object) -> object:
-                resolved = Path(path).resolve(strict=True)  # type: ignore[arg-type]
-                if ".env" in resolved.parts:
-                    env_scans.append(resolved)
+                if Path(path) == allowed_targets:
+                    raise PermissionError("keep the allowed target root unscanned")
+                target_stat = os.stat(path)
+                if (target_stat.st_dev, target_stat.st_ino) == payload_directory_id:
+                    payload_scans.append(Path(path))  # type: ignore[arg-type]
                 return real_scandir(path)
+
+            def recording_readlink(
+                path: object, *args: object, **kwargs: object
+            ) -> str:
+                target = real_readlink(path, *args, **kwargs)
+                readlink_steps.append((Path(path), os.fsdecode(target)))
+                return target
 
             with mock.patch(
                 "capability_map_core.skills.open", recording_open
-            ), mock.patch("capability_map_core.skills.os.scandir", recording_scandir):
+            ), mock.patch(
+                "capability_map_core.skills.os.scandir", recording_scandir
+            ), mock.patch(
+                "capability_map_core.skills.os.readlink", recording_readlink
+            ):
                 result = discover_skills(
-                    [RootSpec(root, "extra", "fixtures", "extra:fixtures", "<extra>")]
+                    [
+                        RootSpec(
+                            root,
+                            "extra",
+                            "fixtures",
+                            "extra:fixtures",
+                            "<extra>",
+                        ),
+                        RootSpec(
+                            allowed_targets,
+                            "extra",
+                            "targets",
+                            "extra:targets",
+                            "<targets>",
+                        ),
+                    ]
                 )
 
             self.assertEqual([item.name for item in result.capabilities], ["healthy"])
-            self.assertEqual(env_reads, [])
-            self.assertEqual(env_scans, [])
+            self.assertFalse(any(payload_canary in chunk for chunk in read_chunks))
+            self.assertEqual(payload_scans, [])
+            self.assertTrue(readlink_steps)
             self.assertGreaterEqual(
                 [item.code for item in result.diagnostics].count("env_path_blocked"),
                 2,
@@ -440,6 +533,68 @@ class SkillDiscoveryTests(unittest.TestCase):
                 after.capabilities[0].resolver_id,
             )
             self.assertEqual(len(after.capabilities[0].source_locations), 2)
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are required")
+    def test_higher_priority_project_alias_does_not_change_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            physical_root = base / "physical"
+            physical_skill = physical_root / "skill"
+            write_skill(physical_skill, frontmatter="name: cross-scope-alias")
+            user_root = base / "user"
+            project_root = base / "project"
+            user_root.mkdir()
+            project_root.mkdir()
+            (user_root / "visible").symlink_to(
+                physical_skill, target_is_directory=True
+            )
+            user_spec = RootSpec(
+                user_root, "user", "codex", "user:codex", "<user>"
+            )
+            project_spec = RootSpec(
+                project_root,
+                "project",
+                "shared",
+                "project:shared",
+                "<project>",
+            )
+            physical_spec = RootSpec(
+                physical_root,
+                "extra",
+                "physical",
+                "extra:physical",
+                "<physical>",
+            )
+            real_scandir = os.scandir
+
+            def hide_direct_root(path: object) -> object:
+                if Path(path) == physical_root:
+                    raise PermissionError("keep physical root available but hidden")
+                return real_scandir(path)
+
+            with mock.patch(
+                "capability_map_core.skills.os.scandir", hide_direct_root
+            ):
+                before = discover_skills([user_spec, physical_spec])
+                (project_root / "visible").symlink_to(
+                    physical_skill, target_is_directory=True
+                )
+                after = discover_skills(
+                    [project_spec, user_spec, physical_spec]
+                )
+
+            before_capability = before.capabilities[0]
+            after_capability = after.capabilities[0]
+            self.assertEqual(before_capability.id, after_capability.id)
+            self.assertEqual(
+                before_capability.resolver_id, after_capability.resolver_id
+            )
+            self.assertEqual(after_capability.scope, "extra")
+            self.assertEqual(after_capability.provider, "local-skill")
+            self.assertEqual(
+                {(source.scope, source.provider) for source in after_capability.source_locations},
+                {("user", "codex"), ("project", "shared")},
+            )
 
     def test_identical_physical_copies_never_collide_across_root_namespaces(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -494,6 +649,68 @@ class SkillDiscoveryTests(unittest.TestCase):
             self.assertEqual(len(same_namespace_evidence.capabilities), 2)
             self.assertEqual(
                 len({item.id for item in same_namespace_evidence.capabilities}), 2
+            )
+
+    def test_no_file_id_fallback_is_path_independent_and_marks_weak_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            moving_root = base / "moving"
+            original = write_skill(
+                moving_root / "z-origin",
+                frontmatter="name: fallback-identity\ndescription: stable",
+            )
+            moving_spec = RootSpec(
+                moving_root,
+                "extra",
+                "fixtures",
+                "extra:moving",
+                "<moving>",
+            )
+            first_root = base / "copy-one"
+            second_root = base / "copy-two"
+            metadata = "name: fallback-copy\ndescription: identical"
+            first_copy = write_skill(first_root / "same-relative", frontmatter=metadata)
+            second_copy = write_skill(second_root / "same-relative", frontmatter=metadata)
+            os.utime(first_copy, ns=(1_700_000_000_000_000_001,) * 2)
+            os.utime(second_copy, ns=(1_700_000_000_000_000_002,) * 2)
+
+            def no_file_id(path: Path) -> tuple[str, ...]:
+                return ("realpath", os.path.normcase(str(path.resolve(strict=True))))
+
+            with mock.patch(
+                "capability_map_core.skills._physical_key", no_file_id
+            ):
+                before_move = discover_skills([moving_spec])
+                original.parent.rename(moving_root / "a-new-origin")
+                after_move = discover_skills([moving_spec])
+                copies = discover_skills(
+                    [
+                        RootSpec(
+                            first_root,
+                            "extra",
+                            "same-provider",
+                            "extra:duplicate",
+                            "<one>",
+                        ),
+                        RootSpec(
+                            second_root,
+                            "extra",
+                            "same-provider",
+                            "extra:duplicate",
+                            "<two>",
+                        ),
+                    ]
+                )
+
+            self.assertEqual(before_move.capabilities[0].id, after_move.capabilities[0].id)
+            self.assertEqual(
+                before_move.capabilities[0].resolver_id,
+                after_move.capabilities[0].resolver_id,
+            )
+            self.assertEqual(len({item.id for item in copies.capabilities}), 2)
+            self.assertIn(
+                "weak_physical_identity",
+                {item.code for item in after_move.diagnostics},
             )
 
     @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are required")
