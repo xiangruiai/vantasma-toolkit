@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import errno
 import hashlib
-import inspect
 import json
 import os
 import secrets
@@ -33,14 +32,6 @@ _IGNORABLE_FSYNC_ERRORS = frozenset(
         getattr(errno, "EOPNOTSUPP", errno.EINVAL),
     }
 )
-try:
-    _REPLACE_PARAMETERS = inspect.signature(os.replace).parameters
-except (TypeError, ValueError):  # pragma: no cover - unusual Python ports
-    _REPLACE_PARAMETERS = {}
-_REPLACE_SUPPORTS_DIR_FD = {
-    "src_dir_fd",
-    "dst_dir_fd",
-}.issubset(_REPLACE_PARAMETERS)
 _DIR_FD_BACKEND_SUPPORTED = bool(
     getattr(os, "O_DIRECTORY", 0)
     and getattr(os, "O_NOFOLLOW", 0)
@@ -49,6 +40,8 @@ _DIR_FD_BACKEND_SUPPORTED = bool(
     and os.mkdir in os.supports_dir_fd
     and os.unlink in os.supports_dir_fd
     and os.rename in os.supports_dir_fd
+    and os.link in os.supports_dir_fd
+    and os.link in os.supports_follow_symlinks
 )
 
 
@@ -84,6 +77,7 @@ class FileMutation:
             raise ValueError("invalid transaction file mode")
         if not isinstance(self.parent_evidence, DirectoryEvidence):
             raise TypeError("parent_evidence must be DirectoryEvidence")
+        _validate_mutation_path(path, self.parent_evidence)
         object.__setattr__(self, "path", path)
 
 
@@ -106,11 +100,13 @@ class TransactionError(RuntimeError):
         *,
         manifest_path: Path | None = None,
         rollback_conflicts: Iterable[Path] = (),
+        recovery_paths: Iterable[Path] = (),
         cause: BaseException | None = None,
     ) -> None:
         super().__init__(message)
         self.manifest_path = manifest_path
         self.rollback_conflicts = tuple(rollback_conflicts)
+        self.recovery_paths = tuple(recovery_paths)
         self.cause = cause
 
 
@@ -135,10 +131,30 @@ class _CommittedEvidence:
     sha256: str
 
 
+def _validate_mutation_path(
+    path: Path, parent_evidence: DirectoryEvidence
+) -> None:
+    name = path.name
+    separators = tuple(
+        value for value in (os.sep, os.altsep) if value is not None
+    )
+    if (
+        name in {"", ".", ".."}
+        or any(character in name for character in ("\x00", "\r", "\n"))
+        or any(separator in name for separator in separators)
+    ):
+        raise ValueError("transaction path must use a safe basename")
+    try:
+        resolved_parent = path.parent.resolve(strict=False)
+    except OSError as error:
+        raise ValueError("transaction path parent could not be resolved") from error
+    if resolved_parent != parent_evidence.resolved_path:
+        raise ValueError("transaction path parent evidence mismatch")
+
+
 def _secure_backend_available() -> bool:
     return bool(
-        _REPLACE_SUPPORTS_DIR_FD
-        and _DIR_FD_BACKEND_SUPPORTED
+        _DIR_FD_BACKEND_SUPPORTED
         and callable(getattr(os, "fchmod", None))
     )
 
@@ -351,12 +367,13 @@ def _write_backup_manifest(
     backup_root_evidence: DirectoryEvidence,
     mutations: tuple[FileMutation, ...],
     plan_hash: str,
-) -> tuple[Path, Path]:
+) -> tuple[Path, Path, int]:
     root_fd = _open_evidence_directory(
         backup_root_evidence, create=True, label="backup root"
     )
     transaction_name = f"instruction-{plan_hash[:16]}-{secrets.token_hex(6)}"
     transaction_fd = -1
+    completed = False
     try:
         os.mkdir(transaction_name, 0o700, dir_fd=root_fd)
         _fsync_directory(root_fd)
@@ -405,12 +422,13 @@ def _write_backup_manifest(
         ).encode("utf-8")
         _write_new_at(transaction_fd, "manifest.json", payload, 0o600)
         _fsync_directory(transaction_fd)
+        completed = True
     finally:
-        if transaction_fd >= 0:
+        if transaction_fd >= 0 and not completed:
             os.close(transaction_fd)
         os.close(root_fd)
     directory = backup_root_evidence.resolved_path / transaction_name
-    return directory, directory / "manifest.json"
+    return directory, directory / "manifest.json", transaction_fd
 
 
 def _committed_evidence(
@@ -449,27 +467,51 @@ def _still_owned(snapshot: _Snapshot, evidence: _CommittedEvidence) -> bool:
     )
 
 
-def _restore_at(parent_fd: int, mutation: FileMutation) -> None:
-    name = mutation.path.name
-    if not mutation.expected_exists:
-        os.unlink(name, dir_fd=parent_fd)
-        _fsync_directory(parent_fd)
-        return
-    temporary = f".vantasma-instruction-rollback-{secrets.token_hex(12)}"
+def _link_no_replace(parent_fd: int, source: str, destination: str) -> None:
+    os.link(
+        source,
+        destination,
+        src_dir_fd=parent_fd,
+        dst_dir_fd=parent_fd,
+        follow_symlinks=False,
+    )
+
+
+def _restore_claim_no_replace(
+    parent_fd: int, claim_name: str, target_name: str
+) -> bool:
     try:
-        _write_new_at(parent_fd, temporary, mutation.original_bytes, mutation.mode)
-        os.replace(
-            temporary,
-            name,
-            src_dir_fd=parent_fd,
-            dst_dir_fd=parent_fd,
-        )
-        _fsync_directory(parent_fd)
-    finally:
-        try:
-            os.unlink(temporary, dir_fd=parent_fd)
-        except FileNotFoundError:
-            pass
+        _link_no_replace(parent_fd, claim_name, target_name)
+    except FileExistsError:
+        return False
+    os.unlink(claim_name, dir_fd=parent_fd)
+    _fsync_directory(parent_fd)
+    return True
+
+
+def _preserve_claim_in_backup(
+    parent_fd: int,
+    claim_name: str,
+    backup_fd: int,
+    backup_directory: Path,
+    recovery_index: int,
+) -> Path:
+    claimed = _snapshot_at(parent_fd, claim_name)
+    if not claimed.existed or claimed.payload is None:
+        raise OSError("claimed transaction target disappeared")
+    recovery_name = f"claim-recovery-{recovery_index:04d}.bin"
+    _write_new_at(backup_fd, recovery_name, claimed.payload, 0o600)
+    recovered = _snapshot_at(backup_fd, recovery_name)
+    if (
+        recovered.payload is None
+        or hashlib.sha256(recovered.payload).hexdigest()
+        != hashlib.sha256(claimed.payload).hexdigest()
+    ):
+        raise OSError("claim recovery backup verification failed")
+    _fsync_directory(backup_fd)
+    os.unlink(claim_name, dir_fd=parent_fd)
+    _fsync_directory(parent_fd)
+    return backup_directory / recovery_name
 
 
 def apply_file_transaction(
@@ -485,6 +527,8 @@ def apply_file_transaction(
     values = tuple(mutations)
     if not values:
         return TransactionReceipt(plan_hash, (), None, None)
+    for mutation in values:
+        _validate_mutation_path(mutation.path, mutation.parent_evidence)
     if not _secure_backend_available():
         raise RuntimeError("secure_transaction_backend_unavailable")
     if len({item.path for item in values}) != len(values):
@@ -499,9 +543,12 @@ def apply_file_transaction(
 
     parent_handles: dict[Path, int] = {}
     staged_names: dict[Path, str] = {}
+    staged_evidence: dict[Path, _CommittedEvidence] = {}
+    claim_names: dict[Path, str] = {}
     committed: list[tuple[FileMutation, _CommittedEvidence]] = []
     manifest_path: Path | None = None
     backup_directory: Path | None = None
+    backup_fd = -1
     try:
         for mutation in values:
             parent_key = mutation.path.parent
@@ -516,7 +563,7 @@ def apply_file_transaction(
             if not _matches_expected(current, mutation):
                 raise TransactionError("stale transaction target")
 
-        backup_directory, manifest_path = _write_backup_manifest(
+        backup_directory, manifest_path, backup_fd = _write_backup_manifest(
             backup_root_evidence, values, plan_hash
         )
 
@@ -532,29 +579,54 @@ def apply_file_transaction(
                 != hashlib.sha256(mutation.target_bytes).hexdigest()
             ):
                 raise OSError("staged transaction hash mismatch")
+            staged_evidence[mutation.path] = _committed_evidence(
+                staged,
+                hashlib.sha256(mutation.target_bytes).hexdigest(),
+                include_ctime=False,
+            )
 
         for mutation in values:
             parent_fd = parent_handles[mutation.path.parent]
-            current = _snapshot_at(parent_fd, mutation.path.name)
-            if not _matches_expected(current, mutation):
-                raise TransactionError("stale transaction target")
             temporary = staged_names[mutation.path]
-            staged = _snapshot_at(parent_fd, temporary)
             desired_hash = hashlib.sha256(mutation.target_bytes).hexdigest()
-            os.replace(
-                temporary,
-                mutation.path.name,
-                src_dir_fd=parent_fd,
-                dst_dir_fd=parent_fd,
-            )
-            committed.append(
-                (
-                    mutation,
-                    _committed_evidence(
-                        staged, desired_hash, include_ctime=False
-                    ),
+            if mutation.expected_exists:
+                if failure_injector is not None:
+                    failure_injector("before_claim", mutation.path)
+                claim_name = (
+                    f".vantasma-instruction-claim-{secrets.token_hex(12)}"
                 )
-            )
+                _write_new_at(parent_fd, claim_name, b"", 0o600)
+                try:
+                    os.rename(
+                        mutation.path.name,
+                        claim_name,
+                        src_dir_fd=parent_fd,
+                        dst_dir_fd=parent_fd,
+                    )
+                except BaseException:
+                    try:
+                        os.unlink(claim_name, dir_fd=parent_fd)
+                    except FileNotFoundError:
+                        pass
+                    raise
+                claim_names[mutation.path] = claim_name
+                _fsync_directory(parent_fd)
+                claimed = _snapshot_at(parent_fd, claim_name)
+                if not _matches_expected(claimed, mutation):
+                    raise TransactionError(
+                        "stale transaction target after atomic claim conflict"
+                    )
+            if failure_injector is not None:
+                failure_injector("before_link", mutation.path)
+            try:
+                _link_no_replace(parent_fd, temporary, mutation.path.name)
+            except FileExistsError as error:
+                raise TransactionError(
+                    "stale transaction target: concurrent create conflict",
+                    cause=error,
+                ) from error
+            committed.append((mutation, staged_evidence[mutation.path]))
+            os.unlink(temporary, dir_fd=parent_fd)
             staged_names.pop(mutation.path)
             if failure_injector is not None:
                 failure_injector("after_replace", mutation.path)
@@ -563,6 +635,21 @@ def apply_file_transaction(
             evidence = _committed_evidence(after, desired_hash)
             committed[-1] = (mutation, evidence)
 
+        for mutation, _evidence in committed:
+            claim_name = claim_names.get(mutation.path)
+            if claim_name is not None:
+                claimed = _snapshot_at(
+                    parent_handles[mutation.path.parent], claim_name
+                )
+                if not _matches_expected(claimed, mutation):
+                    raise TransactionError(
+                        "claimed original changed during transaction conflict"
+                    )
+        for mutation, _evidence in committed:
+            claim_name = claim_names.pop(mutation.path, None)
+            if claim_name is not None:
+                os.unlink(claim_name, dir_fd=parent_handles[mutation.path.parent])
+                _fsync_directory(parent_handles[mutation.path.parent])
         return TransactionReceipt(
             plan_hash,
             tuple(item.path for item in values),
@@ -571,7 +658,9 @@ def apply_file_transaction(
         )
     except BaseException as error:
         conflicts: list[Path] = []
+        recovery_paths: list[Path] = []
         rollback_errors: list[BaseException] = []
+        had_transaction_state = bool(committed or claim_names)
         for mutation, evidence in reversed(committed):
             parent_fd = parent_handles.get(mutation.path.parent)
             if parent_fd is None:  # pragma: no cover - committed implies an fd
@@ -581,11 +670,67 @@ def apply_file_transaction(
                 current = _snapshot_at(parent_fd, mutation.path.name)
                 if not _still_owned(current, evidence):
                     conflicts.append(mutation.path)
-                    continue
-                _restore_at(parent_fd, mutation)
+                else:
+                    os.unlink(mutation.path.name, dir_fd=parent_fd)
+                    _fsync_directory(parent_fd)
+                claim_name = claim_names.pop(mutation.path, None)
+                if claim_name is not None:
+                    if current.existed and _still_owned(current, evidence):
+                        if not _restore_claim_no_replace(
+                            parent_fd, claim_name, mutation.path.name
+                        ):
+                            conflicts.append(mutation.path)
+                            recovery_paths.append(
+                                _preserve_claim_in_backup(
+                                    parent_fd,
+                                    claim_name,
+                                    backup_fd,
+                                    backup_directory,  # type: ignore[arg-type]
+                                    len(recovery_paths),
+                                )
+                            )
+                    else:
+                        recovery_paths.append(
+                            _preserve_claim_in_backup(
+                                parent_fd,
+                                claim_name,
+                                backup_fd,
+                                backup_directory,  # type: ignore[arg-type]
+                                len(recovery_paths),
+                            )
+                        )
             except BaseException as rollback_error:
                 rollback_errors.append(rollback_error)
-        if isinstance(error, TransactionError) and not committed:
+        for path, claim_name in tuple(claim_names.items()):
+            parent_fd = parent_handles.get(path.parent)
+            if parent_fd is None:
+                conflicts.append(path)
+                continue
+            try:
+                current = _snapshot_at(parent_fd, path.name)
+                if not current.existed and _restore_claim_no_replace(
+                    parent_fd, claim_name, path.name
+                ):
+                    claim_names.pop(path, None)
+                    continue
+                conflicts.append(path)
+                recovery_paths.append(
+                    _preserve_claim_in_backup(
+                        parent_fd,
+                        claim_name,
+                        backup_fd,
+                        backup_directory,  # type: ignore[arg-type]
+                        len(recovery_paths),
+                    )
+                )
+                claim_names.pop(path, None)
+            except BaseException as rollback_error:
+                rollback_errors.append(rollback_error)
+        if (
+            isinstance(error, TransactionError)
+            and not had_transaction_state
+            and manifest_path is None
+        ):
             raise
         message = f"instruction transaction failed: {error}"
         if conflicts:
@@ -596,6 +741,7 @@ def apply_file_transaction(
             message,
             manifest_path=manifest_path,
             rollback_conflicts=conflicts,
+            recovery_paths=recovery_paths,
             cause=error,
         ) from error
     finally:
@@ -608,6 +754,8 @@ def apply_file_transaction(
                     pass
         for descriptor in parent_handles.values():
             os.close(descriptor)
+        if backup_fd >= 0:
+            os.close(backup_fd)
 
 
 __all__ = [

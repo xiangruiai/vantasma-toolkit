@@ -25,7 +25,11 @@ from capability_map_core.instructions import (  # noqa: E402
     resolve_instruction_targets,
 )
 import capability_map_core.transactions as transactions_module  # noqa: E402
-from capability_map_core.transactions import TransactionError  # noqa: E402
+from capability_map_core.transactions import (  # noqa: E402
+    FileMutation,
+    TransactionError,
+    capture_directory_evidence,
+)
 
 
 class InstructionTargetResolutionTests(unittest.TestCase):
@@ -387,6 +391,199 @@ class InstructionPlanTests(unittest.TestCase):
                 resolver_path=Path("/fixture/resolver.json"),
             )
 
+    def test_uninstall_default_backup_root_uses_injected_home(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            injected_home = base / "injected-home"
+            project = base / "project"
+            injected_home.mkdir()
+            project.mkdir()
+            request = InstructionTargetRequest(
+                home=injected_home,
+                project_root=project,
+                codex_home=base / "codex",
+                agents=("codex",),
+                scopes=("project",),
+            )
+
+            plan = build_uninstall_plan(request, installation_id="home-root")
+
+            self.assertEqual(
+                plan.backup_root,
+                injected_home
+                / ".local"
+                / "share"
+                / "vantasma"
+                / "agent-capabilities"
+                / ".private"
+                / "instruction-backups",
+            )
+
+    def test_uninstall_checks_shadowed_codex_user_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            home = base / "home"
+            codex_home = base / "codex"
+            project = base / "project"
+            home.mkdir()
+            codex_home.mkdir()
+            project.mkdir()
+            request = InstructionTargetRequest(
+                home=home,
+                project_root=project,
+                codex_home=codex_home,
+                agents=("codex",),
+                scopes=("user",),
+            )
+            agents = codex_home / "AGENTS.md"
+            original = b"# base user rules\n"
+            agents.write_bytes(original)
+            install = build_instruction_plan(
+                request,
+                installation_id="shadow-history",
+                map_path=(base / "map.md").absolute(),
+                resolver_path=(base / "resolver.json").absolute(),
+                backup_root=(base / "backups").absolute(),
+            )
+            apply_instruction_plan(
+                install, confirmed=True, expected_plan_hash=install.plan_hash
+            )
+            override = codex_home / "AGENTS.override.md"
+            override.write_bytes(b"new effective override\n")
+
+            uninstall = build_uninstall_plan(
+                request,
+                installation_id="shadow-history",
+                backup_root=(base / "backups").absolute(),
+            )
+
+            self.assertEqual(
+                [(item.target.path, item.operation) for item in uninstall.operations],
+                [(agents, "uninstall")],
+            )
+            apply_instruction_plan(
+                uninstall,
+                confirmed=True,
+                expected_plan_hash=uninstall.plan_hash,
+            )
+            self.assertEqual(agents.read_bytes(), original)
+            self.assertEqual(override.read_bytes(), b"new effective override\n")
+
+    def test_uninstall_follows_managed_block_moved_from_removed_override(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            home = base / "home"
+            codex_home = base / "codex"
+            project = base / "project"
+            home.mkdir()
+            codex_home.mkdir()
+            project.mkdir()
+            request = InstructionTargetRequest(
+                home=home,
+                project_root=project,
+                codex_home=codex_home,
+                agents=("codex",),
+                scopes=("user",),
+            )
+            override = codex_home / "AGENTS.override.md"
+            original = b"# override user rules\n"
+            override.write_bytes(original)
+            install = build_instruction_plan(
+                request,
+                installation_id="removed-override",
+                map_path=(base / "map.md").absolute(),
+                resolver_path=(base / "resolver.json").absolute(),
+                backup_root=(base / "backups").absolute(),
+            )
+            apply_instruction_plan(
+                install, confirmed=True, expected_plan_hash=install.plan_hash
+            )
+            agents = codex_home / "AGENTS.md"
+            override.rename(agents)
+
+            uninstall = build_uninstall_plan(
+                request,
+                installation_id="removed-override",
+                backup_root=(base / "backups").absolute(),
+            )
+            apply_instruction_plan(
+                uninstall,
+                confirmed=True,
+                expected_plan_hash=uninstall.plan_hash,
+            )
+
+            self.assertEqual(agents.read_bytes(), original)
+            self.assertFalse(override.exists())
+
+    def test_corrupt_shadowed_uninstall_candidate_makes_plan_inapplicable(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            home = base / "home"
+            codex_home = base / "codex"
+            project = base / "project"
+            home.mkdir()
+            codex_home.mkdir()
+            project.mkdir()
+            (codex_home / "AGENTS.override.md").write_bytes(b"effective override\n")
+            (codex_home / "AGENTS.md").write_bytes(
+                b"<!-- vantasma:discover-local-capabilities:start "
+                b"id=corrupt-shadow schema=1 -->\n"
+            )
+            request = InstructionTargetRequest(
+                home=home,
+                project_root=project,
+                codex_home=codex_home,
+                agents=("codex",),
+                scopes=("user",),
+            )
+
+            plan = build_uninstall_plan(
+                request,
+                installation_id="corrupt-shadow",
+                backup_root=(base / "backups").absolute(),
+            )
+
+            self.assertFalse(plan.applicable)
+            self.assertEqual(plan.operations[0].operation, "conflict")
+            self.assertTrue(plan.diagnostics)
+
+    def test_file_mutation_rejects_parent_evidence_mismatch_and_unsafe_name(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            expected_parent = base / "expected"
+            other_parent = base / "other"
+            expected_parent.mkdir()
+            other_parent.mkdir()
+            evidence = capture_directory_evidence(expected_parent)
+
+            with self.assertRaisesRegex(ValueError, "parent evidence"):
+                FileMutation(
+                    path=other_parent / "AGENTS.md",
+                    operation="install",
+                    expected_exists=False,
+                    expected_original_sha256=None,
+                    original_bytes=b"",
+                    target_bytes=b"managed\n",
+                    mode=0o644,
+                    newline="LF",
+                    parent_evidence=evidence,
+                )
+            with self.assertRaisesRegex(ValueError, "safe basename"):
+                FileMutation(
+                    path=expected_parent / "bad\x00name",
+                    operation="install",
+                    expected_exists=False,
+                    expected_original_sha256=None,
+                    original_bytes=b"",
+                    target_bytes=b"managed\n",
+                    mode=0o644,
+                    newline="LF",
+                    parent_evidence=evidence,
+                )
+
+            self.assertEqual(list(expected_parent.iterdir()), [])
+            self.assertEqual(list(other_parent.iterdir()), [])
+
 
 class InstructionApplyTests(unittest.TestCase):
     def _request(
@@ -477,6 +674,85 @@ class InstructionApplyTests(unittest.TestCase):
             self.assertEqual(target_path.read_bytes(), b"external change\n")
             self.assertFalse(plan.backup_root.exists())
 
+    def test_reviewer_window_existing_target_change_is_never_overwritten(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            target_path = base / "AGENTS.md"
+            target_path.write_bytes(b"planned original\n")
+            plan = self._plan(self._request(base), base)
+
+            def replace_during_claim_window(event: str, path: Path) -> None:
+                if event == "before_claim":
+                    path.write_bytes(b"concurrent writer owns this\n")
+
+            with self.assertRaisesRegex(TransactionError, "stale|conflict"):
+                apply_instruction_plan(
+                    plan,
+                    confirmed=True,
+                    expected_plan_hash=plan.plan_hash,
+                    failure_injector=replace_during_claim_window,
+                )
+
+            self.assertEqual(target_path.read_bytes(), b"concurrent writer owns this\n")
+            self.assertNotIn(
+                b"vantasma:discover-local-capabilities", target_path.read_bytes()
+            )
+
+    def test_open_writer_change_to_claim_is_detected_and_restored(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            target_path = base / "AGENTS.md"
+            target_path.write_bytes(b"planned original\n")
+            plan = self._plan(self._request(base), base)
+            writer = os.open(target_path, os.O_RDWR)
+            changed = False
+
+            def modify_claimed_inode(event: str, path: Path) -> None:
+                nonlocal changed
+                if event == "after_replace" and not changed:
+                    changed = True
+                    os.lseek(writer, 0, os.SEEK_SET)
+                    os.write(writer, b"open writer changed claim\n")
+                    os.ftruncate(writer, len(b"open writer changed claim\n"))
+                    os.fsync(writer)
+
+            try:
+                with self.assertRaisesRegex(TransactionError, "claim|conflict"):
+                    apply_instruction_plan(
+                        plan,
+                        confirmed=True,
+                        expected_plan_hash=plan.plan_hash,
+                        failure_injector=modify_claimed_inode,
+                    )
+            finally:
+                os.close(writer)
+
+            self.assertTrue(changed)
+            self.assertEqual(target_path.read_bytes(), b"open writer changed claim\n")
+
+    def test_reviewer_window_first_install_concurrent_create_is_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            target_path = base / "AGENTS.md"
+            plan = self._plan(self._request(base), base)
+
+            def create_during_link_window(event: str, path: Path) -> None:
+                if event == "before_link":
+                    path.write_bytes(b"concurrent first creator\n")
+
+            with self.assertRaisesRegex(TransactionError, "stale|conflict"):
+                apply_instruction_plan(
+                    plan,
+                    confirmed=True,
+                    expected_plan_hash=plan.plan_hash,
+                    failure_injector=create_during_link_window,
+                )
+
+            self.assertEqual(target_path.read_bytes(), b"concurrent first creator\n")
+            self.assertNotIn(
+                b"vantasma:discover-local-capabilities", target_path.read_bytes()
+            )
+
     def test_failure_after_one_commit_rolls_back_exact_bytes_and_mode(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
@@ -515,42 +791,42 @@ class InstructionApplyTests(unittest.TestCase):
             self.assertEqual(caught.exception.rollback_conflicts, ())
             self.assertTrue(caught.exception.manifest_path.is_file())
 
-    def test_post_replace_verification_failure_still_rolls_back_owned_target(self) -> None:
+    def test_post_link_verification_failure_still_rolls_back_owned_target(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
             target_path = base / "AGENTS.md"
-            original = b"original before replace\n"
+            original = b"original before link\n"
             target_path.write_bytes(original)
             target_path.chmod(0o640)
             plan = self._plan(self._request(base), base)
-            original_replace = transactions_module.os.replace
+            original_link = transactions_module.os.link
             original_snapshot = transactions_module._snapshot_at
-            replaced = False
+            linked = False
             failed_verification = False
 
-            def tracking_replace(source, destination, *args, **kwargs):
-                nonlocal replaced
-                result = original_replace(source, destination, *args, **kwargs)
+            def tracking_link(source, destination, *args, **kwargs):
+                nonlocal linked
+                result = original_link(source, destination, *args, **kwargs)
                 if (
                     destination == target_path.name
                     and str(source).startswith(".vantasma-instruction-stage-")
                 ):
-                    replaced = True
+                    linked = True
                 return result
 
-            def fail_first_post_replace_snapshot(parent_fd: int, name: str):
+            def fail_first_post_link_snapshot(parent_fd: int, name: str):
                 nonlocal failed_verification
-                if replaced and name == target_path.name and not failed_verification:
+                if linked and name == target_path.name and not failed_verification:
                     failed_verification = True
-                    raise OSError("injected post-replace verification failure")
+                    raise OSError("injected post-link verification failure")
                 return original_snapshot(parent_fd, name)
 
             with mock.patch.object(
-                transactions_module.os, "replace", side_effect=tracking_replace
+                transactions_module.os, "link", side_effect=tracking_link
             ), mock.patch.object(
                 transactions_module,
                 "_snapshot_at",
-                side_effect=fail_first_post_replace_snapshot,
+                side_effect=fail_first_post_link_snapshot,
             ):
                 with self.assertRaises(TransactionError) as caught:
                     apply_instruction_plan(
@@ -586,6 +862,10 @@ class InstructionApplyTests(unittest.TestCase):
 
             self.assertEqual(target_path.read_bytes(), b"concurrent owner\n")
             self.assertEqual(caught.exception.rollback_conflicts, (target_path,))
+            self.assertEqual(len(caught.exception.recovery_paths), 1)
+            self.assertEqual(
+                caught.exception.recovery_paths[0].read_bytes(), b"before\n"
+            )
 
     def test_idempotent_reinstall_and_uninstall_only_change_managed_block(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

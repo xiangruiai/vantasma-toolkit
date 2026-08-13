@@ -669,9 +669,8 @@ def build_uninstall_plan(
     if not isinstance(target_request, InstructionTargetRequest):
         raise TypeError("target_request must be an InstructionTargetRequest value")
     safe_id = _validate_installation_id(installation_id)
-    ordered = _sorted_targets(resolve_instruction_targets(target_request))
     private_backup = (
-        Path.home()
+        target_request.home
         / ".local"
         / "share"
         / "vantasma"
@@ -681,14 +680,19 @@ def build_uninstall_plan(
         if backup_root is None
         else _absolute_private_path(backup_root, "backup_root")
     )
-    operations = tuple(
+    candidate_operations = tuple(
         _operation_for_target(
             target,
             action="uninstall",
             installation_id=safe_id,
             rendered_block=None,
         )
-        for target in ordered
+        for target in _sorted_targets(_uninstall_candidate_targets(target_request))
+    )
+    operations = tuple(
+        operation
+        for operation in candidate_operations
+        if operation.operation != "noop" or operation.diagnostics
     )
     backup_evidence = capture_directory_evidence(private_backup)
     return _make_plan(
@@ -700,6 +704,67 @@ def build_uninstall_plan(
         backup_root_evidence=backup_evidence,
         map_path=None,
         resolver_path=None,
+    )
+
+
+def _uninstall_candidate_targets(
+    request: InstructionTargetRequest,
+) -> tuple[InstructionTarget, ...]:
+    """Return fixed uninstall candidates, including both Codex user files."""
+
+    candidates: list[InstructionTarget] = []
+    for agent in ("codex", "claude"):
+        if agent not in request.agents:
+            continue
+        for scope in ("user", "project"):
+            if scope not in request.scopes:
+                continue
+            if agent == "codex" and scope == "user":
+                candidates.extend(
+                    (
+                        InstructionTarget(
+                            "codex",
+                            "user",
+                            request.codex_home / "AGENTS.override.md",
+                            "Codex user uninstall candidate: override instruction file",
+                        ),
+                        InstructionTarget(
+                            "codex",
+                            "user",
+                            request.codex_home / "AGENTS.md",
+                            "Codex user uninstall candidate: base instruction file",
+                        ),
+                    )
+                )
+            elif agent == "codex":
+                candidates.append(
+                    InstructionTarget(
+                        "codex",
+                        "project",
+                        request.project_root / "AGENTS.md",  # type: ignore[operator]
+                        "fixed Codex project uninstall candidate",
+                    )
+                )
+            elif scope == "user":
+                candidates.append(
+                    InstructionTarget(
+                        "claude",
+                        "user",
+                        request.home / ".claude" / "CLAUDE.md",
+                        "fixed Claude user uninstall candidate",
+                    )
+                )
+            else:
+                candidates.append(
+                    InstructionTarget(
+                        "claude",
+                        "project",
+                        request.project_root / "CLAUDE.md",  # type: ignore[operator]
+                        "fixed Claude project uninstall candidate",
+                    )
+                )
+    return tuple(
+        sorted(candidates, key=lambda item: (item.agent, item.scope, str(item.path)))
     )
 
 
