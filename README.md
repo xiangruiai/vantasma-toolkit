@@ -2,7 +2,7 @@
 
 > 万涂幻象开源工具箱。
 >
-> 含 1 个 Web 应用（祥瑞白板录制工具）+ 1 个 Codex 插件（祥瑞任务面板）+ 1 个 Claude Code 插件（xiangrui-hud 状态栏）+ 15 个 Skill（按领域分 6 类）。
+> 含 1 个 Web 应用（祥瑞白板录制工具）+ 1 个 Codex 插件（祥瑞任务面板）+ 1 个 Claude Code 插件（xiangrui-hud 状态栏）+ 16 个 Skill（按领域分 7 类）。
 
 ---
 
@@ -37,7 +37,9 @@ vantasma-toolkit/
 ├── plugins/
 │   ├── xiangrui-taskboard/           ← 祥瑞任务面板 Codex 插件（看板 + Skill + taskctl）
 │   └── xiangrui-hud/                 ← Claude Code 实时状态栏 HUD（翠影绿主题，fork 自 claude-hud）
-└── skills/                              ← 15 个 Skill，按领域分 6 类
+└── skills/                              ← 16 个 Skill，按领域分 7 类
+    ├── Agent能力/
+    │   └── discover-local-capabilities/ 本机 Skill / CLI / MCP / Plugin 能力地图
     ├── 知识管理/
     │   └── three-layer-memory/          三层个人记忆系统
     ├── 文档自动化/
@@ -134,7 +136,13 @@ codex plugin add xiangrui-taskboard@vantasma-codex
 
 ## 4. Skills
 
-15 个 Skill 按领域分 6 类，分别归在 `skills/<领域>/` 下，可单独取用。
+16 个 Skill 按领域分 7 类，分别归在 `skills/<领域>/` 下，可单独取用。
+
+### 🤖 Agent 能力
+
+| Skill | 用途 | 详情 |
+|---|---|---|
+| `discover-local-capabilities` | **本机能力地图**：只读扫描已安装的 Skill、CLI、MCP 和 Plugin，生成“场景 → 首选能力”路由表 | [README](skills/Agent能力/discover-local-capabilities/README.md) |
 
 ### 🧠 知识管理
 

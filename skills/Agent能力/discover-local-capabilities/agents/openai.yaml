@@ -1,0 +1,4 @@
+interface:
+  display_name: "本机能力地图"
+  short_description: "扫描本机 Skill、CLI 与连接器，生成可验证能力地图"
+  default_prompt: "Use $discover-local-capabilities to scan this computer and generate a local capability map."
