@@ -536,100 +536,141 @@ def _measure_structure(value: Any) -> str | None:
     return None
 
 
-def _strip_toml_comment(line: str) -> str:
-    quote = ""
-    escaped = False
+def _toml_escape_length(line: str, index: int) -> int:
+    if index + 1 >= len(line):
+        raise ValueError("unterminated TOML escape")
+    escaped = line[index + 1]
+    if escaped in {'b', 't', 'n', 'f', 'r', '"', "\\"}:
+        return 2
+    if escaped not in {"u", "U"}:
+        raise ValueError("invalid TOML escape")
+    digits = 4 if escaped == "u" else 8
+    encoded = line[index + 2 : index + 2 + digits]
+    if len(encoded) != digits or re.fullmatch(r"[0-9A-Fa-f]+", encoded) is None:
+        raise ValueError("invalid TOML unicode escape")
+    codepoint = int(encoded, 16)
+    if codepoint > 0x10FFFF or 0xD800 <= codepoint <= 0xDFFF:
+        raise ValueError("invalid TOML unicode scalar")
+    return digits + 2
+
+
+def _scan_toml_line(line: str, stack: list[str]) -> str:
     output: list[str] = []
-    for character in line:
-        if escaped:
-            output.append(character)
-            escaped = False
-            continue
-        if character == "\\" and quote == '"':
-            output.append(character)
-            escaped = True
-            continue
-        if quote:
-            output.append(character)
-            if character == quote:
+    quote = ""
+    index = 0
+    pairs = {"]": "[", "}": "{"}
+    while index < len(line):
+        character = line[index]
+        if quote == '"':
+            if character == "\\":
+                length = _toml_escape_length(line, index)
+                output.append(line[index : index + length])
+                index += length
+                continue
+            if character == '"':
                 quote = ""
+            elif ord(character) < 0x20 and character != "\t":
+                raise ValueError("invalid TOML basic-string control character")
+            output.append(character)
+            index += 1
             continue
+        if quote == "'":
+            if character == "'":
+                quote = ""
+            elif ord(character) < 0x20 and character != "\t":
+                raise ValueError("invalid TOML literal-string control character")
+            output.append(character)
+            index += 1
+            continue
+        if line.startswith('"""', index) or line.startswith("'''", index):
+            raise ValueError("multiline TOML strings are unsupported")
         if character in {'"', "'"}:
             quote = character
-            output.append(character)
         elif character == "#":
             break
-        else:
-            output.append(character)
-    return "".join(output).strip()
+        elif character in "[{":
+            stack.append(character)
+        elif character in "]}":
+            if not stack or stack.pop() != pairs[character]:
+                raise ValueError("mismatched TOML delimiter")
+        output.append(character)
+        index += 1
+    if quote:
+        raise ValueError("unterminated TOML string")
+    return "".join(output).rstrip()
 
 
-def _split_toml_array(raw: str) -> tuple[str, ...]:
-    interior = raw[1:-1].strip()
-    if not interior:
-        return ()
-    items: list[str] = []
-    start = 0
-    quote = ""
-    escaped = False
-    for index, character in enumerate(interior):
-        if escaped:
-            escaped = False
+def _toml_statements(text: str) -> tuple[str, ...]:
+    statements: list[str] = []
+    pending: list[str] = []
+    stack: list[str] = []
+    for source_line in text.splitlines():
+        starts_statement = not pending
+        table_header = starts_statement and source_line.lstrip().startswith("[")
+        scanned = _scan_toml_line(source_line, stack)
+        if starts_statement and not scanned.strip():
             continue
-        if character == "\\" and quote == '"':
-            escaped = True
+        pending.append(scanned)
+        if table_header and stack:
+            raise ValueError("TOML table headers must occupy one line")
+        if not stack:
+            statement = "\n".join(pending).strip()
+            if statement:
+                statements.append(statement)
+            pending = []
+    if pending or stack:
+        raise ValueError("unterminated TOML statement")
+    return tuple(statements)
+
+
+def _decode_toml_basic_string(raw: str) -> str:
+    if len(raw) < 2 or raw[0] != '"' or raw[-1] != '"':
+        raise ValueError("invalid TOML basic string")
+    output: list[str] = []
+    index = 1
+    escapes = {
+        "b": "\b",
+        "t": "\t",
+        "n": "\n",
+        "f": "\f",
+        "r": "\r",
+        '"': '"',
+        "\\": "\\",
+    }
+    while index < len(raw) - 1:
+        character = raw[index]
+        if character == '"':
+            raise ValueError("unescaped quote in TOML basic string")
+        if character != "\\":
+            output.append(character)
+            index += 1
+            continue
+        length = _toml_escape_length(raw, index)
+        escaped = raw[index + 1]
+        if escaped in escapes:
+            output.append(escapes[escaped])
+        else:
+            output.append(chr(int(raw[index + 2 : index + length], 16)))
+        index += length
+    return "".join(output)
+
+
+def _split_toml_items(raw: str) -> tuple[str, ...]:
+    items: list[str] = []
+    stack: list[str] = []
+    quote = ""
+    start = 0
+    index = 0
+    pairs = {"]": "[", "}": "{"}
+    while index < len(raw):
+        character = raw[index]
+        if quote == '"' and character == "\\":
+            index += _toml_escape_length(raw, index)
             continue
         if quote:
             if character == quote:
                 quote = ""
-            continue
-        if character in {'"', "'"}:
-            quote = character
-        elif character == ",":
-            item = interior[start:index].strip()
-            if item:
-                items.append(item)
-            start = index + 1
-    if quote:
-        raise ValueError("unterminated TOML array string")
-    final = interior[start:].strip()
-    if final:
-        items.append(final)
-    return tuple(items)
-
-
-def _fallback_toml_value(raw: str) -> str | bool | list[str | bool]:
-    value = raw.strip()
-    if value.casefold() in {"true", "false"}:
-        return value.casefold() == "true"
-    if len(value) >= 2 and value[0] == value[-1] == '"':
-        decoded = json.loads(value)
-        if isinstance(decoded, str):
-            return decoded
-    if len(value) >= 2 and value[0] == value[-1] == "'":
-        return value[1:-1]
-    if len(value) >= 2 and value[0] == "[" and value[-1] == "]":
-        return [_fallback_toml_value(item) for item in _split_toml_array(value)]
-    raise ValueError("unsupported TOML subset value")
-
-
-def _toml_value_is_syntactically_valid(raw: str) -> bool:
-    value = raw.strip()
-    if not value:
-        return False
-    stack: list[str] = []
-    quote = ""
-    escaped = False
-    pairs = {"]": "[", "}": "{"}
-    for character in value:
-        if escaped:
-            escaped = False
-            continue
-        if quote:
-            if character == "\\" and quote == '"':
-                escaped = True
-            elif character == quote:
-                quote = ""
+            index += 1
             continue
         if character in {'"', "'"}:
             quote = character
@@ -637,21 +678,126 @@ def _toml_value_is_syntactically_valid(raw: str) -> bool:
             stack.append(character)
         elif character in "]}":
             if not stack or stack.pop() != pairs[character]:
-                return False
+                raise ValueError("mismatched TOML delimiter")
+        elif character == "," and not stack:
+            items.append(raw[start:index].strip())
+            start = index + 1
+        index += 1
     if quote or stack:
+        raise ValueError("unterminated TOML container")
+    items.append(raw[start:].strip())
+    return tuple(items)
+
+
+def _split_toml_assignment(raw: str) -> tuple[str, str]:
+    stack: list[str] = []
+    quote = ""
+    index = 0
+    pairs = {"]": "[", "}": "{"}
+    while index < len(raw):
+        character = raw[index]
+        if quote == '"' and character == "\\":
+            index += _toml_escape_length(raw, index)
+            continue
+        if quote:
+            if character == quote:
+                quote = ""
+            index += 1
+            continue
+        if character in {'"', "'"}:
+            quote = character
+        elif character in "[{":
+            stack.append(character)
+        elif character in "]}":
+            if not stack or stack.pop() != pairs[character]:
+                raise ValueError("mismatched TOML delimiter")
+        elif character == "=" and not stack:
+            key = raw[:index].strip()
+            value = raw[index + 1 :].strip()
+            if not key or not value:
+                raise ValueError("invalid TOML assignment")
+            return key, value
+        index += 1
+    raise ValueError("invalid TOML assignment")
+
+
+def _toml_value_is_syntactically_valid(raw: str) -> bool:
+    value = raw.strip()
+    if not value:
         return False
-    if value[0] in {'"', "'", "[", "{"}:
-        closing = {'"': '"', "'": "'", "[": "]", "{": "}"}[value[0]]
-        return value[-1] == closing
-    return bool(
-        re.fullmatch(
-            r"(?i)(?:true|false|[+-]?(?:inf|nan)|"
-            r"[+-]?(?:\d[\d_]*)(?:\.\d[\d_]*)?(?:e[+-]?\d[\d_]*)?|"
-            r"\d{4}-\d{2}-\d{2}(?:[Tt ][0-9:.+-Zz]+)?|"
-            r"\d{2}:\d{2}:[0-9.]+)",
-            value,
+    if value.startswith('"'):
+        try:
+            _decode_toml_basic_string(value)
+        except ValueError:
+            return False
+        return True
+    if value.startswith("'"):
+        return len(value) >= 2 and value.endswith("'") and "'" not in value[1:-1]
+    if value.startswith("["):
+        if not value.endswith("]"):
+            return False
+        try:
+            items = _split_toml_items(value[1:-1])
+        except ValueError:
+            return False
+        if items == ("",):
+            return True
+        return all(
+            item and _toml_value_is_syntactically_valid(item)
+            for item in items[:-1]
+        ) and (
+            not items[-1] or _toml_value_is_syntactically_valid(items[-1])
         )
+    if value.startswith("{"):
+        if not value.endswith("}"):
+            return False
+        try:
+            items = _split_toml_items(value[1:-1])
+        except ValueError:
+            return False
+        if items == ("",):
+            return True
+        if any(not item for item in items):
+            return False
+        for item in items:
+            try:
+                key, item_value = _split_toml_assignment(item)
+                if not _split_toml_dotted_key(key):
+                    return False
+            except ValueError:
+                return False
+            if not _toml_value_is_syntactically_valid(item_value):
+                return False
+        return True
+    decimal = r"(?:0|[1-9](?:_?\d)*)"
+    digits = r"\d(?:_?\d)*"
+    scalar_patterns = (
+        r"(?i:true|false)",
+        rf"[+-]?{decimal}",
+        r"0x[0-9A-Fa-f](?:_?[0-9A-Fa-f])*",
+        r"0o[0-7](?:_?[0-7])*",
+        r"0b[01](?:_?[01])*",
+        rf"[+-]?(?:{decimal}\.{digits}(?:[eE][+-]?{digits})?|"
+        rf"{decimal}[eE][+-]?{digits}|inf|nan)",
+        r"\d{4}-\d{2}-\d{2}",
+        r"\d{2}:\d{2}:\d{2}(?:\.\d+)?",
+        r"\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}:\d{2}"
+        r"(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})?",
     )
+    return any(re.fullmatch(pattern, value) is not None for pattern in scalar_patterns)
+
+
+def _fallback_toml_value(raw: str) -> Any:
+    value = raw.strip()
+    if value.casefold() in {"true", "false"}:
+        return value.casefold() == "true"
+    if value.startswith('"'):
+        return _decode_toml_basic_string(value)
+    if len(value) >= 2 and value[0] == value[-1] == "'":
+        if "'" in value[1:-1]:
+            raise ValueError("invalid TOML literal string")
+        return value[1:-1]
+    raise ValueError("unsupported TOML subset value")
 
 
 def _split_toml_dotted_key(raw: str) -> tuple[str, ...]:
@@ -680,7 +826,7 @@ def _split_toml_dotted_key(raw: str) -> tuple[str, ...]:
                 raise ValueError("unterminated TOML quoted key")
             token = raw[start : index + 1]
             value = (
-                json.loads(token) if quote == '"' else token[1:-1]
+                _decode_toml_basic_string(token) if quote == '"' else token[1:-1]
             )
             index += 1
         else:
@@ -708,31 +854,31 @@ def _parse_toml_subset(payload: bytes) -> dict[str, Any]:
     text = payload.decode("utf-8")
     result: dict[str, dict[str, dict[str, Any]]] = {}
     current: dict[str, Any] | None = None
-    key_re = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*)\s*=\s*(.+)$")
     retained_fields = frozenset(
         {"command", "url", "type", "transport", "enabled", "disabled"}
     )
-    for source_line in text.splitlines():
-        line = _strip_toml_comment(source_line)
-        if not line:
-            continue
-        if line.startswith("[["):
-            if not line.endswith("]]" ):
+    for statement in _toml_statements(text):
+        if statement.startswith("[["):
+            if "\n" in statement or not statement.endswith("]]" ):
                 raise ValueError("invalid TOML array table")
             try:
-                _split_toml_dotted_key(line[2:-2].strip())
+                table_parts = _split_toml_dotted_key(statement[2:-2].strip())
             except ValueError as error:
                 raise ValueError("invalid TOML array table") from error
+            if not table_parts:
+                raise ValueError("invalid TOML array table")
             current = None
             continue
-        if line.startswith("["):
-            if not line.endswith("]"):
+        if statement.startswith("["):
+            if "\n" in statement or not statement.endswith("]"):
                 raise ValueError("invalid TOML table")
             current = None
             try:
-                table_parts = _split_toml_dotted_key(line[1:-1].strip())
+                table_parts = _split_toml_dotted_key(statement[1:-1].strip())
             except ValueError as error:
                 raise ValueError("invalid TOML table") from error
+            if not table_parts:
+                raise ValueError("invalid TOML table")
             if (
                 len(table_parts) == 2
                 and table_parts[0] in {"mcp_servers", "mcpServers"}
@@ -741,20 +887,24 @@ def _parse_toml_subset(payload: bytes) -> dict[str, Any]:
                     table_parts[1], {}
                 )
             continue
-        key_match = key_re.fullmatch(line)
-        if key_match is None:
+        try:
+            raw_key, raw_value = _split_toml_assignment(statement)
+            key_parts = _split_toml_dotted_key(raw_key)
+        except ValueError as error:
+            raise ValueError("invalid TOML assignment") from error
+        if not key_parts:
             raise ValueError("invalid TOML assignment")
-        if not _toml_value_is_syntactically_valid(key_match.group(2)):
+        if not _toml_value_is_syntactically_valid(raw_value):
             raise ValueError("invalid TOML value")
         if current is None:
             continue
-        key = key_match.group(1)
+        if len(key_parts) != 1 or key_parts[0] not in retained_fields:
+            continue
         try:
-            parsed_value = _fallback_toml_value(key_match.group(2))
+            parsed_value = _fallback_toml_value(raw_value)
         except (TypeError, ValueError):
             continue
-        if key in retained_fields:
-            current[key] = parsed_value
+        current[key_parts[0]] = parsed_value
     return result
 
 

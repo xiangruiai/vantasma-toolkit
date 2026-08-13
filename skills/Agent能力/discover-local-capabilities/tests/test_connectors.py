@@ -611,6 +611,90 @@ values = [1, 2, 3]
                 2,
             )
 
+    def test_toml_fallback_rejects_invalid_escape_and_unclosed_string(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            invalid_escape = base / "invalid-escape.toml"
+            invalid_escape.write_text(
+                '[mcp_servers.escape]\ncommand = "' + "\\" + 'q"\n',
+                encoding="utf-8",
+            )
+            invalid_string = base / "invalid-string.toml"
+            invalid_string.write_text(
+                '[mcp_servers.string]\ncommand = "unterminated\n',
+                encoding="utf-8",
+            )
+            specs = [
+                ConnectorConfigSpec(
+                    path,
+                    "extra",
+                    f"invalid-string-{index}",
+                    "toml",
+                    f"invalid-string:{index}",
+                    f"<invalid-string:{index}>",
+                )
+                for index, path in enumerate(
+                    (invalid_escape, invalid_string), start=1
+                )
+            ]
+
+            with mock.patch.object(connector_module, "_tomllib", None):
+                result = discover_connectors(
+                    home=base / "empty-home", extra_config_paths=specs
+                )
+
+            self.assertFalse(result.capabilities)
+            self.assertEqual(
+                sum(item.code == "invalid_toml" for item in result.diagnostics),
+                2,
+            )
+
+    def test_toml_fallback_aggregates_multiline_values_and_quoted_hashes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            config = base / "multiline.toml"
+            config.write_text(
+                """
+[mcp_servers."quoted#server"]
+command = "fixture#command" # only this suffix is a comment
+args = [
+    "--flag",
+    "value#literal", # quoted hash is data
+]
+enabled = true
+
+[mcp_servers."quoted#server".env]
+TOKEN = "ignored#secret"
+OPTIONS = [
+    { name = "one#literal", enabled = true },
+    ["nested", 2],
+]
+""".strip(),
+                encoding="utf-8",
+            )
+            spec = ConnectorConfigSpec(
+                config,
+                "extra",
+                "multiline-fallback",
+                "toml",
+                "extra:multiline-fallback",
+                "<multiline-fallback>",
+            )
+
+            with mock.patch.object(connector_module, "_tomllib", None):
+                result = discover_connectors(
+                    home=base / "empty-home", extra_config_paths=[spec]
+                )
+
+            capability = _mcp_by(
+                result, "quoted#server", "multiline-fallback"
+            )
+            self.assertEqual(
+                capability.tags,
+                ("enabled:enabled", "transport:stdio"),
+            )
+            self.assertFalse(result.diagnostics)
+
     def test_same_mcp_name_in_different_container_namespaces_is_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
