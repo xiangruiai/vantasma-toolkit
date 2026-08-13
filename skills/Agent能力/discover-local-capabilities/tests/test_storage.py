@@ -647,6 +647,120 @@ class AtomicStorageWriterTests(unittest.TestCase):
             self.assertEqual(before, _bundle_bytes(paths))
             self.assertEqual(mtimes, {path: path.stat().st_mtime_ns for path in before})
 
+    def test_normal_commit_replace_is_handle_bound(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            paths = default_storage_paths(
+                home=base / "home",
+                local_root=base / "map",
+                private_root=base / "private",
+            )
+
+            with mock.patch.object(
+                storage_module.os, "replace", wraps=os.replace
+            ) as replaced, mock.patch.object(
+                storage_module.os, "open", wraps=os.open
+            ) as opened, mock.patch.object(
+                storage_module.os,
+                "chmod",
+                side_effect=AssertionError("path-based chmod is forbidden"),
+            ):
+                write_storage_bundle(paths, _artifacts("secure"), ())
+
+            self.assertEqual(replaced.call_count, 5)
+            for call in replaced.call_args_list:
+                self.assertEqual(Path(call.args[0]).name, call.args[0])
+                self.assertEqual(Path(call.args[1]).name, call.args[1])
+                self.assertIsInstance(call.kwargs.get("src_dir_fd"), int)
+                self.assertIsInstance(call.kwargs.get("dst_dir_fd"), int)
+            stable_names = {
+                paths.map_path.name,
+                paths.inventory_path.name,
+                paths.config_path.name,
+                paths.receipt_path.name,
+                paths.resolver_path.name,
+            }
+            stable_opens = [
+                call for call in opened.call_args_list if call.args[0] in stable_names
+            ]
+            self.assertTrue(stable_opens)
+            for call in stable_opens:
+                self.assertIsInstance(call.kwargs.get("dir_fd"), int)
+                self.assertTrue(call.args[1] & os.O_NOFOLLOW)
+
+    def test_missing_secure_storage_backend_fails_before_creating_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            paths = default_storage_paths(
+                home=base / "home",
+                local_root=base / "map",
+                private_root=base / "private",
+            )
+
+            with mock.patch.object(storage_module.os, "fchmod", None):
+                with self.assertRaisesRegex(
+                    RuntimeError, "secure_storage_backend_unavailable"
+                ):
+                    write_storage_bundle(paths, _artifacts("must-not-write"), ())
+
+            self.assertFalse(paths.public_root.exists())
+            self.assertFalse(paths.private_root.exists())
+
+    def test_root_and_stage_swap_during_replace_cannot_write_attacker_artifact(self) -> None:
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlinks unsupported")
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            public_root = base / "public-map"
+            parked_public = base / "parked-public-map"
+            attacker_root = base / "attacker-map"
+            attacker_root.mkdir()
+            paths = default_storage_paths(
+                home=base / "home",
+                local_root=public_root,
+                private_root=base / "private",
+            )
+            real_replace = os.replace
+            swapped = False
+
+            def swap_before_replace(
+                source: object, destination: object, *args: object, **kwargs: object
+            ) -> None:
+                nonlocal swapped
+                destination_name = os.fspath(destination)
+                if Path(destination_name).name == paths.map_path.name and not swapped:
+                    swapped = True
+                    original_stage = next(public_root.glob(".capability-stage-*"))
+                    public_root.rename(parked_public)
+                    public_root.symlink_to(attacker_root, target_is_directory=True)
+                    attacker_stage = attacker_root / original_stage.name
+                    attacker_stage.mkdir()
+                    (attacker_stage / Path(os.fspath(source)).name).write_bytes(
+                        b"attacker staged bytes"
+                    )
+                real_replace(source, destination, *args, **kwargs)
+
+            with mock.patch.object(
+                storage_module.os, "replace", side_effect=swap_before_replace
+            ):
+                with self.assertRaises((ValueError, RuntimeError)):
+                    write_storage_bundle(paths, _artifacts("raced"), ())
+
+            public_names = {
+                paths.map_path.name,
+                paths.inventory_path.name,
+                paths.config_path.name,
+                paths.receipt_path.name,
+            }
+            self.assertTrue(swapped)
+            self.assertTrue(
+                all(not (attacker_root / name).exists() for name in public_names)
+            )
+            self.assertTrue(
+                all(not (parked_public / name).exists() for name in public_names)
+            )
+            self.assertFalse(paths.resolver_path.exists())
+
     def test_successful_update_preserves_existing_public_modes(self) -> None:
         if os.name == "nt":
             self.skipTest("POSIX mode semantics")

@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import errno
 import hashlib
+import inspect
 import json
 import os
 import platform
 import re
 import secrets
 import stat
-import tempfile
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -40,6 +40,25 @@ _IGNORABLE_FSYNC_ERRORS = frozenset(
         getattr(errno, "ENOTSUP", errno.EINVAL),
         getattr(errno, "EOPNOTSUPP", errno.EINVAL),
     }
+)
+try:
+    _REPLACE_PARAMETERS = inspect.signature(os.replace).parameters
+except (TypeError, ValueError):  # pragma: no cover - unusual Python ports
+    _REPLACE_PARAMETERS = {}
+_REPLACE_SUPPORTS_DIR_FD = {
+    "src_dir_fd",
+    "dst_dir_fd",
+}.issubset(_REPLACE_PARAMETERS)
+_DIR_FD_BACKEND_SUPPORTED = bool(
+    getattr(os, "O_DIRECTORY", 0)
+    and getattr(os, "O_NOFOLLOW", 0)
+    and os.open in os.supports_dir_fd
+    and os.stat in os.supports_dir_fd
+    and os.mkdir in os.supports_dir_fd
+    and os.unlink in os.supports_dir_fd
+    and os.rmdir in os.supports_dir_fd
+    and os.rename in os.supports_dir_fd
+    and os.listdir in os.supports_fd
 )
 
 
@@ -1148,27 +1167,33 @@ def _prepare_root(root: Path) -> None:
         raise ValueError("storage root is not a directory")
 
 
-def _fsync_directory(directory: Path) -> None:
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0)
+def _secure_storage_backend_available() -> bool:
+    return bool(
+        _REPLACE_SUPPORTS_DIR_FD
+        and _DIR_FD_BACKEND_SUPPORTED
+        and callable(getattr(os, "fchmod", None))
+    )
+
+
+def _fsync_directory_fd(descriptor: int) -> None:
     try:
-        descriptor = os.open(directory, flags)
+        os.fsync(descriptor)
     except OSError as error:
-        if error.errno in _IGNORABLE_FSYNC_ERRORS:
-            return
-        raise
-    try:
-        try:
-            os.fsync(descriptor)
-        except OSError as error:
-            if error.errno not in _IGNORABLE_FSYNC_ERRORS:
-                raise
-    finally:
-        os.close(descriptor)
+        if error.errno not in _IGNORABLE_FSYNC_ERRORS:
+            raise
 
 
-def _write_file_fsynced(path: Path, payload: bytes, mode: int) -> None:
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
-    descriptor = os.open(path, flags, mode)
+def _write_file_fsynced_at(
+    parent_fd: int, name: str, payload: bytes, mode: int
+) -> None:
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0)
+        | os.O_NOFOLLOW
+    )
+    descriptor = os.open(name, flags, mode, dir_fd=parent_fd)
     try:
         offset = 0
         while offset < len(payload):
@@ -1178,74 +1203,161 @@ def _write_file_fsynced(path: Path, payload: bytes, mode: int) -> None:
             offset += written
         os.fchmod(descriptor, mode)
         os.fsync(descriptor)
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):  # pragma: no cover - open created it
+            raise OSError("staged target is not a regular file")
     finally:
         os.close(descriptor)
 
 
-def _stage_target(stage_directory: Path, target: _PreparedTarget) -> Path:
-    stage_path = stage_directory / target.target.name
-    _write_file_fsynced(stage_path, target.payload, target.mode)
-    verified = stage_path.read_bytes()
-    if _sha256(verified) != target.expected_hash:
+def _target_snapshot_at(parent_fd: int, name: str) -> _Snapshot:
+    try:
+        before = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return _Snapshot(False, None, None)
+    except OSError as error:
+        raise ValueError(f"storage target could not be inspected: {name}") from error
+    if stat.S_ISLNK(before.st_mode):
+        raise ValueError(f"refusing symbolic-link target: {name}")
+    if not stat.S_ISREG(before.st_mode):
+        raise ValueError(f"storage target is not a regular file: {name}")
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+        | os.O_NOFOLLOW
+    )
+    try:
+        descriptor = os.open(name, flags, dir_fd=parent_fd)
+    except OSError as error:
+        raise ValueError(f"storage target changed before opening: {name}") from error
+    try:
+        opened = os.fstat(descriptor)
+        before_evidence = (
+            before.st_dev,
+            before.st_ino,
+            before.st_mode,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        )
+        opened_evidence = (
+            opened.st_dev,
+            opened.st_ino,
+            opened.st_mode,
+            opened.st_size,
+            opened.st_mtime_ns,
+            opened.st_ctime_ns,
+        )
+        if not stat.S_ISREG(opened.st_mode) or opened_evidence != before_evidence:
+            raise ValueError(f"storage target changed while opening: {name}")
+        if opened.st_size > MAX_STORAGE_TARGET_BYTES:
+            raise ValueError(f"storage target exceeds the read limit: {name}")
+        chunks: list[bytes] = []
+        total = 0
+        while total <= MAX_STORAGE_TARGET_BYTES:
+            chunk = os.read(
+                descriptor,
+                min(_READ_CHUNK_BYTES, MAX_STORAGE_TARGET_BYTES + 1 - total),
+            )
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+        if total > MAX_STORAGE_TARGET_BYTES:
+            raise ValueError(f"storage target exceeds the read limit: {name}")
+        after = os.fstat(descriptor)
+        after_evidence = (
+            after.st_dev,
+            after.st_ino,
+            after.st_mode,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        )
+        if after_evidence != opened_evidence or total != opened.st_size:
+            raise ValueError(f"storage target changed while reading: {name}")
+        return _Snapshot(
+            True,
+            b"".join(chunks),
+            stat.S_IMODE(opened.st_mode),
+            opened.st_dev,
+            opened.st_ino,
+            opened.st_size,
+            opened.st_mtime_ns,
+            opened.st_ctime_ns,
+        )
+    finally:
+        os.close(descriptor)
+
+
+def _stage_target_at(parent_fd: int, target: _PreparedTarget) -> str:
+    name = target.target.name
+    _write_file_fsynced_at(parent_fd, name, target.payload, target.mode)
+    verified = _target_snapshot_at(parent_fd, name)
+    if verified.payload is None or _sha256(verified.payload) != target.expected_hash:
         raise OSError(f"staged hash mismatch for {target.label}")
     if target.json_document:
-        json.loads(verified.decode("utf-8"))
-    return stage_path
+        json.loads(verified.payload.decode("utf-8"))
+    return name
 
 
-def _restore_snapshot(target: Path, snapshot: _Snapshot) -> None:
-    if not snapshot.existed:
-        try:
-            metadata = os.lstat(target)
-        except FileNotFoundError:
-            return
-        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-            raise RuntimeError(f"unsafe rollback target: {target.name}")
-        target.unlink()
-        _fsync_directory(target.parent)
-        return
-    if snapshot.payload is None or snapshot.mode is None:  # pragma: no cover
-        raise RuntimeError("invalid rollback snapshot")
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=".capability-rollback-", dir=target.parent
+def _sync_committed_target_at(
+    parent_fd: int, target: _PreparedTarget, staged: _Snapshot
+) -> None:
+    name = target.target.name
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+        | os.O_NOFOLLOW
     )
-    temporary = Path(temporary_name)
+    descriptor = os.open(name, flags, dir_fd=parent_fd)
     try:
-        offset = 0
-        while offset < len(snapshot.payload):
-            written = os.write(descriptor, snapshot.payload[offset:])
-            if written <= 0:
-                raise OSError("short rollback write")
-            offset += written
-        os.fchmod(descriptor, snapshot.mode)
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_size != len(target.payload)
+            or opened.st_dev != staged.device
+            or opened.st_ino != staged.inode
+        ):
+            raise OSError(f"committed target identity mismatch for {target.label}")
+        digest = hashlib.sha256()
+        total = 0
+        while total < opened.st_size:
+            chunk = os.read(
+                descriptor, min(_READ_CHUNK_BYTES, opened.st_size - total)
+            )
+            if not chunk:
+                raise OSError(f"short committed read for {target.label}")
+            digest.update(chunk)
+            total += len(chunk)
+        if digest.hexdigest() != target.expected_hash:
+            raise OSError(f"committed hash mismatch for {target.label}")
+        os.fchmod(descriptor, target.mode)
         os.fsync(descriptor)
-        os.close(descriptor)
-        descriptor = -1
-        os.replace(temporary, target)
-        os.chmod(target, snapshot.mode, follow_symlinks=False)
-        _fsync_directory(target.parent)
+        after = os.fstat(descriptor)
+        linked = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        if (
+            after.st_dev != opened.st_dev
+            or after.st_ino != opened.st_ino
+            or after.st_size != opened.st_size
+            or stat.S_IMODE(after.st_mode) != target.mode
+            or linked.st_dev != after.st_dev
+            or linked.st_ino != after.st_ino
+        ):
+            raise OSError(f"committed target changed for {target.label}")
     finally:
-        if descriptor >= 0:
-            os.close(descriptor)
-        try:
-            temporary.unlink()
-        except FileNotFoundError:
-            pass
+        os.close(descriptor)
+    _fsync_directory_fd(parent_fd)
 
 
 @contextmanager
 def _directory_handle(
     root: Path, evidence: RootEvidence
-) -> Iterator[int | None]:
-    secure_dirfd = bool(
-        getattr(os, "O_DIRECTORY", 0)
-        and getattr(os, "O_NOFOLLOW", 0)
-        and os.stat in os.supports_dir_fd
-        and os.unlink in os.supports_dir_fd
-    )
-    if not secure_dirfd:  # pragma: no cover - Windows fallback
-        yield None
-        return
+) -> Iterator[int]:
+    if not _secure_storage_backend_available():
+        raise RuntimeError("secure_storage_backend_unavailable")
     flags = (
         os.O_RDONLY
         | getattr(os, "O_CLOEXEC", 0)
@@ -1275,12 +1387,99 @@ def _directory_handle(
         os.close(descriptor)
 
 
-def _restore_snapshot_at(
-    parent_fd: int | None, target: Path, snapshot: _Snapshot
-) -> None:
-    if parent_fd is None:  # pragma: no cover - Windows fallback
-        _restore_snapshot(target, snapshot)
+@contextmanager
+def _relative_directory_handle(
+    root_fd: int, relative: Path
+) -> Iterator[int]:
+    parts = tuple(part for part in relative.parts if part not in {"", "."})
+    if any(part == ".." for part in parts):  # pragma: no cover - caller validates
+        raise ValueError("storage staging path escaped its root")
+    if not parts:
+        yield root_fd
         return
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | os.O_DIRECTORY
+        | os.O_NOFOLLOW
+    )
+    opened: list[int] = []
+    parent_fd = root_fd
+    try:
+        for part in parts:
+            descriptor = os.open(part, flags, dir_fd=parent_fd)
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISDIR(metadata.st_mode):  # pragma: no cover - O_DIRECTORY
+                raise ValueError("storage staging path is not a directory")
+            opened.append(descriptor)
+            parent_fd = descriptor
+        yield parent_fd
+    finally:
+        for descriptor in reversed(opened):
+            os.close(descriptor)
+
+
+def _cleanup_stage_at(
+    parent_fd: int,
+    stage_name: str,
+    stage_fd: int,
+    stage_identity: tuple[int, int],
+) -> None:
+    for name in os.listdir(stage_fd):
+        metadata = os.stat(name, dir_fd=stage_fd, follow_symlinks=False)
+        if stat.S_ISDIR(metadata.st_mode):
+            raise RuntimeError("unexpected directory inside storage staging")
+        os.unlink(name, dir_fd=stage_fd)
+    _fsync_directory_fd(stage_fd)
+    try:
+        current = os.stat(stage_name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError as error:
+        raise RuntimeError("storage staging directory changed") from error
+    if (
+        stat.S_ISLNK(current.st_mode)
+        or not stat.S_ISDIR(current.st_mode)
+        or (current.st_dev, current.st_ino) != stage_identity
+    ):
+        raise RuntimeError("storage staging directory changed")
+    os.rmdir(stage_name, dir_fd=parent_fd)
+    _fsync_directory_fd(parent_fd)
+
+
+@contextmanager
+def _stage_directory_at(parent_fd: int) -> Iterator[int]:
+    stage_name = f".capability-stage-{secrets.token_hex(12)}"
+    os.mkdir(stage_name, 0o700, dir_fd=parent_fd)
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | os.O_DIRECTORY
+        | os.O_NOFOLLOW
+    )
+    stage_fd = -1
+    try:
+        stage_fd = os.open(stage_name, flags, dir_fd=parent_fd)
+        opened = os.fstat(stage_fd)
+        if not stat.S_ISDIR(opened.st_mode):  # pragma: no cover - O_DIRECTORY
+            raise RuntimeError("storage staging target is not a directory")
+        stage_identity = (opened.st_dev, opened.st_ino)
+        _fsync_directory_fd(parent_fd)
+        try:
+            yield stage_fd
+        finally:
+            _cleanup_stage_at(parent_fd, stage_name, stage_fd, stage_identity)
+    finally:
+        if stage_fd >= 0:
+            os.close(stage_fd)
+        else:
+            try:
+                os.rmdir(stage_name, dir_fd=parent_fd)
+            except FileNotFoundError:
+                pass
+
+
+def _restore_snapshot_at(
+    parent_fd: int, target: Path, snapshot: _Snapshot
+) -> None:
     name = target.name
     if not snapshot.existed:
         try:
@@ -1329,32 +1528,6 @@ def _restore_snapshot_at(
             pass
 
 
-def _cleanup_stage_at(parent_fd: int | None, stage: Path) -> None:
-    if parent_fd is None:  # pragma: no cover - Windows fallback
-        return
-    flags = (
-        os.O_RDONLY
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_DIRECTORY", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-    )
-    try:
-        stage_fd = os.open(stage.name, flags, dir_fd=parent_fd)
-    except FileNotFoundError:
-        return
-    try:
-        for name in os.listdir(stage_fd):
-            metadata = os.stat(name, dir_fd=stage_fd, follow_symlinks=False)
-            if stat.S_ISDIR(metadata.st_mode):
-                raise RuntimeError("unexpected directory inside storage staging")
-            os.unlink(name, dir_fd=stage_fd)
-        os.fsync(stage_fd)
-    finally:
-        os.close(stage_fd)
-    os.rmdir(stage.name, dir_fd=parent_fd)
-    os.fsync(parent_fd)
-
-
 def write_storage_bundle(
     paths: StoragePaths,
     artifacts: PublicArtifacts | Mapping[str, Any],
@@ -1369,6 +1542,8 @@ def write_storage_bundle(
 
     if not isinstance(paths, StoragePaths):
         raise TypeError("paths must be a StoragePaths value")
+    if not _secure_storage_backend_available():
+        raise RuntimeError("secure_storage_backend_unavailable")
     _validate_storage_roots(paths)
     public_artifacts = _coerce_artifacts(artifacts)
     records = _resolver_entries(resolver_records)
@@ -1460,6 +1635,7 @@ def write_storage_bundle(
         return StorageWriteResult(generation_id, hashes, (), receipt_info)
 
     public_stage_parent = paths.staging_root or paths.public_root
+    public_stage_relative = public_stage_parent.relative_to(paths.public_root)
     _validate_storage_roots(
         paths,
         public_operation_evidence=public_operation_evidence,
@@ -1469,26 +1645,29 @@ def write_storage_bundle(
         paths.public_root, public_operation_evidence
     ) as public_root_fd, _directory_handle(
         paths.private_root, private_operation_evidence
-    ) as private_root_fd, tempfile.TemporaryDirectory(
-        prefix=".capability-stage-", dir=public_stage_parent
-    ) as public_temporary, tempfile.TemporaryDirectory(
-        prefix=".capability-stage-", dir=paths.private_root
-    ) as private_temporary:
-        public_stage = Path(public_temporary)
-        private_stage = Path(private_temporary)
-        staged: dict[str, Path] = {}
+    ) as private_root_fd, _relative_directory_handle(
+        public_root_fd, public_stage_relative
+    ) as public_stage_parent_fd, _stage_directory_at(
+        public_stage_parent_fd
+    ) as public_stage_fd, _stage_directory_at(
+        private_root_fd
+    ) as private_stage_fd:
+        staged: dict[str, tuple[int, str]] = {}
         for target in prepared:
             _validate_storage_roots(
                 paths,
                 public_operation_evidence=public_operation_evidence,
                 private_operation_evidence=private_operation_evidence,
             )
-            stage_directory = (
-                private_stage if target.label == "resolver" else public_stage
+            stage_fd = (
+                private_stage_fd if target.label == "resolver" else public_stage_fd
             )
-            staged[target.label] = _stage_target(stage_directory, target)
-        _fsync_directory(public_stage)
-        _fsync_directory(private_stage)
+            staged[target.label] = (
+                stage_fd,
+                _stage_target_at(stage_fd, target),
+            )
+        _fsync_directory_fd(public_stage_fd)
+        _fsync_directory_fd(private_stage_fd)
 
         replaced_targets: list[_PreparedTarget] = []
         try:
@@ -1500,14 +1679,37 @@ def write_storage_bundle(
                     public_operation_evidence=public_operation_evidence,
                     private_operation_evidence=private_operation_evidence,
                 )
-                if _target_snapshot(target.target) != snapshots[target.target]:
+                destination_fd = (
+                    private_root_fd
+                    if target.target.parent == paths.private_root
+                    else public_root_fd
+                )
+                if (
+                    _target_snapshot_at(destination_fd, target.target.name)
+                    != snapshots[target.target]
+                ):
                     raise RuntimeError(
                         f"storage target changed concurrently: {target.label}"
                     )
-                os.replace(staged[target.label], target.target)
+                stage_fd, staged_name = staged[target.label]
+                staged_snapshot = _target_snapshot_at(stage_fd, staged_name)
+                if staged_snapshot.payload != target.payload:
+                    raise RuntimeError(
+                        f"storage staging changed concurrently: {target.label}"
+                    )
+                os.replace(
+                    staged_name,
+                    target.target.name,
+                    src_dir_fd=stage_fd,
+                    dst_dir_fd=destination_fd,
+                )
                 replaced_targets.append(target)
-                os.chmod(target.target, target.mode, follow_symlinks=False)
-                _fsync_directory(target.target.parent)
+                _sync_committed_target_at(destination_fd, target, staged_snapshot)
+                _validate_storage_roots(
+                    paths,
+                    public_operation_evidence=public_operation_evidence,
+                    private_operation_evidence=private_operation_evidence,
+                )
         except BaseException as original_error:
             rollback_errors: list[BaseException] = []
             for target in reversed(replaced_targets):
@@ -1527,15 +1729,7 @@ def write_storage_bundle(
                     "storage bundle failed and rollback was incomplete"
                 ) from original_error
             raise
-        finally:
-            if public_stage_parent == paths.public_root:
-                _cleanup_stage_at(public_root_fd, public_stage)
-            _cleanup_stage_at(private_root_fd, private_stage)
 
-    if os.name != "nt":
-        os.chmod(paths.resolver_path, 0o600, follow_symlinks=False)
-    _fsync_directory(paths.public_root)
-    _fsync_directory(paths.private_root)
     receipt_info = {
         "schema_version": 1,
         "generation_id": generation_id,
