@@ -451,9 +451,30 @@ class WindowsCliDiscoveryTests(unittest.TestCase):
 
 
 class CliVersionProbeTests(unittest.TestCase):
+    def test_windows_probe_is_securely_unsupported_without_spawning(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = _write_file(Path(temporary) / "tool")
+
+            with mock.patch(
+                "capability_map_core.clis.subprocess.Popen"
+            ) as popen:
+                result = probe_cli_version(
+                    executable,
+                    probe_platform="windows",
+                )
+
+            popen.assert_not_called()
+            self.assertEqual(result.status, "error")
+            self.assertIn(
+                "unsupported_secure_containment",
+                [diagnostic.code for diagnostic in result.diagnostics],
+            )
+
     def test_probe_uses_exact_argv_minimal_environment_limits_and_sanitizes_output(
         self,
     ) -> None:
+        if os.name == "nt":
+            self.skipTest("Windows probing is securely unsupported")
         with tempfile.TemporaryDirectory() as temporary:
             executable = _write_file(Path(temporary) / "tool")
             secret = "gh" + "p_" + "syntheticvalue123456"
@@ -485,12 +506,7 @@ class CliVersionProbeTests(unittest.TestCase):
             self.assertIs(kwargs["stdout"], subprocess.PIPE)
             self.assertIs(kwargs["stderr"], subprocess.PIPE)
             self.assertFalse(kwargs["shell"])
-            if os.name == "nt":
-                self.assertTrue(
-                    kwargs["creationflags"] & subprocess.CREATE_NEW_PROCESS_GROUP
-                )
-            else:
-                self.assertTrue(kwargs["start_new_session"])
+            self.assertTrue(kwargs["start_new_session"])
             self.assertLessEqual(MAX_PROBE_TIMEOUT_SECONDS, 3)
             self.assertTrue(
                 all(
@@ -594,8 +610,25 @@ class CliVersionProbeTests(unittest.TestCase):
                 stays_running=True,
             )
 
-            with mock.patch(
-                "capability_map_core.clis.subprocess.Popen", return_value=process
+            captures: list[object] = []
+            capture_type = cli_module._StreamCapture
+            original_init = capture_type.__init__
+
+            def tracking_init(capture, *args, **kwargs) -> None:
+                original_init(capture, *args, **kwargs)
+                captures.append(capture)
+
+            with (
+                mock.patch(
+                    "capability_map_core.clis.subprocess.Popen",
+                    return_value=process,
+                ),
+                mock.patch.object(
+                    capture_type,
+                    "__init__",
+                    autospec=True,
+                    side_effect=tracking_init,
+                ),
             ):
                 result = probe_cli_version(
                     executable,
@@ -612,6 +645,10 @@ class CliVersionProbeTests(unittest.TestCase):
             self.assertLessEqual(max(process.stderr.read_sizes), PROBE_READ_CHUNK_BYTES)
             self.assertTrue(process.stdout.closed)
             self.assertTrue(process.stderr.closed)
+            self.assertLessEqual(
+                sum(capture.max_retained for capture in captures),
+                257,
+            )
             self.assertIn(
                 "version_output_truncated",
                 [diagnostic.code for diagnostic in result.diagnostics],
@@ -642,25 +679,30 @@ class CliVersionProbeTests(unittest.TestCase):
         if os.name == "nt":
             self.skipTest("POSIX process-group fixture")
         with tempfile.TemporaryDirectory() as temporary:
+            child_pid_file = Path(temporary) / "child.pid"
             executable = _write_python_executable(
                 Path(temporary) / "spawning-tool",
-                "import subprocess, sys, time\n"
+                "import pathlib, subprocess, sys, time\n"
                 "child = subprocess.Popen(\n"
                 "    [sys.executable, '-c', 'import time; time.sleep(30)'],\n"
                 "    stdin=subprocess.DEVNULL, stdout=sys.stdout, stderr=sys.stderr,\n"
                 ")\n"
-                "print(child.pid, flush=True)\n"
+                f"pathlib.Path({str(child_pid_file)!r}).write_text(str(child.pid))\n"
                 "time.sleep(30)",
             )
             child_pid = 0
             started = time.monotonic()
             try:
-                result = probe_cli_version(executable, flags=(), timeout=0.3)
+                result = probe_cli_version(executable, flags=(), timeout=1.0)
                 elapsed = time.monotonic() - started
-                child_pid = int(result.output.strip().split()[0])
+                deadline = time.monotonic() + 1.0
+                while not child_pid_file.exists() and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertTrue(child_pid_file.exists())
+                child_pid = int(child_pid_file.read_text(encoding="utf-8"))
 
                 self.assertEqual(result.status, "timeout")
-                self.assertLess(elapsed, 2.0)
+                self.assertLess(elapsed, 3.0)
                 self.assertTrue(_wait_pid_gone(child_pid))
             finally:
                 if child_pid and _pid_exists(child_pid):
@@ -751,6 +793,34 @@ class CliVersionProbeTests(unittest.TestCase):
                 "version_output_truncated",
                 [diagnostic.code for diagnostic in result.diagnostics],
             )
+
+    def test_stderr_spool_is_closed_and_uses_full_budget_when_stdout_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = _write_file(Path(temporary) / "tool")
+            process = _FakeProcess(stderr=b"z" * 600)
+            spools: list[object] = []
+            real_temporary_file = tempfile.TemporaryFile
+
+            def tracking_temporary_file(*args, **kwargs):
+                spool = real_temporary_file(*args, **kwargs)
+                spools.append(spool)
+                return spool
+
+            with (
+                mock.patch(
+                    "capability_map_core.clis.subprocess.Popen",
+                    return_value=process,
+                ),
+                mock.patch(
+                    "capability_map_core.clis.tempfile.TemporaryFile",
+                    side_effect=tracking_temporary_file,
+                ),
+            ):
+                result = probe_cli_version(executable, output_limit=257)
+
+            self.assertEqual(result.output, "z" * 257)
+            self.assertTrue(spools)
+            self.assertTrue(all(spool.closed for spool in spools))
 
 
 if __name__ == "__main__":

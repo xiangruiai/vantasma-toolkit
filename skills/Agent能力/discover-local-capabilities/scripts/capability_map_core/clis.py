@@ -9,6 +9,7 @@ import platform
 import signal
 import stat
 import subprocess
+import tempfile
 import threading
 import time
 import unicodedata
@@ -555,6 +556,7 @@ class _StreamCapture:
         self._limit = limit
         self._retained = bytearray()
         self._overflow = overflow
+        self.max_retained = 0
         self.truncated = False
 
     def add(self, chunk: bytes) -> None:
@@ -563,15 +565,43 @@ class _StreamCapture:
         remaining = self._limit - len(self._retained)
         if remaining > 0:
             self._retained.extend(chunk[:remaining])
+            self.max_retained = max(self.max_retained, len(self._retained))
         if len(chunk) > remaining:
             self.truncated = True
             self._overflow.set()
 
-    def bytes(self) -> bytes:
-        return bytes(self._retained)
+    def take(self) -> bytearray:
+        retained = self._retained
+        self._retained = bytearray()
+        return retained
 
 
-def _drain_pipe(pipe: Any, capture: _StreamCapture) -> None:
+class _SpoolCapture:
+    """Drain one stream to a temporary file without retaining it in memory."""
+
+    def __init__(self, spool: Any, limit: int, overflow: threading.Event) -> None:
+        self._spool = spool
+        self._limit = limit
+        self._overflow = overflow
+        self.size = 0
+        self.truncated = False
+
+    def add(self, chunk: bytes) -> None:
+        if not chunk:
+            return
+        self._spool.write(chunk)
+        self.size += len(chunk)
+        if self.size > self._limit:
+            self.truncated = True
+            self._overflow.set()
+
+    def read_prefix(self, limit: int) -> bytes:
+        self._spool.flush()
+        self._spool.seek(0)
+        return self._spool.read(limit)
+
+
+def _drain_pipe(pipe: Any, capture: Any) -> None:
     try:
         while True:
             chunk = pipe.read(PROBE_READ_CHUNK_BYTES)
@@ -655,113 +685,8 @@ class _PosixProcessTree:
         return
 
 
-class _WindowsProcessTree:
-    """Windows Job Object guard with CTRL_BREAK as graceful first stage."""
-
-    _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
-    _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
-
-    def __init__(self, process: Any) -> None:
-        import ctypes
-        from ctypes import wintypes
-
-        class IoCounters(ctypes.Structure):
-            _fields_ = [
-                ("ReadOperationCount", ctypes.c_ulonglong),
-                ("WriteOperationCount", ctypes.c_ulonglong),
-                ("OtherOperationCount", ctypes.c_ulonglong),
-                ("ReadTransferCount", ctypes.c_ulonglong),
-                ("WriteTransferCount", ctypes.c_ulonglong),
-                ("OtherTransferCount", ctypes.c_ulonglong),
-            ]
-
-        class BasicLimitInformation(ctypes.Structure):
-            _fields_ = [
-                ("PerProcessUserTimeLimit", ctypes.c_longlong),
-                ("PerJobUserTimeLimit", ctypes.c_longlong),
-                ("LimitFlags", wintypes.DWORD),
-                ("MinimumWorkingSetSize", ctypes.c_size_t),
-                ("MaximumWorkingSetSize", ctypes.c_size_t),
-                ("ActiveProcessLimit", wintypes.DWORD),
-                ("Affinity", ctypes.c_size_t),
-                ("PriorityClass", wintypes.DWORD),
-                ("SchedulingClass", wintypes.DWORD),
-            ]
-
-        class ExtendedLimitInformation(ctypes.Structure):
-            _fields_ = [
-                ("BasicLimitInformation", BasicLimitInformation),
-                ("IoInfo", IoCounters),
-                ("ProcessMemoryLimit", ctypes.c_size_t),
-                ("JobMemoryLimit", ctypes.c_size_t),
-                ("PeakProcessMemoryUsed", ctypes.c_size_t),
-                ("PeakJobMemoryUsed", ctypes.c_size_t),
-            ]
-
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
-        kernel32.CreateJobObjectW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
-        kernel32.SetInformationJobObject.argtypes = (
-            wintypes.HANDLE,
-            ctypes.c_int,
-            ctypes.c_void_p,
-            wintypes.DWORD,
-        )
-        kernel32.AssignProcessToJobObject.argtypes = (
-            wintypes.HANDLE,
-            wintypes.HANDLE,
-        )
-        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
-        job = kernel32.CreateJobObjectW(None, None)
-        if not job:
-            raise OSError(ctypes.get_last_error(), "CreateJobObjectW failed")
-        information = ExtendedLimitInformation()
-        information.BasicLimitInformation.LimitFlags = (
-            self._JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-        )
-        if not kernel32.SetInformationJobObject(
-            job,
-            self._JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
-            ctypes.byref(information),
-            ctypes.sizeof(information),
-        ):
-            error = ctypes.get_last_error()
-            kernel32.CloseHandle(job)
-            raise OSError(error, "SetInformationJobObject failed")
-        process_handle = wintypes.HANDLE(int(process._handle))
-        if not kernel32.AssignProcessToJobObject(job, process_handle):
-            error = ctypes.get_last_error()
-            kernel32.CloseHandle(job)
-            raise OSError(error, "AssignProcessToJobObject failed")
-        self._kernel32 = kernel32
-        self._job = job
-        self._process = process
-
-    def terminate(self) -> None:
-        if self._process.poll() is None:
-            try:
-                self._process.send_signal(signal.CTRL_BREAK_EVENT)
-            except (OSError, ValueError):
-                self._process.terminate()
-
-    def kill(self) -> None:
-        self.close()
-        if self._process.poll() is None:
-            self._process.kill()
-
-    def alive(self) -> bool:
-        return self._process.poll() is None or self._job is not None
-
-    def close(self) -> None:
-        if self._job is not None:
-            self._kernel32.CloseHandle(self._job)
-            self._job = None
-
-
 def _process_tree_guard(process: Any) -> Any:
-    if os.name == "nt":
-        return _WindowsProcessTree(process)
-    if hasattr(process, "pid"):
+    if os.name == "posix" and hasattr(process, "pid"):
         return _PosixProcessTree(process)
     return _DirectProcessTree(process)
 
@@ -824,24 +749,29 @@ def _join_readers(readers: Iterable[threading.Thread], timeout: float) -> None:
 
 def _combine_probe_output(
     stdout: _StreamCapture,
-    stderr: _StreamCapture,
+    stderr: _SpoolCapture,
     *,
     limit: int,
 ) -> tuple[str, bool]:
-    stdout_bytes = stdout.bytes()
-    stderr_bytes = stderr.bytes()
-    separator = b"\n" if stdout_bytes and stderr_bytes else b""
-    combined = stdout_bytes + separator + stderr_bytes
-    truncated = stdout.truncated or stderr.truncated or len(combined) > limit
-    decoded = combined[:limit].decode("utf-8", errors="replace")
+    combined = stdout.take()
+    stderr_exists = stderr.size > 0
+    if combined and stderr_exists and len(combined) < limit:
+        combined.extend(b"\n")
+    remaining = max(0, limit - len(combined))
+    if remaining and stderr_exists:
+        combined.extend(stderr.read_prefix(remaining))
+    truncated = stdout.truncated or stderr.truncated or (
+        stdout.max_retained + (1 if stdout.max_retained and stderr_exists else 0)
+        + stderr.size
+        > limit
+    )
+    decoded = bytes(combined[:limit]).decode("utf-8", errors="replace")
     sanitized = sanitize_text(decoded, max_length=limit)
     bounded = sanitized.encode("utf-8")[:limit]
     return bounded.decode("utf-8", errors="ignore"), truncated
 
 
 def _popen_platform_options() -> dict[str, Any]:
-    if os.name == "nt":
-        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
     return {"start_new_session": True}
 
 
@@ -881,6 +811,7 @@ def probe_cli_version(
     flags: Sequence[str] | None = None,
     path: str | None = None,
     environ: Mapping[str, str] | None = None,
+    probe_platform: str | None = None,
     timeout: float = 2.0,
     output_limit: int = 4_096,
 ) -> CliVersionProbeResult:
@@ -888,11 +819,26 @@ def probe_cli_version(
 
     The default flag is the generic ``--version``. Callers may provide a
     different argv suffix explicitly; no command-specific flag table exists.
+    Windows probing is disabled because standard-library ``Popen`` cannot
+    atomically contain a suspended process in a Job Object before it runs.
     """
 
     executable_text = os.fspath(executable)
     if not executable_text or "\x00" in executable_text:
         raise ValueError("executable must be a non-empty exact path")
+    current_probe_platform = (
+        platform.system() if probe_platform is None else probe_platform
+    )
+    if current_probe_platform.casefold().startswith(("win", "nt")):
+        return CliVersionProbeResult(
+            "error",
+            diagnostics=(
+                _probe_diagnostic(
+                    "unsupported_secure_containment",
+                    "Windows version probing is disabled because secure pre-execution process-tree containment is unavailable.",
+                ),
+            ),
+        )
     _validate_native_executable(executable_text)
     probe_flags = ("--version",) if flags is None else tuple(flags)
     if any(not isinstance(flag, str) or "\x00" in flag for flag in probe_flags):
@@ -939,14 +885,16 @@ def probe_cli_version(
     all_readers: list[threading.Thread] = []
     tree: Any | None = None
     stdout_capture: _StreamCapture | None = None
-    stderr_capture: _StreamCapture | None = None
+    stderr_capture: _SpoolCapture | None = None
+    stderr_spool: Any | None = None
     stop_reason: str | None = None
     probe_error: Exception | None = None
     try:
         tree = _process_tree_guard(process)
         overflow = threading.Event()
         stdout_capture = _StreamCapture(bounded_limit, overflow)
-        stderr_capture = _StreamCapture(bounded_limit, overflow)
+        stderr_spool = tempfile.TemporaryFile(mode="w+b")
+        stderr_capture = _SpoolCapture(stderr_spool, bounded_limit, overflow)
         all_readers = [
             threading.Thread(
                 target=_drain_pipe,
@@ -989,15 +937,24 @@ def probe_cli_version(
         _close_probe_pipes(process)
         _join_readers(started_readers, _PROBE_THREAD_JOIN_SECONDS)
 
-    if stdout_capture is None or stderr_capture is None:
+    try:
+        if stdout_capture is None or stderr_capture is None:
+            output = ""
+            truncated = False
+        else:
+            output, truncated = _combine_probe_output(
+                stdout_capture,
+                stderr_capture,
+                limit=bounded_limit,
+            )
+    except Exception as error:
         output = ""
         truncated = False
-    else:
-        output, truncated = _combine_probe_output(
-            stdout_capture,
-            stderr_capture,
-            limit=bounded_limit,
-        )
+        if probe_error is None:
+            probe_error = error
+    finally:
+        if stderr_spool is not None:
+            stderr_spool.close()
     if probe_error is not None:
         return CliVersionProbeResult(
             "error",
