@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -15,10 +16,14 @@ TAXONOMY_PATH = PACKAGE_DIR / "references" / "scene-taxonomy.json"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from capability_map_core.classify import (  # noqa: E402
+    RouteMatch,
     RouteResult,
+    SceneDefinition,
+    UnresolvedSummary,
     classify_capabilities,
     load_taxonomy,
     route_query,
+    route_result_json,
 )
 from capability_map_core.models import (  # noqa: E402
     Capability,
@@ -31,6 +36,7 @@ from capability_map_core.render import (  # noqa: E402
     render_capability_map_markdown,
     render_inventory_json,
 )
+import scan_capabilities  # noqa: E402
 
 
 def capability(
@@ -166,6 +172,84 @@ class NeutralTaxonomyTests(unittest.TestCase):
         self.assertEqual(classified[0].scenes, ("automation",))
         self.assertEqual(classified[0].classification_confidence, 1.0)
 
+    def test_duplicate_ids_are_classified_independently_and_deterministically(self) -> None:
+        research = capability(
+            "Same Identity",
+            description="Research reports with source citations.",
+            tags=("research", "citations"),
+        )
+        media = capability(
+            "Same Identity",
+            description="Edit video and audio media.",
+            tags=("video", "audio"),
+        )
+        self.assertEqual(research.id, media.id)
+
+        forward = classify_capabilities(
+            (research, media), taxonomy_path=TAXONOMY_PATH
+        )
+        reverse = classify_capabilities(
+            (media, research), taxonomy_path=TAXONOMY_PATH
+        )
+
+        self.assertEqual(
+            [item.to_public_dict() for item in forward],
+            [item.to_public_dict() for item in reverse],
+        )
+        self.assertEqual(len(forward), 2)
+        by_description = {item.description: item for item in forward}
+        self.assertIn(
+            "search-research",
+            by_description["Research reports with source citations."].scenes,
+        )
+        self.assertIn(
+            "media", by_description["Edit video and audio media."].scenes
+        )
+
+    def test_scene_collections_reject_scalar_bytes_and_non_strings(self) -> None:
+        valid = {
+            "id": "testing-scene",
+            "label_zh": "测试",
+            "label_en": "Testing",
+            "kind_boosts": {"skill": 0.1},
+        }
+        invalid_fields = (
+            {"keywords": "research", "phrases": ()},
+            {"keywords": ("research",), "phrases": b"reports"},
+            {"keywords": ("research", 7), "phrases": ()},
+            {"keywords": ("research",), "phrases": ("reports", object())},
+        )
+        for fields in invalid_fields:
+            with self.subTest(fields=fields):
+                with self.assertRaises(TypeError):
+                    SceneDefinition(**valid, **fields)
+
+        with self.assertRaises(TypeError):
+            SceneDefinition(
+                **{**valid, "kind_boosts": "skill"},
+                keywords=("research",),
+                phrases=(),
+            )
+        with self.assertRaises(TypeError):
+            RouteMatch(
+                id="cap_test",
+                name="test",
+                kind="skill",
+                score=1.0,
+                evidence="",
+                scenes=(),
+                resolver_id="res_test",
+                state_warning="unknown",
+            )
+        with self.assertRaises(TypeError):
+            UnresolvedSummary(0, names=b"")
+        with self.assertRaises(TypeError):
+            RouteResult("test", matches="")
+        with self.assertRaises(TypeError):
+            render_inventory_json("", InventoryMetadata(""), ())
+        with self.assertRaises(TypeError):
+            render_inventory_json((), InventoryMetadata(""), diagnostics="")
+
 
 class QueryRoutingTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -285,6 +369,77 @@ class QueryRoutingTests(unittest.TestCase):
             "项", classified, taxonomy_path=TAXONOMY_PATH
         )
         self.assertEqual(one_character.matches, ())
+
+    def test_duplicate_route_records_are_independent_and_input_order_invariant(self) -> None:
+        citations = capability(
+            "Same Route Identity",
+            description="Research reports with citations.",
+            tags=("research", "citations"),
+        )
+        sources = capability(
+            "Same Route Identity",
+            description="Research reports from verified sources.",
+            tags=("research", "sources"),
+        )
+        self.assertEqual(citations.id, sources.id)
+
+        forward = route_query(
+            "research report citations",
+            (citations, sources),
+            taxonomy_path=TAXONOMY_PATH,
+        )
+        reverse = route_query(
+            "research report citations",
+            (sources, citations),
+            taxonomy_path=TAXONOMY_PATH,
+        )
+
+        self.assertEqual(route_result_json(forward), route_result_json(reverse))
+        self.assertEqual(len(forward.matches), 2)
+        self.assertNotEqual(forward.matches[0].evidence, forward.matches[1].evidence)
+
+    def test_stopwords_and_low_information_overlap_do_not_create_routes(self) -> None:
+        unrelated = capability(
+            "Open Media Utility",
+            description="Open and display image media.",
+            tags=("media", "utility"),
+        )
+        report = capability(
+            "Report Analyst",
+            description="Create data reports from structured tables.",
+            tags=("report", "data analysis"),
+        )
+        research = capability(
+            "Citation Researcher",
+            description="Research reports with source citations.",
+            tags=("research", "citations"),
+        )
+        classified = classify_capabilities(
+            (unrelated, report, research), taxonomy_path=TAXONOMY_PATH
+        )
+
+        low_information = route_query(
+            "open it and do this",
+            classified,
+            taxonomy_path=TAXONOMY_PATH,
+        )
+        report_route = route_query(
+            "open the report",
+            classified,
+            taxonomy_path=TAXONOMY_PATH,
+        )
+        citation_route = route_query(
+            "report with citations",
+            classified,
+            taxonomy_path=TAXONOMY_PATH,
+        )
+
+        self.assertEqual(low_information.matches, ())
+        self.assertEqual(report_route.matches[0].id, report.id)
+        self.assertNotIn(
+            unrelated.id, tuple(item.id for item in report_route.matches)
+        )
+        self.assertEqual(citation_route.matches[0].id, research.id)
 
 
 class PublicRenderingTests(unittest.TestCase):
@@ -580,6 +735,25 @@ class PublicRenderingTests(unittest.TestCase):
         self.assertEqual(inventory_forward, inventory_reverse)
         self.assertEqual(markdown_forward, markdown_reverse)
         self.assertEqual(len(json.loads(inventory_forward)["capabilities"]), 2)
+
+
+class LegacyCompatibilityTests(unittest.TestCase):
+    def test_missing_legacy_routing_rules_are_a_nonfatal_empty_configuration(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(scan_capabilities.load_rules(Path(directory)), [])
+        self.assertEqual(scan_capabilities.load_rules(PACKAGE_DIR), [])
+
+    def test_package_docs_reference_neutral_taxonomy_not_deleted_rules(self) -> None:
+        docs = "\n".join(
+            (
+                (PACKAGE_DIR / "SKILL.md").read_text(encoding="utf-8"),
+                (PACKAGE_DIR / "README.md").read_text(encoding="utf-8"),
+            )
+        )
+
+        self.assertNotIn("routing-rules.json", docs)
+        self.assertIn("scene-taxonomy.json", docs)
+        self.assertIn("中立", docs)
 
 
 if __name__ == "__main__":

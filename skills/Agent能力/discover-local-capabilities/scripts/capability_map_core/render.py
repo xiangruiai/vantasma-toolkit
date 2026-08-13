@@ -72,6 +72,8 @@ def _strict_public_sanitize(value: Any) -> Any:
 
 
 def _capabilities(values: Iterable[Capability]) -> tuple[Capability, ...]:
+    if isinstance(values, (str, bytes, bytearray)) or isinstance(values, Mapping):
+        raise TypeError("capabilities must be a collection of Capability values")
     result = tuple(values)
     if any(not isinstance(item, Capability) for item in result):
         raise TypeError("capabilities must contain Capability values")
@@ -95,6 +97,8 @@ def _capabilities(values: Iterable[Capability]) -> tuple[Capability, ...]:
 
 
 def _diagnostics(values: Iterable[Diagnostic]) -> tuple[Diagnostic, ...]:
+    if isinstance(values, (str, bytes, bytearray)) or isinstance(values, Mapping):
+        raise TypeError("diagnostics must be a collection of Diagnostic values")
     result = tuple(values)
     if any(not isinstance(item, Diagnostic) for item in result):
         raise TypeError("diagnostics must contain Diagnostic values")

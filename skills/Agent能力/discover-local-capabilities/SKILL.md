@@ -46,11 +46,11 @@ Generate an evidence-backed local capability map before choosing tools. Treat th
 - Do not claim a tool is usable merely because a file exists. Report four separate states: discovered, version-probed, authenticated, task-verified. This scanner establishes only the first state and optionally the second.
 - Redact the home directory as `~` in generated reports.
 
-## Routing Rules
+## Neutral Routing Taxonomy
 
-The scanner uses [routing-rules.json](references/routing-rules.json) to select a preferred local ability for common scenes. Edit that file when an organization has a different preferred stack. Keep rules ordered from fastest and most specialized to general fallbacks.
+The package uses the generic, bilingual [scene-taxonomy.json](references/scene-taxonomy.json). It contains no preferred concrete tools. The new command entrypoint will dynamically classify and rank only capabilities evidenced on the installer's machine; the legacy scanner now treats retired routing rules as empty.
 
-If no rule matches, place the capability under “待人工归类” instead of inventing a use case.
+If local evidence is insufficient, place the capability under “待人工归类” instead of inventing a use case.
 
 ## Acceptance Checks
 

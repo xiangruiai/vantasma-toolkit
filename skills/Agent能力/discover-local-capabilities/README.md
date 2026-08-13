@@ -11,7 +11,7 @@
 - 扫描 `PATH` 中的常用 CLI
 - 只输出 MCP server 和 plugin 名称，不输出配置值
 - 生成 Markdown 和 JSON 两份能力地图
-- 用可编辑规则建立“场景 → 首选能力 → 备选”的反向索引
+- 用中立通用 taxonomy 建立“场景 → 本机候选能力”的反向索引
 - 明确区分：已发现、已探测、已认证、已验证
 
 ## 安装
@@ -67,9 +67,9 @@ python3 skills/Agent能力/discover-local-capabilities/scripts/scan_capabilities
 - 报告中的家目录会显示为 `~`
 - “已发现”不等于“已认证”或“已验证”
 
-## 自定义路由
+## 中立动态路由
 
-编辑 [`references/routing-rules.json`](references/routing-rules.json)，把你自己的首选工具按顺序写进每个场景。扫描结果只提供证据，路线优先级仍应通过真实任务持续验证。
+[`references/scene-taxonomy.json`](references/scene-taxonomy.json) 只定义中立的中英文场景和通用语义，不包含作者工具名或首选列表。新命令入口将根据安装者本机能力的名称、标签和说明动态分类；证据不足的能力进入“待人工归类”。旧扫描入口在过渡期会忽略已经退役的首选规则。
 
 ## License
 

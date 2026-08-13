@@ -187,7 +187,13 @@ def discover_connectors(home: Path, project: Path) -> list[dict[str, str]]:
 
 def load_rules(skill_dir: Path) -> list[dict[str, Any]]:
     path = skill_dir / "references" / "routing-rules.json"
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        # v2 retired author-specific preferred routes. The compatibility
+        # scanner keeps running with no legacy routes until the new entrypoint
+        # takes over dynamic classification.
+        return []
 
 
 def capability_index(skills: list[dict[str, Any]], clis: list[dict[str, Any]], connectors: list[dict[str, str]]) -> list[dict[str, str]]:

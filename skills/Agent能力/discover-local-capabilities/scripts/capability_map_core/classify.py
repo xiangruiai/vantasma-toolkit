@@ -32,22 +32,112 @@ _GENERIC_DESCRIPTIONS = frozenset(
         "command discovered in path",
     }
 )
+_LOW_INFORMATION_TOKENS = frozenset(
+    {
+        "a",
+        "about",
+        "am",
+        "an",
+        "and",
+        "application",
+        "are",
+        "as",
+        "at",
+        "be",
+        "been",
+        "being",
+        "by",
+        "can",
+        "cli",
+        "command",
+        "could",
+        "did",
+        "do",
+        "does",
+        "doing",
+        "for",
+        "from",
+        "help",
+        "in",
+        "is",
+        "it",
+        "just",
+        "make",
+        "made",
+        "makes",
+        "making",
+        "me",
+        "my",
+        "of",
+        "on",
+        "open",
+        "or",
+        "our",
+        "please",
+        "plugin",
+        "run",
+        "runner",
+        "service",
+        "should",
+        "skill",
+        "that",
+        "the",
+        "their",
+        "these",
+        "this",
+        "those",
+        "to",
+        "tool",
+        "tools",
+        "use",
+        "using",
+        "utility",
+        "was",
+        "we",
+        "were",
+        "will",
+        "with",
+        "would",
+        "you",
+        "your",
+    }
+)
 
 
-def _stable_strings(values: Iterable[str]) -> tuple[str, ...]:
+def _require_string_collection(
+    values: Iterable[str], field_name: str
+) -> tuple[str, ...]:
+    if isinstance(values, (str, bytes, bytearray)) or isinstance(values, Mapping):
+        raise TypeError(f"{field_name} must be a collection of strings")
+    try:
+        collected = tuple(values)
+    except TypeError as error:
+        raise TypeError(f"{field_name} must be a collection of strings") from error
+    if any(not isinstance(value, str) for value in collected):
+        raise TypeError(f"{field_name} must contain only strings")
+    return collected
+
+
+def _stable_strings(
+    values: Iterable[str], field_name: str = "values"
+) -> tuple[str, ...]:
+    collected = _require_string_collection(values, field_name)
     normalized = {
         unicodedata.normalize("NFKC", sanitize_text(value, max_length=512)).casefold()
-        for value in values
-        if isinstance(value, str) and sanitize_text(value, max_length=512)
+        for value in collected
+        if sanitize_text(value, max_length=512)
     }
     return tuple(sorted(normalized))
 
 
-def _stable_public_strings(values: Iterable[str]) -> tuple[str, ...]:
+def _stable_public_strings(
+    values: Iterable[str], field_name: str = "values"
+) -> tuple[str, ...]:
+    collected = _require_string_collection(values, field_name)
     normalized = {
         unicodedata.normalize("NFC", sanitize_text(value, max_length=512))
-        for value in values
-        if isinstance(value, str) and sanitize_text(value, max_length=512)
+        for value in collected
+        if sanitize_text(value, max_length=512)
     }
     return tuple(sorted(normalized, key=lambda value: (value.casefold(), value)))
 
@@ -71,6 +161,8 @@ class SceneDefinition:
         label_en = sanitize_text(self.label_en, max_length=128)
         if not label_zh or not label_en:
             raise ValueError("Scene labels must not be empty")
+        if not isinstance(self.kind_boosts, Mapping):
+            raise TypeError("kind_boosts must be a mapping")
         boosts: dict[str, float] = {}
         for kind, raw_boost in self.kind_boosts.items():
             normalized_kind = sanitize_text(kind, max_length=32).casefold()
@@ -82,8 +174,8 @@ class SceneDefinition:
             if not math.isfinite(boost) or boost < 0.0 or boost > 2.0:
                 raise ValueError("kind boosts must be between 0.0 and 2.0")
             boosts[normalized_kind] = boost
-        keywords = _stable_strings(self.keywords)
-        phrases = _stable_strings(self.phrases)
+        keywords = _stable_strings(self.keywords, "keywords")
+        phrases = _stable_strings(self.phrases, "phrases")
         if not keywords and not phrases:
             raise ValueError("A scene must contain generic semantic evidence")
         object.__setattr__(self, "id", scene_id)
@@ -118,8 +210,10 @@ class RouteMatch:
         object.__setattr__(self, "name", sanitize_text(self.name, max_length=512))
         object.__setattr__(self, "kind", sanitize_text(self.kind, max_length=32))
         object.__setattr__(self, "score", round(float(self.score), 6))
-        object.__setattr__(self, "evidence", _stable_strings(self.evidence))
-        object.__setattr__(self, "scenes", _stable_strings(self.scenes))
+        object.__setattr__(
+            self, "evidence", _stable_strings(self.evidence, "evidence")
+        )
+        object.__setattr__(self, "scenes", _stable_strings(self.scenes, "scenes"))
         object.__setattr__(
             self,
             "resolver_id",
@@ -159,7 +253,9 @@ class UnresolvedSummary:
         object.__setattr__(
             self, "capability_ids", _stable_public_strings(self.capability_ids)
         )
-        object.__setattr__(self, "names", _stable_public_strings(self.names))
+        object.__setattr__(
+            self, "names", _stable_public_strings(self.names, "names")
+        )
 
     def to_public_dict(self) -> dict[str, Any]:
         return {
@@ -179,7 +275,7 @@ class RouteResult:
     unresolved: UnresolvedSummary = field(default_factory=lambda: UnresolvedSummary(0))
 
     def __post_init__(self) -> None:
-        matches = tuple(self.matches)
+        matches = _require_collection(self.matches, "matches")
         if any(not isinstance(item, RouteMatch) for item in matches):
             raise TypeError("matches must contain RouteMatch values")
         if not isinstance(self.unresolved, UnresolvedSummary):
@@ -193,6 +289,15 @@ class RouteResult:
             "matches": [item.to_public_dict() for item in self.matches],
             "unresolved": self.unresolved.to_public_dict(),
         }
+
+
+def _require_collection(values: Iterable[Any], field_name: str) -> tuple[Any, ...]:
+    if isinstance(values, (str, bytes, bytearray)) or isinstance(values, Mapping):
+        raise TypeError(f"{field_name} must be a collection")
+    try:
+        return tuple(values)
+    except TypeError as error:
+        raise TypeError(f"{field_name} must be a collection") from error
 
 
 def _scene_from_mapping(raw: Any) -> SceneDefinition:
@@ -253,6 +358,8 @@ def _resolve_taxonomy(
         return load_taxonomy(taxonomy)
     if taxonomy is None:
         return load_taxonomy(taxonomy_path)
+    if isinstance(taxonomy, (bytes, bytearray)) or isinstance(taxonomy, Mapping):
+        raise TypeError("taxonomy must be a collection of SceneDefinition values")
     scenes = tuple(taxonomy)
     if any(not isinstance(scene, SceneDefinition) for scene in scenes):
         raise TypeError("taxonomy must contain SceneDefinition values")
@@ -267,14 +374,32 @@ def _tokens(value: str) -> frozenset[str]:
     result: set[str] = set()
     for segment in _SEGMENT_RE.findall(normalized):
         if _ASCII_WORD_RE.fullmatch(segment):
+            if len(segment) <= 1 or segment in _LOW_INFORMATION_TOKENS:
+                continue
             result.add(segment)
+            if (
+                len(segment) > 3
+                and segment.endswith("s")
+                and not segment.endswith(("is", "ss", "us"))
+            ):
+                result.add(segment[:-1])
+            continue
+        if len(segment) <= 1:
             continue
         result.add(segment)
-        if len(segment) == 1:
-            result.add(segment)
-        else:
-            result.update(segment[index : index + 2] for index in range(len(segment) - 1))
+        result.update(segment[index : index + 2] for index in range(len(segment) - 1))
     return frozenset(result)
+
+
+def _public_record_fingerprint(capability: Capability) -> str:
+    """Return a collision-free canonical key for one complete public record."""
+
+    return json.dumps(
+        capability.to_public_dict(),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def _term_matches(term: str, text_tokens: frozenset[str]) -> bool:
@@ -406,6 +531,9 @@ def _override_for(
 ) -> Iterable[str] | str | None:
     if overrides is None:
         return None
+    fingerprint = _public_record_fingerprint(capability)
+    if fingerprint in overrides:
+        return overrides[fingerprint]
     if capability.id in overrides:
         return overrides[capability.id]
     if capability.name in overrides:
@@ -429,6 +557,12 @@ def classify_capabilities(
 
     if not 0.0 <= min_confidence <= 1.0:
         raise ValueError("min_confidence must be between 0.0 and 1.0")
+    if isinstance(capabilities, (str, bytes, bytearray)) or isinstance(
+        capabilities, Mapping
+    ):
+        raise TypeError("capabilities must be a collection of Capability values")
+    if overrides is not None and not isinstance(overrides, Mapping):
+        raise TypeError("overrides must be a mapping")
     scenes = _resolve_taxonomy(taxonomy, taxonomy_path)
     scene_ids = {scene.id for scene in scenes}
     result: list[Capability] = []
@@ -437,13 +571,17 @@ def classify_capabilities(
             raise TypeError("capabilities must contain Capability values")
         override = _override_for(capability, overrides)
         if override is not None:
-            selected = (override,) if isinstance(override, str) else tuple(override)
+            selected = (
+                (override,)
+                if isinstance(override, str)
+                else _require_string_collection(override, "override scenes")
+            )
             normalized = tuple(
                 sorted(
                     {
                         sanitize_text(value, max_length=128).casefold()
                         for value in selected
-                        if isinstance(value, str) and sanitize_text(value, max_length=128)
+                        if sanitize_text(value, max_length=128)
                     }
                 )
             )
@@ -493,7 +631,7 @@ def classify_capabilities(
                 classification_confidence=round(best_confidence, 6),
             )
         )
-    return tuple(result)
+    return tuple(sorted(result, key=_public_record_fingerprint))
 
 
 def _score_query_scene(
@@ -578,20 +716,28 @@ def route_query(
         raise TypeError("route_query requires a string query and capabilities")
     if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
         raise ValueError("limit must be a non-negative integer")
+    if isinstance(capabilities, (str, bytes, bytearray)) or isinstance(
+        capabilities, Mapping
+    ):
+        raise TypeError("capabilities must be a collection of Capability values")
+    if overrides is not None and not isinstance(overrides, Mapping):
+        raise TypeError("overrides must be a mapping")
     safe_query = sanitize_text(query, max_length=1_024)
     scenes = _resolve_taxonomy(taxonomy, taxonomy_path)
     original = tuple(capabilities)
     if any(not isinstance(item, Capability) for item in original):
         raise TypeError("capabilities must contain Capability values")
-    if overrides is not None:
-        classified = classify_capabilities(original, scenes, overrides=overrides)
-    else:
-        computed = classify_capabilities(
-            (item for item in original if not item.scenes),
-            scenes,
-        )
-        computed_by_id = {item.id: item for item in computed}
-        classified = tuple(computed_by_id.get(item.id, item) for item in original)
+    classified_records: list[Capability] = []
+    for item in original:
+        if overrides is None and item.scenes:
+            classified_records.append(item)
+        else:
+            classified_records.extend(
+                classify_capabilities((item,), scenes, overrides=overrides)
+            )
+    classified = tuple(
+        sorted(classified_records, key=_public_record_fingerprint)
+    )
 
     query_tokens = _tokens(safe_query)
     query_scene_matches = {
@@ -603,7 +749,7 @@ def route_query(
         if match[0] > 0.0
     }
     scene_by_id = {scene.id: scene for scene in scenes}
-    ranked: list[RouteMatch] = []
+    ranked: list[tuple[RouteMatch, str]] = []
     for capability in classified:
         direct_score, direct_evidence = _direct_query_evidence(
             query_tokens, capability
@@ -630,30 +776,35 @@ def route_query(
         kind_bonus = {"skill": 0.6, "plugin": 0.35, "mcp": 0.2, "cli": 0.0}
         score += capability.classification_confidence * 1.5
         score += kind_bonus.get(capability.kind, 0.0)
+        match = RouteMatch(
+            id=capability.id,
+            name=capability.name,
+            kind=capability.kind,
+            score=score,
+            evidence=evidence,
+            scenes=capability.scenes,
+            resolver_id=capability.resolver_id,
+            state_warning=_state_warning(capability),
+        )
         ranked.append(
-            RouteMatch(
-                id=capability.id,
-                name=capability.name,
-                kind=capability.kind,
-                score=score,
-                evidence=evidence,
-                scenes=capability.scenes,
-                resolver_id=capability.resolver_id,
-                state_warning=_state_warning(capability),
-            )
+            (match, _public_record_fingerprint(capability))
         )
     ranked.sort(
-        key=lambda item: (
-            -item.score,
-            item.kind,
-            item.name.casefold(),
-            item.name,
-            item.id,
+        key=lambda pair: (
+            -pair[0].score,
+            pair[0].evidence,
+            pair[0].scenes,
+            pair[1],
         )
     )
     unresolved_items = sorted(
         (item for item in classified if not item.scenes),
-        key=lambda item: (item.name.casefold(), item.name, item.id),
+        key=lambda item: (
+            item.name.casefold(),
+            item.name,
+            item.id,
+            _public_record_fingerprint(item),
+        ),
     )
     unresolved_sample = unresolved_items[:UNRESOLVED_SAMPLE_LIMIT]
     unresolved = UnresolvedSummary(
@@ -664,7 +815,7 @@ def route_query(
     )
     return RouteResult(
         query=safe_query,
-        matches=tuple(ranked[:limit]),
+        matches=tuple(pair[0] for pair in ranked[:limit]),
         unresolved=unresolved,
     )
 
