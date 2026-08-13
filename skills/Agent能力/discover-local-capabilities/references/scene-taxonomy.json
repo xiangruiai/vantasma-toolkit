@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "unclassified": {
+    "id": "unclassified",
+    "label_zh": "待人工归类",
+    "label_en": "Unclassified"
+  },
+  "scenes": [
+    {
+      "id": "search-research",
+      "label_zh": "搜索与研究",
+      "label_en": "Search and research",
+      "keywords": ["search", "research", "retrieval", "sources", "citation", "literature", "搜索", "检索", "研究", "调研", "资料", "引用", "论文"],
+      "phrases": ["web research", "academic research", "source discovery", "文献研究", "资料检索", "信息搜索"],
+      "kind_boosts": {"skill": 0.35, "plugin": 0.2, "mcp": 0.1, "cli": 0.0}
+    },
+    {
+      "id": "communication",
+      "label_zh": "沟通与消息",
+      "label_en": "Communication",
+      "keywords": ["communication", "message", "mail", "email", "chat", "notification", "meeting", "沟通", "消息", "邮件", "通知", "会议", "会话"],
+      "phrases": ["send message", "team communication", "消息发送", "邮件沟通", "会议协作"],
+      "kind_boosts": {"skill": 0.3, "plugin": 0.25, "mcp": 0.2, "cli": 0.0}
+    },
+    {
+      "id": "documents-data",
+      "label_zh": "文档与数据",
+      "label_en": "Documents and data",
+      "keywords": ["document", "documents", "pdf", "spreadsheet", "table", "data", "dataset", "analysis", "report", "文档", "表格", "数据", "分析", "报告", "文件"],
+      "phrases": ["data analysis", "document processing", "structured data", "文档处理", "数据分析", "电子表格"],
+      "kind_boosts": {"skill": 0.35, "plugin": 0.2, "mcp": 0.15, "cli": 0.0}
+    },
+    {
+      "id": "media",
+      "label_zh": "媒体与视觉",
+      "label_en": "Media and visual",
+      "keywords": ["media", "image", "photo", "video", "audio", "design", "recording", "transcription", "图片", "图像", "视频", "音频", "设计", "录制", "转录"],
+      "phrases": ["image generation", "video editing", "audio processing", "视觉设计", "图片生成", "视频编辑", "音频处理"],
+      "kind_boosts": {"skill": 0.35, "plugin": 0.25, "mcp": 0.1, "cli": 0.0}
+    },
+    {
+      "id": "software-development",
+      "label_zh": "软件开发",
+      "label_en": "Software development",
+      "keywords": ["software", "code", "coding", "development", "debug", "testing", "repository", "build", "programming", "软件", "代码", "开发", "调试", "测试", "仓库", "编程"],
+      "phrases": ["software development", "code review", "test driven", "软件开发", "代码审查", "测试驱动"],
+      "kind_boosts": {"skill": 0.3, "plugin": 0.2, "mcp": 0.05, "cli": 0.1}
+    },
+    {
+      "id": "automation",
+      "label_zh": "自动化与工作流",
+      "label_en": "Automation and workflows",
+      "keywords": ["automation", "automate", "workflow", "schedule", "scheduled", "trigger", "orchestration", "自动化", "工作流", "定时", "调度", "触发", "编排"],
+      "phrases": ["workflow automation", "scheduled task", "event trigger", "流程自动化", "定时任务", "事件触发"],
+      "kind_boosts": {"skill": 0.35, "plugin": 0.25, "mcp": 0.15, "cli": 0.0}
+    },
+    {
+      "id": "project-management",
+      "label_zh": "项目与任务管理",
+      "label_en": "Project management",
+      "keywords": ["project", "task", "issue", "roadmap", "kanban", "planning", "milestone", "项目", "任务", "工单", "路线图", "看板", "计划", "里程碑"],
+      "phrases": ["project management", "task tracking", "issue tracking", "项目管理", "任务管理", "进度跟踪"],
+      "kind_boosts": {"skill": 0.3, "plugin": 0.25, "mcp": 0.2, "cli": 0.0}
+    },
+    {
+      "id": "commerce",
+      "label_zh": "商业与交易",
+      "label_en": "Commerce",
+      "keywords": ["commerce", "payment", "sales", "customer", "marketing", "invoice", "billing", "order", "transaction", "商业", "支付", "销售", "客户", "营销", "发票", "订单", "交易"],
+      "phrases": ["customer management", "payment processing", "sales operations", "客户管理", "支付处理", "销售运营"],
+      "kind_boosts": {"skill": 0.3, "plugin": 0.25, "mcp": 0.2, "cli": 0.0}
+    },
+    {
+      "id": "cloud-infrastructure",
+      "label_zh": "云与基础设施",
+      "label_en": "Cloud and infrastructure",
+      "keywords": ["cloud", "infrastructure", "deploy", "deployment", "hosting", "server", "database", "container", "network", "云", "基础设施", "部署", "托管", "服务器", "数据库", "容器", "网络"],
+      "phrases": ["cloud infrastructure", "application deployment", "database hosting", "云基础设施", "应用部署", "数据库托管"],
+      "kind_boosts": {"skill": 0.25, "plugin": 0.25, "mcp": 0.2, "cli": 0.05}
+    },
+    {
+      "id": "security",
+      "label_zh": "安全与合规",
+      "label_en": "Security and compliance",
+      "keywords": ["security", "audit", "vulnerability", "compliance", "credential", "permission", "privacy", "risk", "安全", "审计", "漏洞", "合规", "凭证", "权限", "隐私", "风险"],
+      "phrases": ["security audit", "vulnerability analysis", "access control", "安全审计", "漏洞分析", "访问控制"],
+      "kind_boosts": {"skill": 0.35, "plugin": 0.2, "mcp": 0.1, "cli": 0.0}
+    },
+    {
+      "id": "knowledge-memory",
+      "label_zh": "知识与记忆",
+      "label_en": "Knowledge and memory",
+      "keywords": ["knowledge", "memory", "notes", "archive", "ontology", "learning", "知识", "记忆", "笔记", "归档", "本体", "学习", "知识库"],
+      "phrases": ["knowledge management", "personal memory", "note taking", "知识管理", "个人记忆", "笔记整理"],
+      "kind_boosts": {"skill": 0.35, "plugin": 0.2, "mcp": 0.15, "cli": 0.0}
+    },
+    {
+      "id": "capability-management",
+      "label_zh": "能力管理",
+      "label_en": "Capability management",
+      "keywords": ["capability", "skill", "plugin", "integration", "connector", "installation", "discovery", "能力", "技能", "插件", "集成", "连接器", "安装", "发现"],
+      "phrases": ["capability discovery", "skill management", "plugin installation", "能力发现", "技能管理", "插件安装"],
+      "kind_boosts": {"skill": 0.3, "plugin": 0.25, "mcp": 0.15, "cli": 0.0}
+    }
+  ]
+}
