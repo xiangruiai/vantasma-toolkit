@@ -110,6 +110,17 @@ class _TrackingTemporaryFile:
         return getattr(self._wrapped, name)
 
 
+class _FailingTemporaryFile:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def write(self, data: bytes) -> int:
+        raise OSError("synthetic disk full")
+
+    def close(self) -> None:
+        self.closed = True
+
+
 class _FakeDirEntry:
     def __init__(self, name: str, file_stat: os.stat_result) -> None:
         self.name = name
@@ -424,7 +435,8 @@ class WindowsCliDiscoveryTests(unittest.TestCase):
 
             self.assertEqual(len(result.capabilities), 1)
             capability = result.capabilities[0]
-            self.assertEqual(capability.name, "Tool")
+            self.assertEqual(capability.name, "tool")
+            self.assertEqual(capability.aliases, ("Tool",))
             self.assertEqual(result.entry_count, 3)
             self.assertEqual(
                 _resolver_for(result, capability).exact_locations,
@@ -456,11 +468,41 @@ class WindowsCliDiscoveryTests(unittest.TestCase):
                 pathext=[".EXE", ".CMD"],
             )
 
-            self.assertEqual([item.name for item in result.capabilities], ["Case"])
+            self.assertEqual([item.name for item in result.capabilities], ["case"])
             self.assertEqual(result.entry_count, 2)
             self.assertNotIn(
                 "case_sensitive", inspect.signature(discover_clis).parameters
             )
+
+    def test_windows_name_and_ids_are_canonical_across_entry_casing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            mixed = base / "mixed"
+            upper = base / "upper"
+            _write_file(mixed / "Tool.EXE", executable=False)
+            _write_file(upper / "TOOL.EXE", executable=False)
+
+            first = discover_clis(
+                path=str(mixed),
+                cwd=base,
+                platform_name="Windows",
+                os_name="nt",
+                pathext=[".EXE"],
+            ).capabilities[0]
+            second = discover_clis(
+                path=str(upper),
+                cwd=base,
+                platform_name="Windows",
+                os_name="nt",
+                pathext=[".EXE"],
+            ).capabilities[0]
+
+            self.assertEqual(first.name, "tool")
+            self.assertEqual(second.name, "tool")
+            self.assertEqual(first.aliases, ("Tool",))
+            self.assertEqual(second.aliases, ("TOOL",))
+            self.assertEqual(first.id, second.id)
+            self.assertEqual(first.resolver_id, second.resolver_id)
 
 
 class CliVersionProbeTests(unittest.TestCase):
@@ -556,12 +598,24 @@ class CliVersionProbeTests(unittest.TestCase):
                     "NO_COLOR": "1",
                 },
             )
-            self.assertEqual(result.status, "success")
+            self.assertEqual(result.status, "output_limit")
             self.assertLessEqual(len(result.output), 80)
             self.assertNotIn(secret, result.output)
             self.assertNotIn(temporary, result.output)
             self.assertTrue(process.stdout.closed)
             self.assertTrue(process.stderr.closed)
+
+    def test_probe_rejects_scalar_string_or_bytes_flags_without_spawning(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = _write_file(Path(temporary) / "tool")
+
+            with mock.patch("capability_map_core.clis.subprocess.Popen") as popen:
+                for flags in ("--version", b"--version"):
+                    with self.subTest(flags=flags):
+                        with self.assertRaises(TypeError):
+                            probe_cli_version(executable, flags=flags)
+
+            popen.assert_not_called()
 
     def test_probe_encodes_no_output_nonzero_timeout_and_error_distinctly(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -682,10 +736,40 @@ class CliVersionProbeTests(unittest.TestCase):
                 sum(capture.max_retained for capture in captures),
                 257,
             )
+            self.assertEqual(result.status, "output_limit")
             self.assertIn(
-                "version_output_truncated",
+                "version_probe_output_limit",
                 [diagnostic.code for diagnostic in result.diagnostics],
             )
+
+    def test_reader_write_error_stops_and_reaps_as_probe_io_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = _write_file(Path(temporary) / "tool")
+            process = _FakeProcess(stderr=b"captured", stays_running=True)
+            spool = _FailingTemporaryFile()
+
+            with (
+                mock.patch(
+                    "capability_map_core.clis.subprocess.Popen",
+                    return_value=process,
+                ),
+                mock.patch(
+                    "capability_map_core.clis.tempfile.TemporaryFile",
+                    return_value=spool,
+                ),
+            ):
+                result = probe_cli_version(executable, timeout=1.0)
+
+            self.assertEqual(result.status, "error")
+            self.assertEqual(
+                [diagnostic.code for diagnostic in result.diagnostics],
+                ["version_probe_io_error"],
+            )
+            self.assertTrue(process.terminate_called)
+            self.assertTrue(process.wait_timeouts)
+            self.assertTrue(process.stdout.closed)
+            self.assertTrue(process.stderr.closed)
+            self.assertTrue(spool.closed)
 
     def test_stream_output_is_combined_stdout_then_stderr_deterministically(self) -> None:
         if os.name == "nt":
@@ -790,7 +874,7 @@ class CliVersionProbeTests(unittest.TestCase):
                 Path(temporary) / "noisy-tool",
                 "import os\n"
                 "chunk = b'x' * 4096\n"
-                "for _ in range(256):\n"
+                "while True:\n"
                 "    os.write(1, chunk)\n"
                 "    os.write(2, chunk)",
             )
@@ -805,9 +889,9 @@ class CliVersionProbeTests(unittest.TestCase):
 
             self.assertLess(time.monotonic() - started, 3)
             self.assertLessEqual(len(result.output.encode("utf-8")), 1024)
-            self.assertIn(result.status, {"nonzero", "success"})
+            self.assertEqual(result.status, "output_limit")
             self.assertIn(
-                "version_output_truncated",
+                "version_probe_output_limit",
                 [diagnostic.code for diagnostic in result.diagnostics],
             )
 
@@ -822,8 +906,9 @@ class CliVersionProbeTests(unittest.TestCase):
                 result = probe_cli_version(executable, output_limit=400)
 
             self.assertLessEqual(len(result.output.encode("utf-8")), 400)
+            self.assertEqual(result.status, "output_limit")
             self.assertIn(
-                "version_output_truncated",
+                "version_probe_output_limit",
                 [diagnostic.code for diagnostic in result.diagnostics],
             )
 
@@ -892,8 +977,9 @@ class CliVersionProbeTests(unittest.TestCase):
                 257,
             )
             self.assertLessEqual(len(result.output.encode("utf-8")), 257)
+            self.assertEqual(result.status, "output_limit")
             self.assertIn(
-                "version_output_truncated",
+                "version_probe_output_limit",
                 [diagnostic.code for diagnostic in result.diagnostics],
             )
             self.assertTrue(all(spool.closed for spool in tracked_spools))

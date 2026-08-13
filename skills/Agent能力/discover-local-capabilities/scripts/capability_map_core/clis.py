@@ -6,6 +6,7 @@ import hashlib
 import math
 import os
 import platform
+import queue
 import signal
 import stat
 import subprocess
@@ -34,7 +35,9 @@ PROBE_READ_CHUNK_BYTES = 8 * 1024
 _PROBE_POLL_SECONDS = 0.02
 _PROBE_TERMINATE_GRACE_SECONDS = 0.2
 _PROBE_THREAD_JOIN_SECONDS = 0.5
-_PROBE_STATUSES = frozenset({"success", "no_output", "nonzero", "timeout", "error"})
+_PROBE_STATUSES = frozenset(
+    {"success", "no_output", "nonzero", "timeout", "output_limit", "error"}
+)
 _MINIMAL_ENVIRONMENT_KEYS = ("PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP")
 
 
@@ -117,12 +120,6 @@ class CliVersionProbeResult:
             sanitize_text(self.output, max_length=MAX_PROBE_OUTPUT_BYTES),
         )
         object.__setattr__(self, "diagnostics", diagnostics)
-
-    @property
-    def probed_state(self) -> str:
-        """Return the capability-state value represented by this attempt."""
-
-        return "success" if self.status == "success" else self.status
 
     def to_public_dict(self) -> dict[str, Any]:
         return {
@@ -499,11 +496,14 @@ def discover_clis(
                     )
                 )
 
-        display_name = _safe_display_name(effective.command_name, grouping_key)
-        aliases = tuple(
-            entry.command_name
-            for entry in command_entries[1:]
-            if entry.command_name != effective.command_name
+        display_name = _safe_display_name(
+            effective.command_name if sensitive else grouping_key,
+            grouping_key,
+        )
+        aliases = (
+            ()
+            if sensitive or effective.command_name == grouping_key
+            else (effective.command_name,)
         )
         capability = Capability(
             kind="cli",
@@ -606,7 +606,13 @@ class _SpoolCapture:
         return self._spool.read(limit)
 
 
-def _drain_pipe(pipe: Any, capture: Any) -> None:
+def _drain_pipe(
+    pipe: Any,
+    capture: Any,
+    errors: queue.SimpleQueue[Exception],
+    failed: threading.Event,
+    closing: threading.Event,
+) -> None:
     try:
         while True:
             chunk = pipe.read(PROBE_READ_CHUNK_BYTES)
@@ -615,23 +621,28 @@ def _drain_pipe(pipe: Any, capture: Any) -> None:
             if isinstance(chunk, str):
                 chunk = chunk.encode("utf-8", errors="replace")
             capture.add(chunk)
-    except (OSError, ValueError):
-        return
+    except Exception as error:
+        if not closing.is_set():
+            errors.put(error)
+            failed.set()
 
 
 def _wait_for_process(
     process: Any,
     overflow: threading.Event,
+    io_failed: threading.Event,
     *,
     timeout: float,
 ) -> tuple[str | None, float]:
     deadline = time.monotonic() + timeout
     while True:
+        if io_failed.is_set():
+            return "io_error", max(0.0, deadline - time.monotonic())
+        if overflow.is_set():
+            return "output_limit", max(0.0, deadline - time.monotonic())
         returncode = process.poll()
         if returncode is not None:
             return None, max(0.0, deadline - time.monotonic())
-        if overflow.is_set():
-            return "output_limit", max(0.0, deadline - time.monotonic())
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return "timeout", 0.0
@@ -847,6 +858,8 @@ def probe_cli_version(
             ),
         )
     _validate_native_executable(executable_text)
+    if isinstance(flags, (str, bytes)):
+        raise TypeError("flags must be a sequence of argument strings")
     probe_flags = ("--version",) if flags is None else tuple(flags)
     if any(not isinstance(flag, str) or "\x00" in flag for flag in probe_flags):
         raise ValueError("probe flags must be strings without NUL characters")
@@ -896,6 +909,10 @@ def probe_cli_version(
     stderr_spool: Any | None = None
     stop_reason: str | None = None
     probe_error: Exception | None = None
+    probe_io_error: Exception | None = None
+    reader_errors: queue.SimpleQueue[Exception] = queue.SimpleQueue()
+    reader_failed = threading.Event()
+    readers_closing = threading.Event()
     try:
         tree = _process_tree_guard(process)
         overflow = threading.Event()
@@ -905,7 +922,13 @@ def probe_cli_version(
         all_readers = [
             threading.Thread(
                 target=_drain_pipe,
-                args=(pipe, capture),
+                args=(
+                    pipe,
+                    capture,
+                    reader_errors,
+                    reader_failed,
+                    readers_closing,
+                ),
                 name=f"cli-version-{stream_name}",
                 daemon=True,
             )
@@ -921,6 +944,7 @@ def probe_cli_version(
         stop_reason, remaining = _wait_for_process(
             process,
             overflow,
+            reader_failed,
             timeout=bounded_timeout,
         )
         if stop_reason is None:
@@ -941,8 +965,14 @@ def probe_cli_version(
                 _stop_and_reap(process, tree)
             except Exception:
                 pass
+        readers_closing.set()
         _close_probe_pipes(process)
         _join_readers(started_readers, _PROBE_THREAD_JOIN_SECONDS)
+
+    try:
+        probe_io_error = reader_errors.get_nowait()
+    except queue.Empty:
+        pass
 
     try:
         if stdout_capture is None or stderr_capture is None:
@@ -954,6 +984,11 @@ def probe_cli_version(
                 stderr_capture,
                 limit=bounded_limit,
             )
+    except (OSError, ValueError) as error:
+        output = ""
+        truncated = False
+        if probe_io_error is None:
+            probe_io_error = error
     except Exception as error:
         output = ""
         truncated = False
@@ -961,7 +996,24 @@ def probe_cli_version(
             probe_error = error
     finally:
         if stderr_spool is not None:
-            stderr_spool.close()
+            try:
+                stderr_spool.close()
+            except (OSError, ValueError) as error:
+                if probe_io_error is None:
+                    probe_io_error = error
+    if probe_io_error is not None:
+        return CliVersionProbeResult(
+            "error",
+            output,
+            process.returncode,
+            diagnostics=(
+                _probe_diagnostic(
+                    "version_probe_io_error",
+                    "Version probe output could not be collected safely.",
+                    details={"error_type": type(probe_io_error).__name__},
+                ),
+            ),
+        )
     if probe_error is not None:
         return CliVersionProbeResult(
             "error",
@@ -978,12 +1030,17 @@ def probe_cli_version(
 
     diagnostics: list[Diagnostic] = []
     if truncated or stop_reason == "output_limit":
-        diagnostics.append(
-            _probe_diagnostic(
-                "version_output_truncated",
-                "Version probe output exceeded the configured limit and was truncated.",
-                details={"output_limit": bounded_limit},
-            )
+        return CliVersionProbeResult(
+            "output_limit",
+            output,
+            process.returncode,
+            diagnostics=(
+                _probe_diagnostic(
+                    "version_probe_output_limit",
+                    "Version probe output exceeded the configured limit.",
+                    details={"output_limit": bounded_limit},
+                ),
+            ),
         )
     if stop_reason == "timeout":
         diagnostics.append(
