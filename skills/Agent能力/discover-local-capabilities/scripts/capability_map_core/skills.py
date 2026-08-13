@@ -208,13 +208,6 @@ def _file_id(stat_result: os.stat_result) -> tuple[int, int] | None:
     return (getattr(stat_result, "st_dev", 0), inode)
 
 
-def _root_file_id(stat_result: os.stat_result) -> tuple[int, int] | None:
-    inode = getattr(stat_result, "st_ino", 0)
-    if not inode:
-        return None
-    return (getattr(stat_result, "st_dev", 0), inode)
-
-
 def _physical_key_from_stat(
     stat_result: os.stat_result, fallback_path: Path
 ) -> tuple[str, ...]:
@@ -239,6 +232,18 @@ def _file_open_flags() -> int:
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0)
     return flags
+
+
+def _open_verified_root(path: Path, expected_id: tuple[int, int]) -> int:
+    fd = os.open(path, _directory_open_flags())
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISDIR(opened.st_mode) or _file_id(opened) != expected_id:
+            raise _SourceChanged
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
 
 
 def _stat_evidence(stat_result: os.stat_result) -> tuple[tuple[str, int], ...]:
@@ -442,7 +447,6 @@ def _open_symlink_target(
 def _walk_root(
     root: RootSpec,
     physical_root: Path,
-    expected_root_id: tuple[int, int],
     allowed: tuple[_AllowedRootHandle, ...],
     root_fd: int,
     root_anchor: int,
@@ -452,17 +456,12 @@ def _walk_root(
     diagnostics: list[Diagnostic] = []
 
     def open_verified_directory(
-        path: str | Path,
+        path: str,
         expected_id: tuple[int, int],
         *,
-        directory_fd: int | None = None,
+        directory_fd: int,
     ) -> int:
-        if directory_fd is None:
-            fd = os.open(path, _directory_open_flags())
-        else:
-            fd = os.open(
-                path, _directory_open_flags(), dir_fd=directory_fd
-            )
+        fd = os.open(path, _directory_open_flags(), dir_fd=directory_fd)
         try:
             opened = os.fstat(fd)
             if not stat.S_ISDIR(opened.st_mode) or _file_id(opened) != expected_id:
@@ -659,14 +658,15 @@ def _walk_root(
                             continue
                         except (OSError, RuntimeError) as error:
                             code = _symlink_failure_code(error)
+                            messages = {
+                                "symlink_loop": "A symbolic link loop was skipped.",
+                                "broken_symlink": "A broken symbolic link was skipped.",
+                                "symlink_resolve_error": "A symbolic link could not be resolved safely.",
+                            }
                             diagnostics.append(
                                 _diagnostic(
                                     code,
-                                    (
-                                        "A symbolic link loop was skipped."
-                                        if code == "symlink_loop"
-                                        else "A broken symbolic link was skipped."
-                                    ),
+                                    messages[code],
                                     location=public_child,
                                 )
                             )
@@ -1410,7 +1410,11 @@ def _ambiguous_identity_nonce() -> str:
     return secrets.token_hex(16)
 
 
-def discover_skills(roots: list[RootSpec] | tuple[RootSpec, ...]) -> SkillDiscoveryResult:
+def discover_skills(
+    roots: list[RootSpec] | tuple[RootSpec, ...],
+    *,
+    allow_best_effort_path_backend: bool = False,
+) -> SkillDiscoveryResult:
     """Discover physical Skills under allowed roots without reading Skill bodies."""
 
     root_specs = tuple(roots)
@@ -1485,7 +1489,7 @@ def discover_skills(roots: list[RootSpec] | tuple[RootSpec, ...]) -> SkillDiscov
                 )
             )
             continue
-        root_file_id = _root_file_id(target_stat)
+        root_file_id = _file_id(target_stat)
         if root_file_id is None:
             global_diagnostics.append(
                 _diagnostic(
@@ -1510,15 +1514,13 @@ def discover_skills(roots: list[RootSpec] | tuple[RootSpec, ...]) -> SkillDiscov
         opened_roots: list[_AllowedRootHandle] = []
         try:
             for root, physical_root, _, root_file_id in resolved_roots:
+                aliases = tuple(
+                    dict.fromkeys(
+                        (physical_root.absolute(), root.path.absolute())
+                    )
+                )
                 try:
-                    fd = os.open(physical_root, _directory_open_flags())
-                    opened = os.fstat(fd)
-                    if (
-                        not stat.S_ISDIR(opened.st_mode)
-                        or _root_file_id(opened) != root_file_id
-                    ):
-                        os.close(fd)
-                        raise _SourceChanged
+                    fd = _open_verified_root(physical_root, root_file_id)
                 except _SourceChanged:
                     global_diagnostics.append(
                         _diagnostic(
@@ -1542,11 +1544,6 @@ def discover_skills(roots: list[RootSpec] | tuple[RootSpec, ...]) -> SkillDiscov
                         )
                     )
                     continue
-                aliases = tuple(
-                    dict.fromkeys(
-                        (physical_root.absolute(), root.path.absolute())
-                    )
-                )
                 opened_roots.append(
                     _AllowedRootHandle(
                         root, physical_root, aliases, root_file_id, fd
@@ -1560,15 +1557,24 @@ def discover_skills(roots: list[RootSpec] | tuple[RootSpec, ...]) -> SkillDiscov
                     for root, _, is_link, _ in resolved_roots
                     if root is item.root
                 )
-                root_occurrences, root_diagnostics = _walk_root(
-                    item.root,
-                    item.physical_path,
-                    item.file_id,
-                    allowed,
-                    os.dup(item.fd),
-                    anchor,
-                    root_is_link,
-                )
+                try:
+                    root_occurrences, root_diagnostics = _walk_root(
+                        item.root,
+                        item.physical_path,
+                        allowed,
+                        os.dup(item.fd),
+                        anchor,
+                        root_is_link,
+                    )
+                except RecursionError:
+                    global_diagnostics.append(
+                        _diagnostic(
+                            "traversal_depth_exceeded",
+                            "A Skill root exceeded the supported traversal depth and was skipped.",
+                            location=item.root.public_prefix,
+                        )
+                    )
+                    continue
                 global_diagnostics.extend(root_diagnostics)
                 for occurrence in root_occurrences:
                     grouped.setdefault(occurrence.physical_key, []).append(
@@ -1577,14 +1583,39 @@ def discover_skills(roots: list[RootSpec] | tuple[RootSpec, ...]) -> SkillDiscov
         finally:
             for item in opened_roots:
                 os.close(item.fd)
-    else:
-        for root, physical_root, _, root_file_id in resolved_roots:
-            root_occurrences, root_diagnostics = _walk_root_path(
-                root, physical_root, root_file_id
+    elif allow_best_effort_path_backend:
+        global_diagnostics.append(
+            _diagnostic(
+                "unsafe_best_effort_opt_in",
+                "Best-effort path traversal was explicitly enabled; ancestry races cannot be excluded on this platform.",
+                location="<skill-roots>",
             )
+        )
+        for root, physical_root, _, root_file_id in resolved_roots:
+            try:
+                root_occurrences, root_diagnostics = _walk_root_path(
+                    root, physical_root, root_file_id
+                )
+            except RecursionError:
+                global_diagnostics.append(
+                    _diagnostic(
+                        "traversal_depth_exceeded",
+                        "A Skill root exceeded the supported traversal depth and was skipped.",
+                        location=root.public_prefix,
+                    )
+                )
+                continue
             global_diagnostics.extend(root_diagnostics)
             for occurrence in root_occurrences:
                 grouped.setdefault(occurrence.physical_key, []).append(occurrence)
+    else:
+        global_diagnostics.append(
+            _diagnostic(
+                "secure_backend_unavailable",
+                "Secure directory-handle traversal is unavailable; configured roots were skipped.",
+                location="<skill-roots>",
+            )
+        )
 
     prepared_skills: list[_PreparedSkill] = []
     for occurrences in grouped.values():

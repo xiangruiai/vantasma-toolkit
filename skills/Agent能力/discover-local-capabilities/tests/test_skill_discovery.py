@@ -1776,9 +1776,8 @@ class SkillDiscoveryTests(unittest.TestCase):
             write_skill(root / "skill", frontmatter="name: unverifiable-root")
 
             with mock.patch(
-                "capability_map_core.skills._root_file_id",
+                "capability_map_core.skills._file_id",
                 return_value=None,
-                create=True,
             ):
                 result = discover_skills(
                     [RootSpec(root, "extra", "root", "root:weak", "<root>")]
@@ -1800,7 +1799,8 @@ class SkillDiscoveryTests(unittest.TestCase):
                 "capability_map_core.skills._FD_WALK_SUPPORTED", False
             ):
                 result = discover_skills(
-                    [RootSpec(root, "extra", "path", "root:path", "<path>")]
+                    [RootSpec(root, "extra", "path", "root:path", "<path>")],
+                    allow_best_effort_path_backend=True,
                 )
 
             self.assertEqual(
@@ -1810,7 +1810,100 @@ class SkillDiscoveryTests(unittest.TestCase):
             by_name = {item.name: item for item in result.capabilities}
             self.assertEqual(by_name["system-path"].source_locations[0].scope, "system")
             self.assertIn(
-                "path_backend_best_effort",
+                "unsafe_best_effort_opt_in",
+                {diagnostic.code for diagnostic in result.diagnostics},
+            )
+
+    def test_path_backend_is_refused_by_default_without_reading_skill_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "skills"
+            canary = b"path-backend-race-canary"
+            write_raw_skill(
+                root / "regular",
+                b"---\nname: unsafe-default\n---\n" + canary,
+            )
+            real_read = os.read
+            read_chunks: list[bytes] = []
+
+            def recording_read(fd: int, size: int) -> bytes:
+                chunk = real_read(fd, size)
+                read_chunks.append(chunk)
+                return chunk
+
+            with mock.patch(
+                "capability_map_core.skills._FD_WALK_SUPPORTED", False
+            ), mock.patch("capability_map_core.skills.os.read", recording_read):
+                result = discover_skills(
+                    [RootSpec(root, "extra", "path", "root:path", "<path>")]
+                )
+
+            self.assertEqual(result.capabilities, ())
+            self.assertNotIn(canary, b"".join(read_chunks))
+            self.assertIn(
+                "secure_backend_unavailable",
+                {diagnostic.code for diagnostic in result.diagnostics},
+            )
+
+    def test_root_fd_is_closed_when_fstat_fails_after_open(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "root"
+            write_skill(root / "skill", frontmatter="name: root-fstat")
+            real_open = os.open
+            real_fstat = os.fstat
+            real_close = os.close
+            root_fd: list[int] = []
+            closed: list[int] = []
+
+            def tracking_open(path: object, flags: int, *args: object, **kwargs: object) -> int:
+                fd = real_open(path, flags, *args, **kwargs)
+                if kwargs.get("dir_fd") is None and Path(path).name == root.name:
+                    root_fd.append(fd)
+                return fd
+
+            def failing_fstat(fd: int) -> os.stat_result:
+                if root_fd and fd == root_fd[-1]:
+                    raise PermissionError("synthetic root fstat denial")
+                return real_fstat(fd)
+
+            def tracking_close(fd: int) -> None:
+                closed.append(fd)
+                real_close(fd)
+
+            with mock.patch(
+                "capability_map_core.skills.os.open", tracking_open
+            ), mock.patch(
+                "capability_map_core.skills.os.fstat", failing_fstat
+            ), mock.patch("capability_map_core.skills.os.close", tracking_close):
+                result = discover_skills(
+                    [RootSpec(root, "extra", "root", "root:fstat", "<root>")]
+                )
+
+            self.assertEqual(result.capabilities, ())
+            self.assertEqual(len(root_fd), 1)
+            self.assertIn(root_fd[0], closed)
+
+    def test_recursion_limit_on_one_root_does_not_stop_later_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            first = base / "first"
+            second = base / "second"
+            first.mkdir()
+            second.mkdir()
+
+            with mock.patch(
+                "capability_map_core.skills._walk_root",
+                side_effect=[RecursionError("synthetic depth"), ([], [])],
+            ) as walk_root:
+                result = discover_skills(
+                    [
+                        RootSpec(first, "extra", "first", "root:first", "<first>"),
+                        RootSpec(second, "extra", "second", "root:second", "<second>"),
+                    ]
+                )
+
+            self.assertEqual(walk_root.call_count, 2)
+            self.assertIn(
+                "traversal_depth_exceeded",
                 {diagnostic.code for diagnostic in result.diagnostics},
             )
 
