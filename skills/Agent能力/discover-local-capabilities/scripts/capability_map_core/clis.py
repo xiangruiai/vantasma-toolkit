@@ -8,17 +8,18 @@ import os
 import platform
 import stat
 import subprocess
+import threading
+import time
 import unicodedata
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 from typing import Any
 
 from .models import (
     Capability,
     CapabilityStates,
     Diagnostic,
-    ResolverRecord,
     SourceLocation,
 )
 from .sanitize import sanitize_text
@@ -27,8 +28,34 @@ from .sanitize import sanitize_text
 DEFAULT_WINDOWS_PATHEXT = (".COM", ".EXE", ".BAT", ".CMD")
 MAX_PROBE_TIMEOUT_SECONDS = 3.0
 MAX_PROBE_OUTPUT_BYTES = 64 * 1024
+PROBE_READ_CHUNK_BYTES = 8 * 1024
+_PROBE_POLL_SECONDS = 0.02
+_PROBE_TERMINATE_GRACE_SECONDS = 0.2
+_PROBE_THREAD_JOIN_SECONDS = 0.5
 _PROBE_STATUSES = frozenset({"success", "no_output", "nonzero", "timeout", "error"})
 _MINIMAL_ENVIRONMENT_KEYS = ("PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP")
+
+
+@dataclass(frozen=True)
+class CliResolverRecord:
+    """Private CLI locations preserving PATH order and duplicate visibility."""
+
+    resolver_id: str
+    exact_locations: tuple[str, ...] | list[str] = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.resolver_id, str) or not self.resolver_id:
+            raise ValueError("resolver_id must be a non-empty string")
+        locations = tuple(self.exact_locations)
+        if any(not isinstance(location, str) for location in locations):
+            raise TypeError("exact_locations must contain strings")
+        object.__setattr__(self, "exact_locations", locations)
+
+    def to_private_dict(self) -> dict[str, Any]:
+        return {
+            "resolver_id": self.resolver_id,
+            "exact_locations": list(self.exact_locations),
+        }
 
 
 @dataclass(frozen=True)
@@ -38,7 +65,7 @@ class CliDiscoveryResult:
     capabilities: tuple[Capability, ...] | list[Capability] = field(
         default_factory=tuple
     )
-    resolvers: tuple[ResolverRecord, ...] | list[ResolverRecord] = field(
+    resolvers: tuple[CliResolverRecord, ...] | list[CliResolverRecord] = field(
         default_factory=tuple
     )
     diagnostics: tuple[Diagnostic, ...] | list[Diagnostic] = field(
@@ -54,8 +81,8 @@ class CliDiscoveryResult:
         diagnostics = tuple(self.diagnostics)
         if any(not isinstance(item, Capability) for item in capabilities):
             raise TypeError("capabilities must contain Capability values")
-        if any(not isinstance(item, ResolverRecord) for item in resolvers):
-            raise TypeError("resolvers must contain ResolverRecord values")
+        if any(not isinstance(item, CliResolverRecord) for item in resolvers):
+            raise TypeError("resolvers must contain CliResolverRecord values")
         if any(not isinstance(item, Diagnostic) for item in diagnostics):
             raise TypeError("diagnostics must contain Diagnostic values")
         object.__setattr__(self, "capabilities", capabilities)
@@ -282,7 +309,6 @@ def discover_clis(
     platform_name: str | None = None,
     os_name: str | None = None,
     pathext: str | Iterable[str] | None = None,
-    case_sensitive: bool | None = None,
 ) -> CliDiscoveryResult:
     """Enumerate every executable entry in an injected or environment PATH.
 
@@ -292,7 +318,7 @@ def discover_clis(
     """
 
     windows = _is_windows(platform_name, os_name)
-    sensitive = not windows if case_sensitive is None else bool(case_sensitive)
+    sensitive = not windows
     environment = os.environ if environ is None else environ
     raw_path = path
     diagnostics: list[Diagnostic] = []
@@ -433,7 +459,7 @@ def discover_clis(
     for entry in entries:
         grouped.setdefault(entry.grouping_key, []).append(entry)
 
-    pairs: list[tuple[Capability, ResolverRecord]] = []
+    pairs: list[tuple[Capability, CliResolverRecord]] = []
     for grouping_key, command_entries in grouped.items():
         effective = command_entries[0]
         capability_diagnostics: list[Diagnostic] = []
@@ -492,7 +518,7 @@ def discover_clis(
                 grouping_key, case_sensitive=sensitive
             ),
         )
-        resolver = ResolverRecord(
+        resolver = CliResolverRecord(
             capability.resolver_id,
             tuple(entry.exact_location for entry in command_entries),
         )
@@ -521,27 +547,100 @@ def _minimal_probe_environment(
     return minimal
 
 
-def _bounded_probe_output(
-    stdout: bytes | str | None,
-    stderr: bytes | str | None,
-    *,
-    limit: int,
-) -> tuple[str, bool]:
-    def to_bytes(value: bytes | str | None) -> bytes:
-        if value is None:
-            return b""
-        if isinstance(value, bytes):
-            return value
-        return value.encode("utf-8", errors="replace")
+class _BoundedCapture:
+    """Retain one shared bounded prefix while readers drain both pipes."""
 
-    stdout_bytes = to_bytes(stdout)
-    stderr_bytes = to_bytes(stderr)
-    separator = b"\n" if stdout_bytes and stderr_bytes else b""
-    combined = stdout_bytes + separator + stderr_bytes
-    truncated = len(combined) > limit
-    bounded = combined[:limit]
-    decoded = bounded.decode("utf-8", errors="replace")
-    return sanitize_text(decoded, max_length=limit), truncated
+    def __init__(self, limit: int) -> None:
+        self._limit = limit
+        self._retained = bytearray()
+        self._lock = threading.Lock()
+        self._limit_reached = threading.Event()
+        self.truncated = False
+
+    @property
+    def limit_reached(self) -> bool:
+        return self._limit_reached.is_set()
+
+    def add(self, chunk: bytes) -> None:
+        if not chunk:
+            return
+        with self._lock:
+            remaining = self._limit - len(self._retained)
+            if remaining > 0:
+                self._retained.extend(chunk[:remaining])
+            if len(chunk) > remaining:
+                self.truncated = True
+                self._limit_reached.set()
+
+    def output(self) -> str:
+        with self._lock:
+            retained = bytes(self._retained)
+        decoded = retained.decode("utf-8", errors="replace")
+        sanitized = sanitize_text(decoded, max_length=self._limit)
+        bounded = sanitized.encode("utf-8")[: self._limit]
+        return bounded.decode("utf-8", errors="ignore")
+
+
+def _drain_pipe(pipe: Any, capture: _BoundedCapture) -> None:
+    try:
+        while True:
+            chunk = pipe.read(PROBE_READ_CHUNK_BYTES)
+            if not chunk:
+                break
+            if isinstance(chunk, str):
+                chunk = chunk.encode("utf-8", errors="replace")
+            capture.add(chunk)
+    except (OSError, ValueError):
+        return
+
+
+def _wait_for_process(
+    process: Any,
+    capture: _BoundedCapture,
+    *,
+    timeout: float,
+) -> tuple[str | None, float]:
+    deadline = time.monotonic() + timeout
+    while True:
+        returncode = process.poll()
+        if returncode is not None:
+            return None, max(0.0, deadline - time.monotonic())
+        if capture.limit_reached:
+            capture.truncated = True
+            return "output_limit", max(0.0, deadline - time.monotonic())
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return "timeout", 0.0
+        time.sleep(min(_PROBE_POLL_SECONDS, remaining))
+
+
+def _stop_and_reap(process: Any) -> None:
+    if process.poll() is None:
+        try:
+            process.terminate()
+        except OSError:
+            pass
+    try:
+        process.wait(timeout=_PROBE_TERMINATE_GRACE_SECONDS)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    if process.poll() is None:
+        try:
+            process.kill()
+        except OSError:
+            pass
+    process.wait()
+
+
+def _close_probe_pipes(process: Any) -> None:
+    for pipe in (getattr(process, "stdout", None), getattr(process, "stderr", None)):
+        if pipe is None:
+            continue
+        try:
+            pipe.close()
+        except OSError:
+            pass
 
 
 def _probe_diagnostic(
@@ -553,8 +652,25 @@ def _probe_diagnostic(
     return Diagnostic("warning", code, message, dict(details or {}))
 
 
-def _is_absolute_exact_path(value: str) -> bool:
-    return Path(value).is_absolute() or PureWindowsPath(value).is_absolute()
+def _validate_native_executable(value: str) -> None:
+    """Require an absolute executable under the current host's path semantics."""
+
+    if not os.path.isabs(value):
+        raise ValueError(
+            "executable must be an absolute path under current host semantics"
+        )
+    if os.name == "nt" and not os.path.splitdrive(value)[0]:
+        raise ValueError(
+            "executable must use native Windows drive or UNC absolute semantics"
+        )
+    try:
+        file_stat = os.stat(value)
+    except OSError as error:
+        raise ValueError("executable exact path is not accessible") from error
+    if not stat.S_ISREG(file_stat.st_mode):
+        raise ValueError("executable exact path must identify a regular file")
+    if not os.access(value, os.X_OK):
+        raise ValueError("executable exact path is not executable")
 
 
 def probe_cli_version(
@@ -565,7 +681,6 @@ def probe_cli_version(
     environ: Mapping[str, str] | None = None,
     timeout: float = 2.0,
     output_limit: int = 4_096,
-    runner: Callable[..., subprocess.CompletedProcess[Any]] | None = None,
 ) -> CliVersionProbeResult:
     """Run one opt-in version probe from a caller-provided exact path.
 
@@ -576,8 +691,7 @@ def probe_cli_version(
     executable_text = os.fspath(executable)
     if not executable_text or "\x00" in executable_text:
         raise ValueError("executable must be a non-empty exact path")
-    if not _is_absolute_exact_path(executable_text):
-        raise ValueError("executable must be an absolute path from a private resolver")
+    _validate_native_executable(executable_text)
     probe_flags = ("--version",) if flags is None else tuple(flags)
     if any(not isinstance(flag, str) or "\x00" in flag for flag in probe_flags):
         raise ValueError("probe flags must be strings without NUL characters")
@@ -595,39 +709,16 @@ def probe_cli_version(
     bounded_timeout = min(requested_timeout, MAX_PROBE_TIMEOUT_SECONDS)
     source_environment = os.environ if environ is None else environ
     minimal_environment = _minimal_probe_environment(source_environment, path=path)
-    run = subprocess.run if runner is None else runner
     argv = [executable_text, *probe_flags]
 
     try:
-        completed = run(
+        process = subprocess.Popen(
             argv,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             shell=False,
             env=minimal_environment,
-            timeout=bounded_timeout,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as error:
-        output, truncated = _bounded_probe_output(
-            error.output,
-            error.stderr,
-            limit=bounded_limit,
-        )
-        details: dict[str, Any] = {"timeout_seconds": bounded_timeout}
-        if truncated:
-            details["output_truncated"] = True
-        return CliVersionProbeResult(
-            "timeout",
-            output,
-            diagnostics=(
-                _probe_diagnostic(
-                    "version_probe_timeout",
-                    "The version probe timed out.",
-                    details=details,
-                ),
-            ),
         )
     except Exception as error:
         return CliVersionProbeResult(
@@ -641,13 +732,64 @@ def probe_cli_version(
             ),
         )
 
-    output, truncated = _bounded_probe_output(
-        completed.stdout,
-        completed.stderr,
-        limit=bounded_limit,
-    )
+    capture = _BoundedCapture(bounded_limit)
+    readers = [
+        threading.Thread(
+            target=_drain_pipe,
+            args=(pipe, capture),
+            name=f"cli-version-{stream_name}",
+            daemon=True,
+        )
+        for stream_name, pipe in (
+            ("stdout", process.stdout),
+            ("stderr", process.stderr),
+        )
+        if pipe is not None
+    ]
+    for reader in readers:
+        reader.start()
+
+    stop_reason: str | None = None
+    try:
+        stop_reason, remaining = _wait_for_process(
+            process,
+            capture,
+            timeout=bounded_timeout,
+        )
+        if stop_reason is not None:
+            _stop_and_reap(process)
+        else:
+            process.wait(timeout=max(remaining, _PROBE_TERMINATE_GRACE_SECONDS))
+        for reader in readers:
+            reader.join(_PROBE_THREAD_JOIN_SECONDS)
+        if any(reader.is_alive() for reader in readers):
+            _close_probe_pipes(process)
+            for reader in readers:
+                reader.join(_PROBE_THREAD_JOIN_SECONDS)
+    except Exception as error:
+        try:
+            _stop_and_reap(process)
+        except Exception:
+            pass
+        return CliVersionProbeResult(
+            "error",
+            capture.output(),
+            diagnostics=(
+                _probe_diagnostic(
+                    "version_probe_error",
+                    "The version probe could not be completed.",
+                    details={"error_type": type(error).__name__},
+                ),
+            ),
+        )
+    finally:
+        _close_probe_pipes(process)
+        for reader in readers:
+            reader.join(_PROBE_THREAD_JOIN_SECONDS)
+
+    output = capture.output()
     diagnostics: list[Diagnostic] = []
-    if truncated:
+    if capture.truncated or stop_reason == "output_limit":
         diagnostics.append(
             _probe_diagnostic(
                 "version_output_truncated",
@@ -655,18 +797,32 @@ def probe_cli_version(
                 details={"output_limit": bounded_limit},
             )
         )
-    if completed.returncode != 0:
+    if stop_reason == "timeout":
+        diagnostics.append(
+            _probe_diagnostic(
+                "version_probe_timeout",
+                "The version probe timed out.",
+                details={"timeout_seconds": bounded_timeout},
+            )
+        )
+        return CliVersionProbeResult(
+            "timeout",
+            output,
+            process.returncode,
+            tuple(diagnostics),
+        )
+    if process.returncode != 0:
         diagnostics.append(
             _probe_diagnostic(
                 "version_probe_nonzero",
                 "The version probe returned a non-zero exit status.",
-                details={"returncode": completed.returncode},
+                details={"returncode": process.returncode},
             )
         )
         return CliVersionProbeResult(
             "nonzero",
             output,
-            completed.returncode,
+            process.returncode,
             tuple(diagnostics),
         )
     if not output:
@@ -678,23 +834,25 @@ def probe_cli_version(
         )
         return CliVersionProbeResult(
             "no_output",
-            returncode=completed.returncode,
+            returncode=process.returncode,
             diagnostics=tuple(diagnostics),
         )
     return CliVersionProbeResult(
         "success",
         output,
-        completed.returncode,
+        process.returncode,
         tuple(diagnostics),
     )
 
 
 __all__ = [
     "CliDiscoveryResult",
+    "CliResolverRecord",
     "CliVersionProbeResult",
     "DEFAULT_WINDOWS_PATHEXT",
     "MAX_PROBE_OUTPUT_BYTES",
     "MAX_PROBE_TIMEOUT_SECONDS",
+    "PROBE_READ_CHUNK_BYTES",
     "discover_clis",
     "probe_cli_version",
 ]

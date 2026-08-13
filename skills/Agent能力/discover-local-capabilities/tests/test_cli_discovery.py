@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import socket
-import stat
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -17,11 +19,15 @@ from unittest import mock
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
+import capability_map_core.clis as cli_module  # noqa: E402
 from capability_map_core.clis import (  # noqa: E402
     CliDiscoveryResult,
+    MAX_PROBE_TIMEOUT_SECONDS,
     discover_clis,
     probe_cli_version,
 )
+
+PROBE_READ_CHUNK_BYTES = getattr(cli_module, "PROBE_READ_CHUNK_BYTES", 0)
 
 
 def _write_file(path: Path, *, executable: bool = True) -> Path:
@@ -41,6 +47,82 @@ def _resolver_for(result: CliDiscoveryResult, capability):
         for resolver in result.resolvers
         if resolver.resolver_id == capability.resolver_id
     )
+
+
+def _write_python_executable(path: Path, body: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"#!{sys.executable}\n{body}\n", encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+class _TrackingPipe:
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+        self._offset = 0
+        self.read_sizes: list[int] = []
+        self.closed = False
+        self._lock = threading.Lock()
+
+    def read(self, size: int = -1) -> bytes:
+        if size <= 0:
+            raise AssertionError("probe pipe reads must always be bounded")
+        with self._lock:
+            self.read_sizes.append(size)
+            chunk = self._payload[self._offset : self._offset + size]
+            self._offset += len(chunk)
+            return chunk
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _FakeDirEntry:
+    def __init__(self, name: str, file_stat: os.stat_result) -> None:
+        self.name = name
+        self._file_stat = file_stat
+
+    def stat(self, *, follow_symlinks: bool = True) -> os.stat_result:
+        return self._file_stat
+
+
+class _FakeProcess:
+    def __init__(
+        self,
+        *,
+        stdout: bytes = b"",
+        stderr: bytes = b"",
+        returncode: int = 0,
+        stays_running: bool = False,
+    ) -> None:
+        self.stdout = _TrackingPipe(stdout)
+        self.stderr = _TrackingPipe(stderr)
+        self.returncode: int | None = None if stays_running else returncode
+        self._planned_returncode = returncode
+        self._stays_running = stays_running
+        self.wait_timeouts: list[float | None] = []
+        self.terminate_called = False
+        self.kill_called = False
+
+    def wait(self, timeout: float | None = None) -> int:
+        self.wait_timeouts.append(timeout)
+        if self.returncode is not None:
+            return self.returncode
+        if self._stays_running:
+            raise subprocess.TimeoutExpired(["fixture"], timeout)
+        self.returncode = self._planned_returncode
+        return self.returncode
+
+    def poll(self) -> int | None:
+        return self.returncode
+
+    def terminate(self) -> None:
+        self.terminate_called = True
+        self.returncode = -15
+
+    def kill(self) -> None:
+        self.kill_called = True
+        self.returncode = -9
 
 
 class UnixCliDiscoveryTests(unittest.TestCase):
@@ -103,6 +185,13 @@ class UnixCliDiscoveryTests(unittest.TestCase):
                 str(first / "same"),
             )
             self.assertEqual(resolver.exact_locations, expected)
+            self.assertEqual(
+                resolver.to_private_dict(),
+                {
+                    "resolver_id": capability.resolver_id,
+                    "exact_locations": list(expected),
+                },
+            )
             self.assertEqual(len(capability.source_locations), 4)
             self.assertEqual(result.entry_count, 4)
             entry_details = [
@@ -193,10 +282,12 @@ class UnixCliDiscoveryTests(unittest.TestCase):
             for name in names:
                 _write_file(directory / name)
 
-            with mock.patch(
-                "capability_map_core.clis.subprocess.run",
-                side_effect=AssertionError("default discovery executed a command"),
-            ) as run:
+            with (
+                mock.patch("subprocess.run") as run,
+                mock.patch("subprocess.Popen") as popen,
+                mock.patch("socket.create_connection") as create_connection,
+                mock.patch("socket.socket") as socket_constructor,
+            ):
                 result = discover_clis(
                     path=str(directory),
                     cwd=Path(temporary),
@@ -205,9 +296,39 @@ class UnixCliDiscoveryTests(unittest.TestCase):
                 )
 
             run.assert_not_called()
+            popen.assert_not_called()
+            create_connection.assert_not_called()
+            socket_constructor.assert_not_called()
             self.assertEqual(
                 [capability.name for capability in result.capabilities],
                 sorted(names, key=lambda value: (value.casefold(), value)),
+            )
+
+    def test_unix_command_grouping_is_always_case_sensitive(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            directory = base / "bin"
+            directory.mkdir()
+            upper_stat = _write_file(base / "fixtures" / "upper").stat()
+            lower_stat = _write_file(base / "fixtures" / "lower").stat()
+
+            with mock.patch(
+                "capability_map_core.clis.os.scandir",
+                return_value=[
+                    _FakeDirEntry("Case", upper_stat),
+                    _FakeDirEntry("case", lower_stat),
+                ],
+            ):
+                result = discover_clis(
+                    path=str(directory),
+                    cwd=base,
+                    platform_name="Linux",
+                    os_name="posix",
+                )
+
+            self.assertEqual([item.name for item in result.capabilities], ["Case", "case"])
+            self.assertNotIn(
+                "case_sensitive", inspect.signature(discover_clis).parameters
             )
 
     def test_public_output_is_sanitized_while_only_resolver_has_exact_paths(self) -> None:
@@ -266,7 +387,6 @@ class WindowsCliDiscoveryTests(unittest.TestCase):
                 platform_name="Windows",
                 os_name="nt",
                 pathext=".EXE;.CMD",
-                case_sensitive=False,
             )
 
             self.assertEqual(len(result.capabilities), 1)
@@ -289,7 +409,7 @@ class WindowsCliDiscoveryTests(unittest.TestCase):
             self.assertEqual([item["path_rank"] for item in details], [0, 0, 1])
             self.assertEqual([item["effective"] for item in details], [True, False, False])
 
-    def test_case_sensitive_override_keeps_distinct_windows_commands(self) -> None:
+    def test_windows_grouping_is_always_case_insensitive(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary) / "bin"
             _write_file(directory / "Case.EXE", executable=False)
@@ -301,11 +421,13 @@ class WindowsCliDiscoveryTests(unittest.TestCase):
                 platform_name="Windows",
                 os_name="nt",
                 pathext=[".EXE", ".CMD"],
-                case_sensitive=True,
             )
 
-            self.assertEqual([item.name for item in result.capabilities], ["Case", "case"])
+            self.assertEqual([item.name for item in result.capabilities], ["Case"])
             self.assertEqual(result.entry_count, 2)
+            self.assertNotIn(
+                "case_sensitive", inspect.signature(discover_clis).parameters
+            )
 
 
 class CliVersionProbeTests(unittest.TestCase):
@@ -313,12 +435,10 @@ class CliVersionProbeTests(unittest.TestCase):
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            executable = Path(temporary) / "tool"
+            executable = _write_file(Path(temporary) / "tool")
             secret = "gh" + "p_" + "syntheticvalue123456"
             stdout = f"tool 1.2.3 token={secret} {temporary} " + ("x" * 200)
-            completed = subprocess.CompletedProcess(
-                [str(executable), "version"], 0, stdout=stdout.encode(), stderr=b""
-            )
+            process = _FakeProcess(stdout=stdout.encode())
             environment = {
                 "PATH": "/minimal/bin",
                 "SYSTEMROOT": "C:\\Windows",
@@ -328,8 +448,8 @@ class CliVersionProbeTests(unittest.TestCase):
             }
 
             with mock.patch(
-                "capability_map_core.clis.subprocess.run", return_value=completed
-            ) as run:
+                "capability_map_core.clis.subprocess.Popen", return_value=process
+            ) as popen:
                 result = probe_cli_version(
                     executable,
                     flags=("version",),
@@ -338,14 +458,20 @@ class CliVersionProbeTests(unittest.TestCase):
                     output_limit=80,
                 )
 
-            run.assert_called_once()
-            args, kwargs = run.call_args
+            popen.assert_called_once()
+            args, kwargs = popen.call_args
             self.assertEqual(args[0], [str(executable), "version"])
             self.assertIs(kwargs["stdin"], subprocess.DEVNULL)
             self.assertIs(kwargs["stdout"], subprocess.PIPE)
             self.assertIs(kwargs["stderr"], subprocess.PIPE)
             self.assertFalse(kwargs["shell"])
-            self.assertLessEqual(kwargs["timeout"], 3)
+            self.assertLessEqual(MAX_PROBE_TIMEOUT_SECONDS, 3)
+            self.assertTrue(
+                all(
+                    timeout is None or timeout <= MAX_PROBE_TIMEOUT_SECONDS
+                    for timeout in process.wait_timeouts
+                )
+            )
             self.assertEqual(
                 kwargs["env"],
                 {
@@ -359,38 +485,156 @@ class CliVersionProbeTests(unittest.TestCase):
             self.assertLessEqual(len(result.output), 80)
             self.assertNotIn(secret, result.output)
             self.assertNotIn(temporary, result.output)
+            self.assertTrue(process.stdout.closed)
+            self.assertTrue(process.stderr.closed)
 
     def test_probe_encodes_no_output_nonzero_timeout_and_error_distinctly(self) -> None:
-        executable = Path("/private/resolver/tool")
-        cases = (
-            (subprocess.CompletedProcess([], 0, stdout=b"", stderr=b""), "no_output"),
-            (
-                subprocess.CompletedProcess([], 9, stdout=b"bad", stderr=b"failure"),
-                "nonzero",
-            ),
-            (subprocess.TimeoutExpired([], 1, output=b"partial", stderr=b"late"), "timeout"),
-            (OSError("cannot execute /private/resolver/tool"), "error"),
-            (RuntimeError("synthetic runner failure"), "error"),
-        )
-        for outcome, expected in cases:
-            with self.subTest(expected=expected):
-                if isinstance(outcome, BaseException):
-                    patch = mock.patch(
-                        "capability_map_core.clis.subprocess.run", side_effect=outcome
-                    )
-                else:
-                    patch = mock.patch(
-                        "capability_map_core.clis.subprocess.run", return_value=outcome
-                    )
-                with patch:
-                    result = probe_cli_version(executable, environ={"PATH": "/bin"})
-                self.assertEqual(result.status, expected)
-                self.assertNotEqual(result.status, "success")
-                self.assertNotIn("/private/resolver", result.output)
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = _write_file(Path(temporary) / "tool")
+            cases = (
+                (_FakeProcess(), "no_output", 1.0),
+                (
+                    _FakeProcess(stdout=b"bad", stderr=b"failure", returncode=9),
+                    "nonzero",
+                    1.0,
+                ),
+                (
+                    _FakeProcess(
+                        stdout=b"partial", stderr=b"late", stays_running=True
+                    ),
+                    "timeout",
+                    0.01,
+                ),
+                (OSError("cannot execute exact path"), "error", 1.0),
+                (RuntimeError("synthetic runner failure"), "error", 1.0),
+            )
+            for outcome, expected, timeout in cases:
+                with self.subTest(expected=expected):
+                    if isinstance(outcome, BaseException):
+                        patch = mock.patch(
+                            "capability_map_core.clis.subprocess.Popen",
+                            side_effect=outcome,
+                        )
+                    else:
+                        patch = mock.patch(
+                            "capability_map_core.clis.subprocess.Popen",
+                            return_value=outcome,
+                        )
+                    with patch:
+                        result = probe_cli_version(
+                            executable,
+                            environ={"PATH": "/bin"},
+                            timeout=timeout,
+                        )
+                    self.assertEqual(result.status, expected)
+                    self.assertNotEqual(result.status, "success")
+                    self.assertNotIn(temporary, result.output)
 
-    def test_probe_rejects_non_exact_command_name(self) -> None:
-        with self.assertRaises(ValueError):
-            probe_cli_version("untrusted-command-name")
+    def test_probe_rejects_non_native_nonregular_and_nonexecutable_paths_without_spawn(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            non_executable = _write_file(base / "not-executable", executable=False)
+            directory = base / "directory"
+            directory.mkdir()
+            foreign_path = (
+                "/foreign/posix/tool"
+                if os.name == "nt"
+                else "C:\\foreign\\windows\\tool.exe"
+            )
+            rejected = ["untrusted-command-name", foreign_path, directory]
+            if os.name != "nt":
+                rejected.append(non_executable)
+
+            with (
+                mock.patch("capability_map_core.clis.subprocess.Popen") as popen,
+                mock.patch("capability_map_core.clis.subprocess.run") as run,
+            ):
+                for executable in rejected:
+                    with self.subTest(executable=str(executable)):
+                        with self.assertRaises(ValueError):
+                            probe_cli_version(executable)
+
+            popen.assert_not_called()
+            run.assert_not_called()
+
+    def test_probe_streams_with_bounded_reads_and_shared_retained_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = _write_file(Path(temporary) / "tool")
+            process = _FakeProcess(
+                stdout=b"o" * (1024 * 1024),
+                stderr=b"e" * (1024 * 1024),
+                stays_running=True,
+            )
+
+            with mock.patch(
+                "capability_map_core.clis.subprocess.Popen", return_value=process
+            ):
+                result = probe_cli_version(
+                    executable,
+                    timeout=1,
+                    output_limit=257,
+                    environ={"PATH": "/bin"},
+                )
+
+            self.assertLessEqual(len(result.output.encode("utf-8")), 257)
+            self.assertTrue(process.terminate_called)
+            self.assertTrue(process.stdout.read_sizes)
+            self.assertTrue(process.stderr.read_sizes)
+            self.assertLessEqual(max(process.stdout.read_sizes), PROBE_READ_CHUNK_BYTES)
+            self.assertLessEqual(max(process.stderr.read_sizes), PROBE_READ_CHUNK_BYTES)
+            self.assertTrue(process.stdout.closed)
+            self.assertTrue(process.stderr.closed)
+            self.assertIn(
+                "version_output_truncated",
+                [diagnostic.code for diagnostic in result.diagnostics],
+            )
+
+    def test_real_noisy_executable_is_stopped_without_capturing_full_output(self) -> None:
+        if os.name == "nt":
+            self.skipTest("POSIX executable fixture")
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = _write_python_executable(
+                Path(temporary) / "noisy-tool",
+                "import os\n"
+                "chunk = b'x' * 4096\n"
+                "for _ in range(256):\n"
+                "    os.write(1, chunk)\n"
+                "    os.write(2, chunk)",
+            )
+
+            started = time.monotonic()
+            result = probe_cli_version(
+                executable,
+                timeout=2,
+                output_limit=1024,
+                environ={"PATH": os.environ.get("PATH", "")},
+            )
+
+            self.assertLess(time.monotonic() - started, 3)
+            self.assertLessEqual(len(result.output.encode("utf-8")), 1024)
+            self.assertIn(result.status, {"nonzero", "success"})
+            self.assertIn(
+                "version_output_truncated",
+                [diagnostic.code for diagnostic in result.diagnostics],
+            )
+
+    def test_stdout_and_stderr_share_one_output_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = _write_file(Path(temporary) / "tool")
+            process = _FakeProcess(stdout=b"a" * 300, stderr=b"b" * 300)
+
+            with mock.patch(
+                "capability_map_core.clis.subprocess.Popen", return_value=process
+            ):
+                result = probe_cli_version(executable, output_limit=400)
+
+            self.assertLessEqual(len(result.output.encode("utf-8")), 400)
+            self.assertIn(
+                "version_output_truncated",
+                [diagnostic.code for diagnostic in result.diagnostics],
+            )
 
 
 if __name__ == "__main__":
