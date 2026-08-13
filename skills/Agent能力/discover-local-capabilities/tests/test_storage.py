@@ -21,6 +21,7 @@ from capability_map_core.clis import discover_clis  # noqa: E402
 from capability_map_core.models import ResolverRecord  # noqa: E402
 from capability_map_core.storage import (  # noqa: E402
     PublicArtifacts,
+    RootEvidence,
     StoragePaths,
     build_private_resolver_document,
     default_storage_paths,
@@ -53,6 +54,34 @@ def _bundle_bytes(paths: StoragePaths) -> dict[Path, bytes]:
 
 
 class DefaultStoragePathTests(unittest.TestCase):
+    def test_storage_paths_capture_private_root_evidence_without_repr_leak(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            public_parent = base / "public-parent"
+            private_parent = base / "private-parent"
+            public_parent.mkdir()
+            private_parent.mkdir()
+
+            paths = default_storage_paths(
+                home=base / "home",
+                local_root=public_parent / "map",
+                private_root=private_parent / "data",
+            )
+
+            self.assertIsInstance(paths.public_root_evidence, RootEvidence)
+            self.assertIsInstance(paths.private_root_evidence, RootEvidence)
+            self.assertEqual(
+                paths.public_root_evidence.resolved_path, paths.public_root
+            )
+            self.assertEqual(
+                paths.private_root_evidence.resolved_path, paths.private_root
+            )
+            self.assertTrue(paths.public_root_evidence.existing_ancestors)
+            self.assertTrue(paths.private_root_evidence.existing_ancestors)
+            self.assertIn("RootEvidence", storage_module.__all__)
+            self.assertNotIn("public_root_evidence", repr(paths))
+            self.assertNotIn("private_root_evidence", repr(paths))
+
     def test_platform_defaults_are_fully_injected(self) -> None:
         home = Path("/fixture/home")
         cases = (
@@ -790,6 +819,80 @@ class AtomicStorageWriterTests(unittest.TestCase):
 
             self.assertEqual(paths.map_path.read_bytes(), old_map[-1])
             self.assertEqual(paths.inventory_path.read_bytes(), concurrent_inventory)
+
+    def test_private_root_ancestor_swap_into_vault_is_rejected_before_public_write(self) -> None:
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlinks unsupported")
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            vault = base / "vault"
+            private_parent = base / "private-parent"
+            vault.mkdir()
+            private_parent.mkdir()
+            paths = default_storage_paths(
+                home=base / "home",
+                selected_vault=vault,
+                private_root=private_parent / "resolver-data",
+            )
+            parked_private = base / "parked-private-parent"
+            private_parent.rename(parked_private)
+            redirected = vault / "redirected-private"
+            redirected.mkdir()
+            private_parent.symlink_to(redirected, target_is_directory=True)
+
+            with self.assertRaises(ValueError):
+                write_storage_bundle(
+                    paths,
+                    _artifacts("must-not-write"),
+                    (ResolverRecord("res_fixture", ["/exact"]),),
+                )
+
+            self.assertFalse(paths.public_root.exists())
+            self.assertFalse((redirected / "resolver-data" / "capability-resolver.json").exists())
+            self.assertEqual(list(parked_private.iterdir()), [])
+
+    def test_public_root_swap_mid_update_rolls_back_via_original_physical_root(self) -> None:
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlinks unsupported")
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            public_root = base / "public-map"
+            attacker_root = base / "attacker-map"
+            attacker_root.mkdir()
+            paths = default_storage_paths(
+                home=base / "home",
+                local_root=public_root,
+                private_root=base / "private",
+            )
+            records = (ResolverRecord("res_fixture", ["/old"]),)
+            write_storage_bundle(paths, _artifacts("old"), records)
+            before = _bundle_bytes(paths)
+            parked_public = base / "parked-public-map"
+
+            def swap_root_after_map(label: str, _target: Path) -> None:
+                if label == "inventory":
+                    public_root.rename(parked_public)
+                    public_root.symlink_to(attacker_root, target_is_directory=True)
+
+            with self.assertRaises((ValueError, RuntimeError)):
+                write_storage_bundle(
+                    paths,
+                    _artifacts("new"),
+                    (ResolverRecord("res_fixture", ["/new"]),),
+                    failure_injector=swap_root_after_map,
+                )
+
+            parked_bundle = {
+                parked_public / path.name: payload
+                for path, payload in before.items()
+                if path.parent == paths.public_root
+            }
+            self.assertEqual(
+                {path: path.read_bytes() for path in parked_bundle}, parked_bundle
+            )
+            self.assertEqual(list(parked_public.glob(".capability-stage-*")), [])
+            self.assertEqual(list(attacker_root.iterdir()), [])
+            self.assertEqual(paths.resolver_path.read_bytes(), before[paths.resolver_path])
 
     def test_invalid_json_is_rejected_before_any_target_write(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

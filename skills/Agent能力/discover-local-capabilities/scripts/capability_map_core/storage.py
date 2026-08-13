@@ -8,10 +8,12 @@ import json
 import os
 import platform
 import re
+import secrets
 import stat
 import tempfile
 from collections import deque
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Protocol
@@ -42,6 +44,111 @@ _IGNORABLE_FSYNC_ERRORS = frozenset(
 
 
 @dataclass(frozen=True)
+class AncestorEvidence:
+    """Stable identity captured for one existing physical directory."""
+
+    path: Path = field(repr=False)
+    device: int
+    inode: int
+    ctime_ns: int
+    mode: int
+
+
+@dataclass(frozen=True)
+class RootEvidence:
+    """Canonical root plus the existing ancestry that established its identity."""
+
+    resolved_path: Path = field(repr=False)
+    existing_ancestors: tuple[AncestorEvidence, ...] = field(repr=False)
+
+
+def _capture_root_evidence(path: Path) -> RootEvidence:
+    resolved = _resolve_storage_path(path, reject_root_symlink=True)
+    current = Path(resolved.anchor)
+    ancestors: list[AncestorEvidence] = []
+    parts = resolved.parts[1:]
+    paths = [current]
+    for part in parts:
+        current = current / part
+        paths.append(current)
+    for candidate in paths:
+        try:
+            metadata = os.lstat(candidate)
+        except FileNotFoundError:
+            break
+        except OSError as error:
+            raise ValueError("storage ancestry could not be inspected") from error
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+            raise ValueError("storage ancestry must contain only physical directories")
+        ancestors.append(
+            AncestorEvidence(
+                candidate,
+                metadata.st_dev,
+                metadata.st_ino,
+                metadata.st_ctime_ns,
+                metadata.st_mode,
+            )
+        )
+    return RootEvidence(resolved, tuple(ancestors))
+
+
+def _validate_root_evidence(evidence: RootEvidence) -> Path:
+    try:
+        resolved = _resolve_storage_path(
+            evidence.resolved_path, reject_root_symlink=True
+        )
+    except ValueError as error:
+        raise ValueError("storage root ancestry changed") from error
+    if resolved != evidence.resolved_path:
+        raise ValueError("storage root resolved to a different physical location")
+    for ancestor in evidence.existing_ancestors:
+        try:
+            current = os.lstat(ancestor.path)
+        except OSError as error:
+            raise ValueError("storage root ancestry changed") from error
+        if (
+            stat.S_ISLNK(current.st_mode)
+            or not stat.S_ISDIR(current.st_mode)
+            or current.st_dev != ancestor.device
+            or current.st_ino != ancestor.inode
+            or stat.S_IFMT(current.st_mode) != stat.S_IFMT(ancestor.mode)
+        ):
+            raise ValueError("storage root ancestry changed")
+    return resolved
+
+
+def _validate_storage_roots(
+    paths: StoragePaths,
+    *,
+    public_operation_evidence: RootEvidence | None = None,
+    private_operation_evidence: RootEvidence | None = None,
+) -> None:
+    public_evidence = paths.public_root_evidence
+    private_evidence = paths.private_root_evidence
+    if public_evidence is None or private_evidence is None:  # pragma: no cover
+        raise ValueError("StoragePaths is missing root evidence")
+    public_root = _validate_root_evidence(public_evidence)
+    private_root = _validate_root_evidence(private_evidence)
+    if public_operation_evidence is not None:
+        if _validate_root_evidence(public_operation_evidence) != public_root:
+            raise ValueError("public storage root changed during the write")
+    if private_operation_evidence is not None:
+        if _validate_root_evidence(private_operation_evidence) != private_root:
+            raise ValueError("private storage root changed during the write")
+    if paths.vault_root is not None:
+        vault_evidence = paths.vault_root_evidence
+        if vault_evidence is None:  # pragma: no cover
+            raise ValueError("StoragePaths is missing Vault evidence")
+        vault_root = _validate_root_evidence(vault_evidence)
+        if not _is_within(public_root, vault_root):
+            raise ValueError("public storage escaped the selected Vault")
+        if _is_within(private_root, vault_root) or _is_within(
+            private_root, public_root
+        ):
+            raise ValueError("private resolver storage entered public storage")
+
+
+@dataclass(frozen=True)
 class StoragePaths:
     """Exact runtime locations for one capability-map installation."""
 
@@ -54,6 +161,16 @@ class StoragePaths:
     resolver_path: Path
     backup_root: Path | None = None
     staging_root: Path | None = None
+    vault_root: Path | None = field(default=None, repr=False)
+    public_root_evidence: RootEvidence | None = field(
+        default=None, repr=False, compare=False
+    )
+    private_root_evidence: RootEvidence | None = field(
+        default=None, repr=False, compare=False
+    )
+    vault_root_evidence: RootEvidence | None = field(
+        default=None, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         for name in (
@@ -66,7 +183,7 @@ class StoragePaths:
             "resolver_path",
         ):
             object.__setattr__(self, name, Path(getattr(self, name)))
-        for name in ("backup_root", "staging_root"):
+        for name in ("backup_root", "staging_root", "vault_root"):
             value = getattr(self, name)
             if value is not None:
                 object.__setattr__(self, name, Path(value))
@@ -84,6 +201,44 @@ class StoragePaths:
             raise ValueError(
                 f"resolver_path must be {RESOLVER_FILENAME!r} inside private_root"
             )
+        for evidence_name, root_name in (
+            ("public_root_evidence", "public_root"),
+            ("private_root_evidence", "private_root"),
+        ):
+            root = getattr(self, root_name)
+            evidence = getattr(self, evidence_name)
+            if evidence is None:
+                evidence = _capture_root_evidence(root)
+                object.__setattr__(self, evidence_name, evidence)
+            elif not isinstance(evidence, RootEvidence):
+                raise TypeError(f"{evidence_name} must be RootEvidence")
+            if evidence.resolved_path != root:
+                object.__setattr__(self, root_name, evidence.resolved_path)
+                if root_name == "public_root":
+                    object.__setattr__(self, "map_path", evidence.resolved_path / MAP_FILENAME)
+                    object.__setattr__(
+                        self,
+                        "inventory_path",
+                        evidence.resolved_path / INVENTORY_FILENAME,
+                    )
+                    object.__setattr__(
+                        self, "config_path", evidence.resolved_path / CONFIG_FILENAME
+                    )
+                    object.__setattr__(
+                        self, "receipt_path", evidence.resolved_path / RECEIPT_FILENAME
+                    )
+                else:
+                    object.__setattr__(
+                        self, "resolver_path", evidence.resolved_path / RESOLVER_FILENAME
+                    )
+        if self.vault_root is not None:
+            vault_evidence = self.vault_root_evidence
+            if vault_evidence is None:
+                vault_evidence = _capture_root_evidence(self.vault_root)
+                object.__setattr__(self, "vault_root_evidence", vault_evidence)
+            elif not isinstance(vault_evidence, RootEvidence):
+                raise TypeError("vault_root_evidence must be RootEvidence")
+            object.__setattr__(self, "vault_root", vault_evidence.resolved_path)
 
 
 @dataclass(frozen=True)
@@ -408,6 +563,7 @@ def default_storage_paths(
         resolver_path=selected_private_root / RESOLVER_FILENAME,
         backup_root=selected_backup,
         staging_root=selected_staging,
+        vault_root=None if vault_path is None else resolved_vault,
     )
 
 
@@ -1077,6 +1233,128 @@ def _restore_snapshot(target: Path, snapshot: _Snapshot) -> None:
             pass
 
 
+@contextmanager
+def _directory_handle(
+    root: Path, evidence: RootEvidence
+) -> Iterator[int | None]:
+    secure_dirfd = bool(
+        getattr(os, "O_DIRECTORY", 0)
+        and getattr(os, "O_NOFOLLOW", 0)
+        and os.stat in os.supports_dir_fd
+        and os.unlink in os.supports_dir_fd
+    )
+    if not secure_dirfd:  # pragma: no cover - Windows fallback
+        yield None
+        return
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | os.O_DIRECTORY
+        | os.O_NOFOLLOW
+    )
+    descriptor = os.open(root, flags)
+    try:
+        opened = os.fstat(descriptor)
+        root_identity = next(
+            (
+                ancestor
+                for ancestor in reversed(evidence.existing_ancestors)
+                if ancestor.path == root
+            ),
+            None,
+        )
+        if (
+            root_identity is None
+            or not stat.S_ISDIR(opened.st_mode)
+            or opened.st_dev != root_identity.device
+            or opened.st_ino != root_identity.inode
+        ):
+            raise ValueError("storage root changed while opening")
+        yield descriptor
+    finally:
+        os.close(descriptor)
+
+
+def _restore_snapshot_at(
+    parent_fd: int | None, target: Path, snapshot: _Snapshot
+) -> None:
+    if parent_fd is None:  # pragma: no cover - Windows fallback
+        _restore_snapshot(target, snapshot)
+        return
+    name = target.name
+    if not snapshot.existed:
+        try:
+            current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return
+        if stat.S_ISLNK(current.st_mode) or not stat.S_ISREG(current.st_mode):
+            raise RuntimeError(f"unsafe rollback target: {name}")
+        os.unlink(name, dir_fd=parent_fd)
+        os.fsync(parent_fd)
+        return
+    if snapshot.payload is None or snapshot.mode is None:  # pragma: no cover
+        raise RuntimeError("invalid rollback snapshot")
+    temporary_name = f".capability-rollback-{secrets.token_hex(12)}"
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    descriptor = os.open(temporary_name, flags, snapshot.mode, dir_fd=parent_fd)
+    try:
+        offset = 0
+        while offset < len(snapshot.payload):
+            written = os.write(descriptor, snapshot.payload[offset:])
+            if written <= 0:
+                raise OSError("short rollback write")
+            offset += written
+        os.fchmod(descriptor, snapshot.mode)
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = -1
+        os.replace(
+            temporary_name,
+            name,
+            src_dir_fd=parent_fd,
+            dst_dir_fd=parent_fd,
+        )
+        os.fsync(parent_fd)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            os.unlink(temporary_name, dir_fd=parent_fd)
+        except FileNotFoundError:
+            pass
+
+
+def _cleanup_stage_at(parent_fd: int | None, stage: Path) -> None:
+    if parent_fd is None:  # pragma: no cover - Windows fallback
+        return
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        stage_fd = os.open(stage.name, flags, dir_fd=parent_fd)
+    except FileNotFoundError:
+        return
+    try:
+        for name in os.listdir(stage_fd):
+            metadata = os.stat(name, dir_fd=stage_fd, follow_symlinks=False)
+            if stat.S_ISDIR(metadata.st_mode):
+                raise RuntimeError("unexpected directory inside storage staging")
+            os.unlink(name, dir_fd=stage_fd)
+        os.fsync(stage_fd)
+    finally:
+        os.close(stage_fd)
+    os.rmdir(stage.name, dir_fd=parent_fd)
+    os.fsync(parent_fd)
+
+
 def write_storage_bundle(
     paths: StoragePaths,
     artifacts: PublicArtifacts | Mapping[str, Any],
@@ -1091,6 +1369,7 @@ def write_storage_bundle(
 
     if not isinstance(paths, StoragePaths):
         raise TypeError("paths must be a StoragePaths value")
+    _validate_storage_roots(paths)
     public_artifacts = _coerce_artifacts(artifacts)
     records = _resolver_entries(resolver_records)
 
@@ -1129,6 +1408,14 @@ def write_storage_bundle(
 
     _prepare_root(paths.public_root)
     _prepare_root(paths.private_root)
+    _validate_storage_roots(paths)
+    public_operation_evidence = _capture_root_evidence(paths.public_root)
+    private_operation_evidence = _capture_root_evidence(paths.private_root)
+    _validate_storage_roots(
+        paths,
+        public_operation_evidence=public_operation_evidence,
+        private_operation_evidence=private_operation_evidence,
+    )
     if paths.staging_root is not None:
         if not _is_within(paths.staging_root, paths.public_root):
             raise ValueError("staging_root must be inside public_root")
@@ -1173,7 +1460,16 @@ def write_storage_bundle(
         return StorageWriteResult(generation_id, hashes, (), receipt_info)
 
     public_stage_parent = paths.staging_root or paths.public_root
-    with tempfile.TemporaryDirectory(
+    _validate_storage_roots(
+        paths,
+        public_operation_evidence=public_operation_evidence,
+        private_operation_evidence=private_operation_evidence,
+    )
+    with _directory_handle(
+        paths.public_root, public_operation_evidence
+    ) as public_root_fd, _directory_handle(
+        paths.private_root, private_operation_evidence
+    ) as private_root_fd, tempfile.TemporaryDirectory(
         prefix=".capability-stage-", dir=public_stage_parent
     ) as public_temporary, tempfile.TemporaryDirectory(
         prefix=".capability-stage-", dir=paths.private_root
@@ -1182,6 +1478,11 @@ def write_storage_bundle(
         private_stage = Path(private_temporary)
         staged: dict[str, Path] = {}
         for target in prepared:
+            _validate_storage_roots(
+                paths,
+                public_operation_evidence=public_operation_evidence,
+                private_operation_evidence=private_operation_evidence,
+            )
             stage_directory = (
                 private_stage if target.label == "resolver" else public_stage
             )
@@ -1194,6 +1495,11 @@ def write_storage_bundle(
             for target in prepared:
                 if failure_injector is not None:
                     failure_injector(target.label, target.target)
+                _validate_storage_roots(
+                    paths,
+                    public_operation_evidence=public_operation_evidence,
+                    private_operation_evidence=private_operation_evidence,
+                )
                 if _target_snapshot(target.target) != snapshots[target.target]:
                     raise RuntimeError(
                         f"storage target changed concurrently: {target.label}"
@@ -1206,7 +1512,14 @@ def write_storage_bundle(
             rollback_errors: list[BaseException] = []
             for target in reversed(replaced_targets):
                 try:
-                    _restore_snapshot(target.target, snapshots[target.target])
+                    parent_fd = (
+                        private_root_fd
+                        if target.target.parent == paths.private_root
+                        else public_root_fd
+                    )
+                    _restore_snapshot_at(
+                        parent_fd, target.target, snapshots[target.target]
+                    )
                 except BaseException as rollback_error:
                     rollback_errors.append(rollback_error)
             if rollback_errors:
@@ -1214,6 +1527,10 @@ def write_storage_bundle(
                     "storage bundle failed and rollback was incomplete"
                 ) from original_error
             raise
+        finally:
+            if public_stage_parent == paths.public_root:
+                _cleanup_stage_at(public_root_fd, public_stage)
+            _cleanup_stage_at(private_root_fd, private_stage)
 
     if os.name != "nt":
         os.chmod(paths.resolver_path, 0o600, follow_symlinks=False)
@@ -1240,6 +1557,7 @@ __all__ = [
     "PublicArtifacts",
     "RECEIPT_FILENAME",
     "RESOLVER_FILENAME",
+    "RootEvidence",
     "StoragePaths",
     "StorageWriteResult",
     "VaultCandidate",
