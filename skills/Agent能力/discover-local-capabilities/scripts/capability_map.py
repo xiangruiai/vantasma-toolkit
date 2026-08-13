@@ -1,0 +1,1276 @@
+#!/usr/bin/env python3
+"""Discover and manage a private, local Agent capability map.
+
+All host inputs and streams are injectable so callers can run the complete
+workflow in an isolated home.  Discovery is read-only and never executes a
+discovered command unless ``--probe-versions explicit`` is supplied.
+"""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import dataclasses
+import hashlib
+import hmac
+import json
+import os
+import stat
+import sys
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, TextIO
+
+from capability_map_core.classify import (
+    classify_capabilities,
+    route_query,
+)
+from capability_map_core.clis import discover_clis, probe_cli_version
+from capability_map_core.connectors import discover_connectors
+from capability_map_core.instructions import (
+    InstructionPlan,
+    InstructionTargetRequest,
+    apply_instruction_plan,
+    build_instruction_plan,
+    build_uninstall_plan,
+)
+from capability_map_core.models import (
+    Capability,
+    CapabilityStates,
+    Diagnostic,
+    InventoryMetadata,
+    SourceLocation,
+)
+from capability_map_core.render import (
+    render_capability_map_markdown,
+    render_inventory_json,
+)
+from capability_map_core.roots import RootSpec, skill_root_specs
+from capability_map_core.sanitize import sanitize_text
+from capability_map_core.skills import discover_skills
+from capability_map_core.storage import (
+    PublicArtifacts,
+    StoragePaths,
+    build_private_resolver_document,
+    default_storage_paths,
+    write_storage_bundle,
+)
+
+
+MAX_WORKFLOW_DOCUMENT_BYTES = 64 * 1024 * 1024
+_ARTIFACT_LABELS = ("map", "inventory", "config", "receipt", "resolver")
+
+
+class RefusedError(ValueError):
+    """A safe, expected refusal that maps to exit code 2."""
+
+
+class WorkflowError(RuntimeError):
+    """An operational failure that maps to exit code 3."""
+
+
+@dataclass(frozen=True)
+class ScanResult:
+    capabilities: tuple[Capability, ...]
+    resolvers: tuple[Any, ...]
+    diagnostics: tuple[Diagnostic, ...]
+    inventory_text: str
+    map_markdown: str
+
+
+@dataclass(frozen=True)
+class FileSnapshot:
+    existed: bool
+    payload: bytes | None
+    mode: int | None
+
+
+@dataclass(frozen=True)
+class SetupWorkflowPlan:
+    public: dict[str, Any]
+    plan_hash: str
+    paths: StoragePaths
+    scan: ScanResult
+    artifacts: PublicArtifacts
+    instruction_plan: InstructionPlan
+    target_request: InstructionTargetRequest
+    installation_id: str
+
+
+def interpret_capability_map_intent(query: str) -> str:
+    """Map common Chinese help requests to stable workflow operations."""
+
+    if not isinstance(query, str):
+        raise TypeError("query must be text")
+    normalized = "".join(query.casefold().split())
+    if any(word in normalized for word in ("卸载", "移除能力地图")):
+        return "uninstall"
+    if any(word in normalized for word in ("迁移", "换位置")):
+        return "migrate"
+    if any(word in normalized for word in ("刷新", "更新能力地图")):
+        return "refresh"
+    if any(word in normalized for word in ("在哪", "路径", "位置")):
+        return "paths"
+    return "usage"
+
+
+def _absolute(value: str | os.PathLike[str], *, cwd: Path, home: Path) -> Path:
+    raw = os.fspath(value)
+    if raw == "~":
+        return home.absolute()
+    if raw.startswith(("~/", "~\\")):
+        return (home / raw[2:]).absolute()
+    path = Path(raw)
+    return path.absolute() if path.is_absolute() else (cwd / path).absolute()
+
+
+def _canonical(value: Any) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _digest(value: bytes | str | Mapping[str, Any] | Sequence[Any]) -> str:
+    if isinstance(value, bytes):
+        payload = value
+    elif isinstance(value, str):
+        payload = value.encode("utf-8")
+    else:
+        payload = _canonical(value)
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _write_json(stream: TextIO, value: Mapping[str, Any]) -> None:
+    stream.write(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
+
+
+def _safe_error(error: BaseException) -> str:
+    message = sanitize_text(str(error), max_length=768).strip()
+    return message or type(error).__name__
+
+
+def _read_regular(path: Path, *, limit: int = MAX_WORKFLOW_DOCUMENT_BYTES) -> bytes:
+    """Read one bounded, non-blocking, no-follow regular file."""
+
+    candidate = Path(path)
+    if any(part.casefold() == ".env" for part in candidate.parts):
+        raise ValueError("workflow documents must not traverse .env")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(candidate, flags)
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError("workflow document must be a regular file")
+        if before.st_size > limit:
+            raise ValueError("workflow document exceeds the read limit")
+        chunks: list[bytes] = []
+        remaining = limit + 1
+        while remaining > 0:
+            chunk = os.read(descriptor, min(64 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
+        after = os.fstat(descriptor)
+        if len(payload) > limit:
+            raise ValueError("workflow document exceeds the read limit")
+        if (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        ) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        ):
+            raise ValueError("workflow document changed while reading")
+        return payload
+    finally:
+        os.close(descriptor)
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(_read_regular(path).decode("utf-8"))
+    except FileNotFoundError:
+        raise
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("workflow JSON is invalid") from error
+    if not isinstance(value, dict):
+        raise ValueError("workflow JSON must contain an object")
+    return value
+
+
+def _snapshot(path: Path) -> FileSnapshot:
+    try:
+        payload = _read_regular(path)
+        mode = stat.S_IMODE(os.stat(path, follow_symlinks=False).st_mode)
+        return FileSnapshot(True, payload, mode)
+    except FileNotFoundError:
+        return FileSnapshot(False, None, None)
+
+
+def _artifact_paths(paths: StoragePaths) -> dict[str, Path]:
+    return {
+        "map": paths.map_path,
+        "inventory": paths.inventory_path,
+        "config": paths.config_path,
+        "receipt": paths.receipt_path,
+        "resolver": paths.resolver_path,
+    }
+
+
+def _snapshots(paths: StoragePaths) -> dict[Path, FileSnapshot]:
+    return {path: _snapshot(path) for path in _artifact_paths(paths).values()}
+
+
+def _atomic_restore(path: Path, payload: bytes, mode: int) -> None:
+    temporary = path.parent / f".vantasma-restore-{_digest(str(path))[:20]}"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
+    descriptor = os.open(temporary, flags, mode)
+    try:
+        view = memoryview(payload)
+        while view:
+            written = os.write(descriptor, view)
+            view = view[written:]
+        os.fchmod(descriptor, mode)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    os.replace(temporary, path)
+
+
+def _restore_after_failure(
+    snapshots: Mapping[Path, FileSnapshot], *, recovery_key: str
+) -> tuple[Path, ...]:
+    """Restore prior targets and retain every displaced file beside its target."""
+
+    recovery_directories: set[Path] = set()
+    for target, previous in snapshots.items():
+        recovery = target.parent / ".vantasma-workflow-recovery" / recovery_key
+        current_exists = target.exists()
+        if current_exists:
+            recovery.mkdir(parents=True, exist_ok=True)
+            destination = recovery / target.name
+            index = 1
+            while destination.exists():
+                destination = recovery / f"{target.name}.{index}"
+                index += 1
+            os.replace(target, destination)
+            recovery_directories.add(recovery)
+        if previous.existed and previous.payload is not None:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            _atomic_restore(target, previous.payload, previous.mode or 0o600)
+    return tuple(sorted(recovery_directories, key=str))
+
+
+def _selected_agents(value: str) -> tuple[str, ...]:
+    if value == "both":
+        return ("codex", "claude")
+    return (value,)
+
+
+def _storage_paths(
+    *,
+    storage: str | None,
+    vault: str | None,
+    home: Path,
+    cwd: Path,
+    environ: Mapping[str, str],
+) -> StoragePaths:
+    if storage is not None and vault is not None:
+        raise RefusedError("choose either --storage or --vault")
+    local_root = None if storage is None else _absolute(storage, cwd=cwd, home=home)
+    selected_vault = None if vault is None else _absolute(vault, cwd=cwd, home=home)
+    return default_storage_paths(
+        home=home,
+        environ=environ,
+        local_root=local_root,
+        selected_vault=selected_vault,
+    )
+
+
+def _scan(
+    *,
+    home: Path,
+    project: Path | None,
+    cwd: Path,
+    environ: Mapping[str, str],
+    extra_skill_roots: Iterable[Path] = (),
+    probe_versions: bool = False,
+) -> ScanResult:
+    roots = skill_root_specs(
+        home=home,
+        project=project,
+        extra_roots=extra_skill_roots,
+        environ=environ,
+    )
+    plugin_roots = tuple(root for root in roots if root.scope in {"plugin", "extra"})
+    connectors = discover_connectors(
+        home=home,
+        project=project,
+        plugin_roots=plugin_roots,
+        environ=environ,
+    )
+    skill_roots: list[RootSpec] = list(roots)
+    skill_roots.extend(connectors.skill_roots)
+    skills = discover_skills(tuple(skill_roots))
+    clis = discover_clis(environ=environ, cwd=cwd)
+
+    cli_capabilities = list(clis.capabilities)
+    probe_diagnostics: list[Diagnostic] = []
+    if probe_versions:
+        by_resolver = {item.resolver_id: item for item in clis.resolvers}
+        probed: list[Capability] = []
+        for capability in cli_capabilities:
+            resolver = by_resolver.get(capability.resolver_id)
+            if resolver is None or not resolver.exact_locations:
+                probed.append(capability)
+                continue
+            result = probe_cli_version(
+                resolver.exact_locations[0],
+                path=environ.get("PATH"),
+                environ=environ,
+            )
+            probe_diagnostics.extend(result.diagnostics)
+            version = result.output.splitlines()[0] if result.output else None
+            states = dataclasses.replace(capability.states, probed=result.status)
+            probed.append(dataclasses.replace(capability, states=states, version=version))
+        cli_capabilities = probed
+
+    all_capabilities = (
+        *skills.capabilities,
+        *cli_capabilities,
+        *connectors.capabilities,
+    )
+    classified = classify_capabilities(all_capabilities)
+    diagnostics = (
+        *skills.diagnostics,
+        *clis.diagnostics,
+        *connectors.diagnostics,
+        *probe_diagnostics,
+    )
+    metadata = InventoryMetadata("", len(classified), tuple(diagnostics))
+    inventory_text = render_inventory_json(classified, metadata, diagnostics)
+    map_markdown = render_capability_map_markdown(classified, metadata, diagnostics)
+    return ScanResult(
+        tuple(classified),
+        tuple((*skills.resolvers, *clis.resolvers, *connectors.resolvers)),
+        tuple(diagnostics),
+        inventory_text,
+        map_markdown,
+    )
+
+
+def _installation_id(
+    paths: StoragePaths, request: InstructionTargetRequest, provided: str | None
+) -> str:
+    if provided is not None:
+        if not provided or len(provided) > 128:
+            raise RefusedError("installation id is invalid")
+        return provided
+    evidence = {
+        "public_root": str(paths.public_root),
+        "private_root": str(paths.private_root),
+        "agents": list(request.agents),
+        "scopes": list(request.scopes),
+        "project": None if request.project_root is None else str(request.project_root),
+    }
+    return "inst_" + _digest(evidence)[:24]
+
+
+def _configuration(
+    *, installation_id: str, request: InstructionTargetRequest, mode: str = "setup"
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "mode": mode,
+        "installation_id": installation_id,
+        "agents": list(request.agents),
+        "scope": request.scopes[0],
+    }
+
+
+def _receipt_markdown(
+    installation_id: str, scan: ScanResult, *, action: str = "setup"
+) -> str:
+    return "\n".join(
+        (
+            "# Capability map setup receipt",
+            "",
+            f"- action: {action}",
+            f"- installation_id: {installation_id}",
+            f"- capabilities: {len(scan.capabilities)}",
+            "- exact runtime paths are retained in the private resolver and command receipt.",
+            "",
+        )
+    )
+
+
+def _artifacts(
+    *,
+    scan: ScanResult,
+    installation_id: str,
+    request: InstructionTargetRequest,
+    action: str = "setup",
+) -> PublicArtifacts:
+    return PublicArtifacts(
+        scan.map_markdown,
+        scan.inventory_text,
+        _configuration(
+            installation_id=installation_id,
+            request=request,
+        ),
+        _receipt_markdown(installation_id, scan, action=action),
+    )
+
+
+def _current_storage_state(paths: StoragePaths) -> dict[str, dict[str, Any]]:
+    state: dict[str, dict[str, Any]] = {}
+    for label, path in _artifact_paths(paths).items():
+        snapshot = _snapshot(path)
+        state[label] = {
+            "exists": snapshot.existed,
+            "sha256": None if snapshot.payload is None else _digest(snapshot.payload),
+            "mode": snapshot.mode,
+        }
+    return state
+
+
+def _desired_hashes(
+    paths: StoragePaths, artifacts: PublicArtifacts, scan: ScanResult
+) -> dict[str, str]:
+    private = build_private_resolver_document(paths, scan.resolvers)
+    values: dict[str, Any] = {
+        "map": artifacts.map_markdown,
+        "inventory": json.loads(scan.inventory_text),
+        "config": artifacts.config,
+        "receipt": artifacts.receipt_markdown,
+        "resolver": private,
+    }
+    return {
+        key: _digest(value if isinstance(value, str) else _canonical(value))
+        for key, value in values.items()
+    }
+
+
+def _build_setup_plan(
+    *,
+    args: argparse.Namespace,
+    home: Path,
+    cwd: Path,
+    environ: Mapping[str, str],
+) -> SetupWorkflowPlan:
+    paths = _storage_paths(
+        storage=args.storage,
+        vault=args.vault,
+        home=home,
+        cwd=cwd,
+        environ=environ,
+    )
+    project = _absolute(args.project, cwd=cwd, home=home)
+    agents = _selected_agents(args.agents)
+    request = InstructionTargetRequest(
+        home=home,
+        project_root=project if args.scope == "project" else None,
+        agents=agents,
+        scopes=(args.scope,),
+    )
+    installation_id = _installation_id(paths, request, args.installation_id)
+    scan = _scan(
+        home=home,
+        project=project,
+        cwd=cwd,
+        environ=environ,
+    )
+    artifacts = _artifacts(
+        scan=scan,
+        installation_id=installation_id,
+        request=request,
+    )
+    instruction_plan = build_instruction_plan(
+        request,
+        installation_id,
+        paths.map_path,
+        paths.resolver_path,
+        backup_root=paths.private_root / "instruction-backups",
+    )
+    current = _current_storage_state(paths)
+    desired = _desired_hashes(paths, artifacts, scan)
+    changes = [
+        label
+        for label in _ARTIFACT_LABELS
+        if current[label]["sha256"] != desired[label]
+    ]
+    exact_paths = {label: str(path) for label, path in _artifact_paths(paths).items()}
+    hash_input = {
+        "schema_version": 1,
+        "installation_id": installation_id,
+        "paths": exact_paths,
+        "desired_hashes": desired,
+        "current": current,
+        "instruction_plan_hash": instruction_plan.plan_hash,
+    }
+    plan_hash = _digest(hash_input)
+    public = {
+        "schema_version": 1,
+        "action": "setup",
+        "installation_id": installation_id,
+        "paths": exact_paths,
+        "counts": {
+            "capabilities": len(scan.capabilities),
+            "diagnostics": len(scan.diagnostics),
+            "storage_changes": len(changes),
+            "instruction_changes": len(instruction_plan.changed_operations),
+        },
+        "changes": changes,
+        "backups": [str(instruction_plan.backup_root)],
+        "instruction_operations": [
+            {
+                "agent": operation.target.agent,
+                "scope": operation.target.scope,
+                "path": str(operation.target.path),
+                "operation": operation.operation,
+            }
+            for operation in instruction_plan.operations
+        ],
+        "warnings": list(instruction_plan.diagnostics),
+        "plan_hash": plan_hash,
+    }
+    return SetupWorkflowPlan(
+        public,
+        plan_hash,
+        paths,
+        scan,
+        artifacts,
+        instruction_plan,
+        request,
+        installation_id,
+    )
+
+
+def _apply_storage_then_instructions(plan: SetupWorkflowPlan) -> dict[str, Any]:
+    before = _snapshots(plan.paths)
+    storage_result = write_storage_bundle(
+        plan.paths,
+        plan.artifacts,
+        plan.scan.resolvers,
+    )
+    try:
+        current_instruction_plan = build_instruction_plan(
+            plan.target_request,
+            plan.installation_id,
+            plan.paths.map_path,
+            plan.paths.resolver_path,
+            backup_root=plan.paths.private_root / "instruction-backups",
+        )
+        if _instruction_transition(current_instruction_plan) != _instruction_transition(
+            plan.instruction_plan
+        ):
+            raise WorkflowError("instruction targets changed after storage preparation")
+        instruction_result = apply_instruction_plan(
+            current_instruction_plan,
+            confirmed=True,
+            expected_plan_hash=current_instruction_plan.plan_hash,
+        )
+    except BaseException:
+        _restore_after_failure(before, recovery_key=plan.plan_hash[:24])
+        raise
+    return {
+        "status": "installed",
+        "installation_id": plan.installation_id,
+        "plan_hash": plan.plan_hash,
+        "generation_id": storage_result.generation_id,
+        "hashes": dict(sorted(storage_result.hashes.items())),
+        "paths": {
+            **{label: str(path) for label, path in _artifact_paths(plan.paths).items()},
+            "instruction_targets": [
+                str(operation.target.path)
+                for operation in plan.instruction_plan.operations
+            ],
+            "instruction_manifest": (
+                None
+                if instruction_result.manifest_path is None
+                else str(instruction_result.manifest_path)
+            ),
+        },
+        "counts": plan.public["counts"],
+    }
+
+
+def _instruction_transition(plan: InstructionPlan) -> tuple[tuple[Any, ...], ...]:
+    """Compare target transitions while excluding backup ancestry evidence."""
+
+    return tuple(
+        (
+            str(item.target.path),
+            item.operation,
+            item.original_exists,
+            item.expected_original_sha256,
+            item.target_sha256,
+            item.original_mode,
+            item.newline,
+            item.diagnostics,
+        )
+        for item in plan.operations
+    )
+
+
+def _config_for(paths: StoragePaths) -> dict[str, Any]:
+    try:
+        config = _read_json(paths.config_path)
+    except FileNotFoundError as error:
+        raise WorkflowError("capability map is not installed at the selected storage") from error
+    installation_id = config.get("installation_id")
+    agents = config.get("agents")
+    scope = config.get("scope")
+    if (
+        config.get("schema_version") != 1
+        or not isinstance(installation_id, str)
+        or not isinstance(agents, list)
+        or not agents
+        or any(item not in {"codex", "claude"} for item in agents)
+        or scope not in {"user", "project"}
+    ):
+        raise WorkflowError("capability map config is invalid")
+    return config
+
+
+def _request_from_config(
+    config: Mapping[str, Any], *, home: Path, cwd: Path
+) -> InstructionTargetRequest:
+    scope = str(config["scope"])
+    return InstructionTargetRequest(
+        home=home,
+        project_root=cwd if scope == "project" else None,
+        agents=tuple(config["agents"]),
+        scopes=(scope,),
+    )
+
+
+def _capability_from_public(raw: Any) -> Capability:
+    if not isinstance(raw, dict):
+        raise ValueError("inventory capability must be an object")
+    required = {"id", "kind", "name", "resolver_id", "scope", "states"}
+    if not required <= set(raw):
+        raise ValueError("inventory capability is missing required fields")
+    states_raw = raw["states"]
+    if not isinstance(states_raw, dict):
+        raise ValueError("inventory capability states are invalid")
+    states = CapabilityStates(
+        discovered=str(states_raw.get("discovered", "unknown")),
+        probed=str(states_raw.get("probed", "unknown")),
+        authenticated=str(states_raw.get("authenticated", "unknown")),
+        verified=str(states_raw.get("verified", "unknown")),
+    )
+    sources_raw = raw.get("source_locations", [])
+    diagnostics_raw = raw.get("diagnostics", [])
+    if not isinstance(sources_raw, list) or not isinstance(diagnostics_raw, list):
+        raise ValueError("inventory capability collections are invalid")
+    sources = tuple(
+        SourceLocation(
+            str(item.get("location", "")),
+            str(item.get("scope", "extra")),
+            str(item.get("provider", "")),
+        )
+        for item in sources_raw
+        if isinstance(item, dict)
+    )
+    diagnostics = tuple(
+        Diagnostic(
+            str(item.get("severity", "warning")),
+            str(item.get("code", "inventory")),
+            str(item.get("message", "")),
+            item.get("details", {}) if isinstance(item.get("details", {}), dict) else {},
+        )
+        for item in diagnostics_raw
+        if isinstance(item, dict)
+    )
+    capability = Capability(
+        kind=str(raw["kind"]),
+        name=str(raw["name"]),
+        description=str(raw.get("description", "")),
+        aliases=tuple(str(item) for item in raw.get("aliases", [])),
+        tags=tuple(str(item) for item in raw.get("tags", [])),
+        scenes=tuple(str(item) for item in raw.get("scenes", [])),
+        source_locations=sources,
+        scope=str(raw["scope"]),
+        provider=str(raw.get("provider", "")),
+        version=None if raw.get("version") is None else str(raw["version"]),
+        states=states,
+        classification_confidence=float(raw.get("classification_confidence", 0.0)),
+        diagnostics=diagnostics,
+    )
+    public_id = str(raw["id"])
+    resolver_id = str(raw["resolver_id"])
+    if not public_id.startswith("cap_") or not resolver_id.startswith("res_"):
+        raise ValueError("inventory capability IDs are invalid")
+    object.__setattr__(capability, "id", public_id)
+    object.__setattr__(capability, "resolver_id", resolver_id)
+    return capability
+
+
+def _inventory_capabilities(paths: StoragePaths) -> tuple[Capability, ...]:
+    inventory = _read_json(paths.inventory_path)
+    raw = inventory.get("capabilities")
+    if not isinstance(raw, list) or len(raw) > 100_000:
+        raise WorkflowError("capability inventory is invalid")
+    try:
+        return tuple(_capability_from_public(item) for item in raw)
+    except (TypeError, ValueError) as error:
+        raise WorkflowError("capability inventory is invalid") from error
+
+
+def _handle_scan(
+    args: argparse.Namespace,
+    *, home: Path,
+    cwd: Path,
+    environ: Mapping[str, str],
+) -> dict[str, Any]:
+    project = _absolute(args.project, cwd=cwd, home=home)
+    extras = tuple(_absolute(item, cwd=cwd, home=home) for item in args.skill_root)
+    result = _scan(
+        home=home,
+        project=project,
+        cwd=cwd,
+        environ=environ,
+        extra_skill_roots=extras,
+        probe_versions=args.probe_versions == "explicit",
+    )
+    inventory = json.loads(result.inventory_text)
+    if args.output_dir is not None:
+        if args.confirmed is not True:
+            raise RefusedError("--confirmed is required with --output-dir")
+        paths = default_storage_paths(
+            home=home,
+            environ=environ,
+            local_root=_absolute(args.output_dir, cwd=cwd, home=home),
+        )
+        request = InstructionTargetRequest(
+            home=home,
+            project_root=project,
+            agents=("codex",),
+            scopes=("project",),
+        )
+        installation_id = "scan_" + _digest(str(paths.public_root))[:24]
+        artifacts = PublicArtifacts(
+            result.map_markdown,
+            result.inventory_text,
+            _configuration(
+                installation_id=installation_id,
+                request=request,
+                mode="scan",
+            ),
+            _receipt_markdown(installation_id, result, action="scan"),
+        )
+        written = write_storage_bundle(paths, artifacts, result.resolvers)
+        inventory["written"] = {
+            "generation_id": written.generation_id,
+            "paths": {label: str(path) for label, path in _artifact_paths(paths).items()},
+        }
+    return inventory
+
+
+def _handle_setup(
+    args: argparse.Namespace,
+    *, home: Path,
+    cwd: Path,
+    environ: Mapping[str, str],
+) -> dict[str, Any]:
+    plan = _build_setup_plan(args=args, home=home, cwd=cwd, environ=environ)
+    if args.setup_action == "plan":
+        return plan.public
+    if args.confirmed is not True:
+        raise RefusedError("--confirmed is required before setup apply")
+    expected = args.expected_plan_hash
+    if not isinstance(expected, str) or not hmac.compare_digest(expected, plan.plan_hash):
+        raise RefusedError("expected plan hash does not match the current plan")
+    if not plan.instruction_plan.applicable:
+        raise RefusedError("instruction plan contains conflicts")
+    return _apply_storage_then_instructions(plan)
+
+
+def _status_payload(paths: StoragePaths) -> dict[str, Any]:
+    path_map = _artifact_paths(paths)
+    files: dict[str, dict[str, Any]] = {}
+    for label, path in path_map.items():
+        try:
+            payload = _read_regular(path)
+        except FileNotFoundError:
+            files[label] = {"exists": False, "sha256": None}
+        except (OSError, ValueError):
+            files[label] = {"exists": False, "sha256": None, "invalid": True}
+        else:
+            files[label] = {"exists": True, "sha256": _digest(payload)}
+    config: dict[str, Any] | None = None
+    try:
+        config = _config_for(paths)
+    except WorkflowError:
+        pass
+    return {
+        "installed": config is not None and all(item["exists"] for item in files.values()),
+        "installation_id": None if config is None else config["installation_id"],
+        "files": files,
+    }
+
+
+def _handle_refresh(
+    args: argparse.Namespace,
+    *, home: Path,
+    cwd: Path,
+    environ: Mapping[str, str],
+) -> dict[str, Any]:
+    if not args.dry_run and not args.confirmed:
+        raise RefusedError("refresh requires --dry-run or --confirmed")
+    paths = _storage_paths(
+        storage=args.storage,
+        vault=args.vault,
+        home=home,
+        cwd=cwd,
+        environ=environ,
+    )
+    config = _config_for(paths)
+    request = _request_from_config(config, home=home, cwd=cwd)
+    scan = _scan(home=home, project=cwd, cwd=cwd, environ=environ)
+    artifacts = _artifacts(
+        scan=scan,
+        installation_id=str(config["installation_id"]),
+        request=request,
+        action="refresh",
+    )
+    current = _current_storage_state(paths)
+    desired = _desired_hashes(paths, artifacts, scan)
+    changes = [
+        label
+        for label in _ARTIFACT_LABELS
+        if current[label]["sha256"] != desired[label]
+    ]
+    plan_hash = _digest(
+        {
+            "action": "refresh",
+            "installation_id": config["installation_id"],
+            "current": current,
+            "desired": desired,
+        }
+    )
+    payload = {
+        "status": "dry-run" if args.dry_run else "refreshed",
+        "plan_hash": plan_hash,
+        "changes": changes,
+        "counts": {
+            "capabilities": len(scan.capabilities),
+            "diagnostics": len(scan.diagnostics),
+            "storage_changes": len(changes),
+        },
+    }
+    if args.dry_run:
+        return payload
+    result = write_storage_bundle(paths, artifacts, scan.resolvers)
+    payload["generation_id"] = result.generation_id
+    payload["paths"] = {
+        label: str(path) for label, path in _artifact_paths(paths).items()
+    }
+    return payload
+
+
+def _handle_migrate(
+    args: argparse.Namespace,
+    *, home: Path,
+    cwd: Path,
+    environ: Mapping[str, str],
+) -> dict[str, Any]:
+    if not args.dry_run and not args.confirmed:
+        raise RefusedError("migrate requires --dry-run or --confirmed")
+    old_paths = _storage_paths(
+        storage=args.storage,
+        vault=args.vault,
+        home=home,
+        cwd=cwd,
+        environ=environ,
+    )
+    config = _config_for(old_paths)
+    new_paths = default_storage_paths(
+        home=home,
+        environ=environ,
+        local_root=_absolute(args.to, cwd=cwd, home=home),
+    )
+    if new_paths.public_root == old_paths.public_root:
+        raise RefusedError("migration destination must differ from current storage")
+    request = _request_from_config(config, home=home, cwd=cwd)
+    scan = _scan(home=home, project=cwd, cwd=cwd, environ=environ)
+    installation_id = str(config["installation_id"])
+    artifacts = _artifacts(
+        scan=scan,
+        installation_id=installation_id,
+        request=request,
+        action="migrate",
+    )
+    instruction_plan = build_instruction_plan(
+        request,
+        installation_id,
+        new_paths.map_path,
+        new_paths.resolver_path,
+        backup_root=new_paths.private_root / "instruction-backups",
+    )
+    current = _current_storage_state(new_paths)
+    desired = _desired_hashes(new_paths, artifacts, scan)
+    plan_hash = _digest(
+        {
+            "action": "migrate",
+            "from": str(old_paths.public_root),
+            "to": str(new_paths.public_root),
+            "current": current,
+            "desired": desired,
+            "instruction_plan_hash": instruction_plan.plan_hash,
+        }
+    )
+    payload = {
+        "status": "dry-run" if args.dry_run else "migrated",
+        "from": str(old_paths.public_root),
+        "to": str(new_paths.public_root),
+        "old_data_preserved": True,
+        "plan_hash": plan_hash,
+        "changes": [
+            label
+            for label in _ARTIFACT_LABELS
+            if current[label]["sha256"] != desired[label]
+        ],
+        "instruction_operations": [
+            {
+                "path": str(item.target.path),
+                "operation": item.operation,
+            }
+            for item in instruction_plan.operations
+        ],
+    }
+    if args.dry_run:
+        return payload
+    before = _snapshots(new_paths)
+    storage_result = write_storage_bundle(new_paths, artifacts, scan.resolvers)
+    try:
+        current_instruction_plan = build_instruction_plan(
+            request,
+            installation_id,
+            new_paths.map_path,
+            new_paths.resolver_path,
+            backup_root=new_paths.private_root / "instruction-backups",
+        )
+        if _instruction_transition(current_instruction_plan) != _instruction_transition(
+            instruction_plan
+        ):
+            raise WorkflowError("instruction targets changed after migration preparation")
+        apply_instruction_plan(
+            current_instruction_plan,
+            confirmed=True,
+            expected_plan_hash=current_instruction_plan.plan_hash,
+        )
+    except BaseException:
+        _restore_after_failure(before, recovery_key=plan_hash[:24])
+        raise
+    payload["generation_id"] = storage_result.generation_id
+    payload["paths"] = {
+        label: str(path) for label, path in _artifact_paths(new_paths).items()
+    }
+    return payload
+
+
+def _purge_data(paths: StoragePaths, installation_id: str) -> Path:
+    recovery = paths.private_root / "purge-recovery" / (
+        installation_id + "-" + _digest(_current_storage_state(paths))[:16]
+    )
+    moved: list[tuple[Path, Path]] = []
+    try:
+        recovery.mkdir(parents=True, exist_ok=False)
+        for label, source in _artifact_paths(paths).items():
+            if not source.exists():
+                continue
+            destination = recovery / f"{label}-{source.name}"
+            os.replace(source, destination)
+            moved.append((source, destination))
+    except BaseException:
+        for source, destination in reversed(moved):
+            if destination.exists() and not source.exists():
+                source.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(destination, source)
+        raise
+    return recovery
+
+
+def _handle_uninstall(
+    args: argparse.Namespace,
+    *, home: Path,
+    cwd: Path,
+    environ: Mapping[str, str],
+) -> dict[str, Any]:
+    if not args.dry_run and not args.confirmed:
+        raise RefusedError("uninstall requires --dry-run or --confirmed")
+    paths = _storage_paths(
+        storage=args.storage,
+        vault=args.vault,
+        home=home,
+        cwd=cwd,
+        environ=environ,
+    )
+    config = _config_for(paths)
+    request = _request_from_config(config, home=home, cwd=cwd)
+    installation_id = str(config["installation_id"])
+    instruction_plan = build_uninstall_plan(
+        request,
+        installation_id,
+        backup_root=paths.private_root / "instruction-backups",
+    )
+    payload = {
+        "status": "dry-run" if args.dry_run else "uninstalled",
+        "installation_id": installation_id,
+        "purge_data": bool(args.purge_data),
+        "plan_hash": instruction_plan.plan_hash,
+        "instruction_operations": [
+            {
+                "path": str(item.target.path),
+                "operation": item.operation,
+            }
+            for item in instruction_plan.operations
+        ],
+        "data_preserved": not args.purge_data,
+    }
+    if args.dry_run:
+        return payload
+    if instruction_plan.operations:
+        apply_instruction_plan(
+            instruction_plan,
+            confirmed=True,
+            expected_plan_hash=instruction_plan.plan_hash,
+        )
+    if args.purge_data:
+        try:
+            recovery = _purge_data(paths, installation_id)
+        except BaseException:
+            reinstall = build_instruction_plan(
+                request,
+                installation_id,
+                paths.map_path,
+                paths.resolver_path,
+                backup_root=paths.private_root / "instruction-backups",
+            )
+            apply_instruction_plan(
+                reinstall,
+                confirmed=True,
+                expected_plan_hash=reinstall.plan_hash,
+            )
+            raise
+        payload["status"] = "purged"
+        payload["recovery_directory"] = str(recovery)
+        payload["data_preserved"] = False
+    return payload
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="capability_map.py")
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    scan = commands.add_parser("scan")
+    scan.add_argument("--project", default=".")
+    scan.add_argument("--skill-root", action="append", default=[])
+    scan.add_argument("--output-dir")
+    scan.add_argument("--confirmed", action="store_true")
+    scan.add_argument(
+        "--probe-versions",
+        nargs="?",
+        const="explicit",
+        choices=("explicit",),
+    )
+
+    setup = commands.add_parser("setup")
+    setup_actions = setup.add_subparsers(dest="setup_action", required=True)
+    for action in ("plan", "apply"):
+        child = setup_actions.add_parser(action)
+        storage = child.add_mutually_exclusive_group()
+        storage.add_argument("--storage")
+        storage.add_argument("--vault")
+        child.add_argument("--agents", choices=("codex", "claude", "both"), default="both")
+        child.add_argument("--scope", choices=("user", "project"), default="user")
+        child.add_argument("--project", default=".")
+        child.add_argument("--installation-id")
+        child.add_argument("--confirmed", action="store_true")
+        child.add_argument("--expected-plan-hash")
+
+    for name in ("status", "paths"):
+        command = commands.add_parser(name)
+        storage = command.add_mutually_exclusive_group()
+        storage.add_argument("--storage")
+        storage.add_argument("--vault")
+
+    refresh = commands.add_parser("refresh")
+    storage = refresh.add_mutually_exclusive_group()
+    storage.add_argument("--storage")
+    storage.add_argument("--vault")
+    refresh_mode = refresh.add_mutually_exclusive_group()
+    refresh_mode.add_argument("--dry-run", action="store_true")
+    refresh_mode.add_argument("--confirmed", action="store_true")
+
+    route = commands.add_parser("route")
+    storage = route.add_mutually_exclusive_group()
+    storage.add_argument("--storage")
+    storage.add_argument("--vault")
+    route.add_argument("--query", required=True)
+    route.add_argument("--json", action="store_true")
+
+    migrate = commands.add_parser("migrate")
+    storage = migrate.add_mutually_exclusive_group()
+    storage.add_argument("--storage")
+    storage.add_argument("--vault")
+    migrate.add_argument("--to", required=True)
+    migrate_mode = migrate.add_mutually_exclusive_group()
+    migrate_mode.add_argument("--dry-run", action="store_true")
+    migrate_mode.add_argument("--confirmed", action="store_true")
+
+    uninstall = commands.add_parser("uninstall")
+    storage = uninstall.add_mutually_exclusive_group()
+    storage.add_argument("--storage")
+    storage.add_argument("--vault")
+    uninstall_mode = uninstall.add_mutually_exclusive_group()
+    uninstall_mode.add_argument("--dry-run", action="store_true")
+    uninstall_mode.add_argument("--confirmed", action="store_true")
+    uninstall.add_argument("--purge-data", action="store_true")
+
+    intent = commands.add_parser("help-intent")
+    intent.add_argument("--query", required=True)
+    return parser
+
+
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    environ: Mapping[str, str] | None = None,
+    home: Path | None = None,
+    cwd: Path | None = None,
+    stdout: TextIO | None = None,
+    stderr: TextIO | None = None,
+) -> int:
+    """Run one command with fully injectable machine context and streams."""
+
+    environment = dict(os.environ if environ is None else environ)
+    injected_home = Path.home() if home is None else Path(home).absolute()
+    injected_cwd = Path.cwd() if cwd is None else Path(cwd).absolute()
+    output = sys.stdout if stdout is None else stdout
+    errors = sys.stderr if stderr is None else stderr
+    parser = _parser()
+    try:
+        with contextlib.redirect_stderr(errors), contextlib.redirect_stdout(output):
+            try:
+                args = parser.parse_args(None if argv is None else list(argv))
+            except SystemExit as error:
+                return int(error.code)
+
+        if args.command == "scan":
+            payload = _handle_scan(
+                args,
+                home=injected_home,
+                cwd=injected_cwd,
+                environ=environment,
+            )
+        elif args.command == "setup":
+            payload = _handle_setup(
+                args,
+                home=injected_home,
+                cwd=injected_cwd,
+                environ=environment,
+            )
+        elif args.command in {"status", "paths"}:
+            paths = _storage_paths(
+                storage=args.storage,
+                vault=args.vault,
+                home=injected_home,
+                cwd=injected_cwd,
+                environ=environment,
+            )
+            if args.command == "status":
+                payload = _status_payload(paths)
+            else:
+                payload = {
+                    "paths": {
+                        label: str(path)
+                        for label, path in _artifact_paths(paths).items()
+                    },
+                    **_status_payload(paths),
+                }
+        elif args.command == "refresh":
+            payload = _handle_refresh(
+                args,
+                home=injected_home,
+                cwd=injected_cwd,
+                environ=environment,
+            )
+        elif args.command == "route":
+            paths = _storage_paths(
+                storage=args.storage,
+                vault=args.vault,
+                home=injected_home,
+                cwd=injected_cwd,
+                environ=environment,
+            )
+            _config_for(paths)
+            intent = interpret_capability_map_intent(args.query)
+            if intent != "usage" or any(
+                marker in args.query for marker in ("怎么用", "帮助")
+            ):
+                payload = {
+                    "query": sanitize_text(args.query, max_length=1024),
+                    "intent": intent,
+                    "matches": [],
+                }
+            else:
+                payload = route_query(
+                    args.query,
+                    _inventory_capabilities(paths),
+                ).to_public_dict()
+        elif args.command == "migrate":
+            payload = _handle_migrate(
+                args,
+                home=injected_home,
+                cwd=injected_cwd,
+                environ=environment,
+            )
+        elif args.command == "uninstall":
+            payload = _handle_uninstall(
+                args,
+                home=injected_home,
+                cwd=injected_cwd,
+                environ=environment,
+            )
+        else:
+            payload = {
+                "query": sanitize_text(args.query, max_length=1024),
+                "intent": interpret_capability_map_intent(args.query),
+            }
+        _write_json(output, payload)
+        return 0
+    except RefusedError as error:
+        errors.write(_safe_error(error) + "\n")
+        return 2
+    except (FileNotFoundError, OSError, RuntimeError, TypeError, ValueError) as error:
+        errors.write(_safe_error(error) + "\n")
+        return 3
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
