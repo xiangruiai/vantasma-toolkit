@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import stat
 from collections import deque
 from dataclasses import dataclass, field
@@ -88,6 +89,10 @@ class _EnvPathBlocked(Exception):
 
 
 class _SourceChanged(Exception):
+    pass
+
+
+class _SafeOpenUnavailable(Exception):
     pass
 
 
@@ -209,6 +214,7 @@ def _effective_scope(root: RootSpec, logical_parts: tuple[str, ...]) -> str:
 
 def _walk_root(
     root: RootSpec,
+    physical_root: Path,
     allowed_roots: tuple[Path, ...],
     root_is_symlink: bool,
 ) -> tuple[list[_Occurrence], list[Diagnostic]]:
@@ -216,15 +222,14 @@ def _walk_root(
     diagnostics: list[Diagnostic] = []
 
     def walk(
-        visible_directory: Path,
+        physical_directory: Path,
         logical_parts: tuple[str, ...],
         ancestors: frozenset[tuple[str, ...]],
         reached_via_symlink: bool,
     ) -> None:
         public_directory = _safe_location(root.public_prefix, logical_parts)
         try:
-            real_directory = visible_directory.resolve(strict=True)
-            directory_key = _physical_key(real_directory)
+            directory_key = _physical_key(physical_directory)
         except OSError:
             diagnostics.append(
                 _diagnostic(
@@ -245,7 +250,7 @@ def _walk_root(
             return
         next_ancestors = ancestors | {directory_key}
         try:
-            with os.scandir(visible_directory) as iterator:
+            with os.scandir(physical_directory) as iterator:
                 entries = sorted(iterator, key=lambda entry: entry.name)
         except OSError:
             diagnostics.append(
@@ -269,14 +274,15 @@ def _walk_root(
                     )
                 )
                 continue
-            visible_path = Path(entry.path)
+            physical_path = Path(entry.path)
             child_parts = logical_parts + (entry.name,)
+            visible_path = root.path.joinpath(*child_parts).absolute()
             public_child = _safe_location(root.public_prefix, child_parts)
             try:
                 is_link = entry.is_symlink()
                 if is_link:
                     try:
-                        resolved = _resolve_symlink_chain(visible_path)
+                        resolved = _resolve_symlink_chain(physical_path)
                     except _EnvPathBlocked:
                         diagnostics.append(
                             _diagnostic(
@@ -328,14 +334,14 @@ def _walk_root(
                         )
                         continue
                     if resolved.is_dir():
-                        walk(visible_path, child_parts, next_ancestors, True)
+                        walk(resolved, child_parts, next_ancestors, True)
                         continue
                     if entry.name != "SKILL.md" or not resolved.is_file():
                         continue
                     real_file = resolved
                 elif entry.is_dir(follow_symlinks=False):
                     walk(
-                        visible_path,
+                        physical_path,
                         child_parts,
                         next_ancestors,
                         reached_via_symlink,
@@ -344,7 +350,7 @@ def _walk_root(
                 elif entry.name == "SKILL.md" and entry.is_file(
                     follow_symlinks=False
                 ):
-                    real_file = visible_path.resolve(strict=True)
+                    real_file = physical_path
                 else:
                     continue
                 file_key = _physical_key(real_file)
@@ -381,7 +387,7 @@ def _walk_root(
                 )
             )
 
-    walk(root.path, (), frozenset(), root_is_symlink)
+    walk(physical_root, (), frozenset(), root_is_symlink)
     return occurrences, diagnostics
 
 
@@ -592,6 +598,8 @@ def _open_verified_source(occurrence: _Occurrence) -> int:
     if hasattr(os, "O_CLOEXEC"):
         flags |= os.O_CLOEXEC
     nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if not nofollow and occurrence.expected_file_id is None:
+        raise _SafeOpenUnavailable
     try:
         before = os.lstat(path)
         if stat.S_ISLNK(before.st_mode) or not _opened_source_matches(
@@ -810,6 +818,10 @@ def _logical_identity(
     return "skill-physical-v2:" + hashlib.sha256(encoded).hexdigest(), weak
 
 
+def _ambiguous_identity_nonce() -> str:
+    return secrets.token_hex(16)
+
+
 def discover_skills(roots: list[RootSpec] | tuple[RootSpec, ...]) -> SkillDiscoveryResult:
     """Discover physical Skills under allowed roots without reading Skill bodies."""
 
@@ -900,9 +912,9 @@ def discover_skills(roots: list[RootSpec] | tuple[RootSpec, ...]) -> SkillDiscov
     )
 
     grouped: dict[tuple[str, ...], list[_Occurrence]] = {}
-    for root, _, root_is_link in resolved_roots:
+    for root, physical_root, root_is_link in resolved_roots:
         root_occurrences, root_diagnostics = _walk_root(
-            root, allowed_roots, root_is_link
+            root, physical_root, allowed_roots, root_is_link
         )
         global_diagnostics.extend(root_diagnostics)
         for occurrence in root_occurrences:
@@ -919,6 +931,15 @@ def discover_skills(roots: list[RootSpec] | tuple[RootSpec, ...]) -> SkillDiscov
             metadata = _skill_metadata(
                 representative, representative.real_file.parent.name
             )
+        except _SafeOpenUnavailable:
+            global_diagnostics.append(
+                _diagnostic(
+                    "safe_open_unavailable",
+                    "This platform cannot safely open a Skill without symlink following or a stable file ID.",
+                    location=representative.source.location,
+                )
+            )
+            continue
         except _SourceChanged:
             global_diagnostics.append(
                 _diagnostic(
@@ -941,7 +962,7 @@ def discover_skills(roots: list[RootSpec] | tuple[RootSpec, ...]) -> SkillDiscov
             )
         )
 
-    duplicate_ordinals: dict[int, tuple[int, int]] = {}
+    ambiguous_nonces: dict[int, str] = {}
     weak_groups: dict[str, list[int]] = {}
     for index, prepared in enumerate(prepared_skills):
         if prepared.weak_identity:
@@ -949,14 +970,8 @@ def discover_skills(roots: list[RootSpec] | tuple[RootSpec, ...]) -> SkillDiscov
     for indexes in weak_groups.values():
         if len(indexes) < 2:
             continue
-        ordered_indexes = sorted(
-            indexes,
-            key=lambda index: str(
-                prepared_skills[index].representative.real_file
-            ),
-        )
-        for ordinal, index in enumerate(ordered_indexes, start=1):
-            duplicate_ordinals[index] = (ordinal, len(ordered_indexes))
+        for index in indexes:
+            ambiguous_nonces[index] = _ambiguous_identity_nonce()
 
     capability_pairs: list[tuple[Capability, ResolverRecord]] = []
     for index, prepared in enumerate(prepared_skills):
@@ -981,14 +996,13 @@ def discover_skills(roots: list[RootSpec] | tuple[RootSpec, ...]) -> SkillDiscov
                     severity="info",
                 )
             )
-        duplicate = duplicate_ordinals.get(index)
-        if duplicate is not None:
-            ordinal, duplicate_count = duplicate
-            logical_identity += f":ambiguous-duplicate-{ordinal}-of-{duplicate_count}"
+        ambiguous_nonce = ambiguous_nonces.get(index)
+        if ambiguous_nonce is not None:
+            logical_identity += f":ambiguous-nonce:{ambiguous_nonce}"
             item_diagnostics.append(
                 _diagnostic(
-                    "ambiguous_physical_identity",
-                    "Multiple physical Skills had identical fallback evidence; opaque per-scan duplicate identities were assigned.",
+                    "unstable_ambiguous_identity",
+                    "Multiple physical Skills had indistinguishable fallback evidence; random path-independent identities were assigned for this scan only.",
                     location=representative.source.location,
                 )
             )
