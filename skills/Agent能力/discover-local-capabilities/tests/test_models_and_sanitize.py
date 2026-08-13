@@ -351,6 +351,21 @@ class SanitizerTests(unittest.TestCase):
             with self.subTest(sample=sample):
                 self.assertEqual(sanitize_text(sample), "<path>")
 
+    def test_double_quoted_absolute_path_with_escaped_delimiter_is_redacted(self) -> None:
+        raw = r'"/opt/Synthetic \"Project\"/file.txt"'
+
+        self.assertEqual(sanitize_text(raw), "<path>")
+
+    def test_single_quoted_absolute_path_with_escaped_delimiter_is_redacted(self) -> None:
+        raw = r"'/opt/Synthetic \'Project\'/file.txt'"
+
+        self.assertEqual(sanitize_text(raw), "<path>")
+
+    def test_ordinary_quoted_text_with_escaped_delimiter_is_preserved(self) -> None:
+        raw = r'"Synthetic \"Project\" description"'
+
+        self.assertEqual(sanitize_text(raw), raw)
+
     def test_unquoted_labeled_path_with_spaces_is_conservatively_redacted(self) -> None:
         result = sanitize_text("path:/srv/Private Folder/secret.json")
 

@@ -61,6 +61,7 @@ _ABSOLUTE_PATH_CANDIDATE_RE = re.compile(
     _ABSOLUTE_PATH_PREFIX + _PATH_TOKEN_BODY,
     re.IGNORECASE,
 )
+_ABSOLUTE_PATH_START_RE = re.compile(r"^" + _ABSOLUTE_PATH_PREFIX, re.IGNORECASE)
 _UNESCAPED_WHITESPACE_RE = re.compile(r"(?<!\\)\s")
 _PATH_TRUNCATING_CHARACTERS = frozenset("`\"'<>|")
 
@@ -106,6 +107,13 @@ def _truncate(value: str, max_length: int) -> str:
 
 
 def _redact_absolute_paths(value: str) -> str:
+    stripped = value.strip()
+    if len(stripped) >= 2 and stripped[0] in {'"', "'"}:
+        quote = stripped[0]
+        interior = stripped[1:-1] if stripped[-1] == quote else stripped[1:]
+        if _ABSOLUTE_PATH_START_RE.match(interior) and f"\\{quote}" in interior:
+            return REDACTED_PATH
+
     value = _QUOTED_ABSOLUTE_PATH_RE.sub(REDACTED_PATH, value)
     stripped = value.strip()
     unquoted_path = _ABSOLUTE_PATH_CANDIDATE_RE.search(stripped)
