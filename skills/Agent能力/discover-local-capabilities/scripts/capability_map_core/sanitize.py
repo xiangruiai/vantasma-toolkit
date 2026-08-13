@@ -36,13 +36,28 @@ _OPENAI_KEY_RE = re.compile(
 _AWS_ACCESS_KEY_RE = re.compile(
     r"(?<![A-Z0-9])(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Z0-9])"
 )
-_FILE_URL_RE = re.compile(r"(?i)\bfile://[^\s|<>\"'`]+")
-_WINDOWS_ABSOLUTE_RE = re.compile(
-    r"(?<![A-Za-z0-9_])(?:[A-Za-z]:[\\/]|\\\\[^\\/\s]+[\\/])"
-    r"[^\s|<>\"'`]+"
-)
-_UNIX_ABSOLUTE_RE = re.compile(r"(?<![A-Za-z0-9_.~-])/(?:[^\s|<>\"'`]+)")
 _SENSITIVE_KEY_RE = re.compile(r"(?i)^(?:token|secret|password|api[_-]?key)$")
+_ABSOLUTE_PATH_PREFIX = r"(?:file://|[A-Za-z]:[\\/]|\\\\[^\\/\s]+[\\/]|/)"
+_QUOTED_ABSOLUTE_PATH_RE = re.compile(
+    rf"(?:\"{_ABSOLUTE_PATH_PREFIX}[^\"\r\n]*\"|"
+    rf"'{_ABSOLUTE_PATH_PREFIX}[^'\r\n]*')",
+    re.IGNORECASE,
+)
+_UNQUOTED_ABSOLUTE_PATH_RE = re.compile(
+    r"(?:\bfile://|\b[A-Za-z]:[\\/]|\\\\[^\\/\s]+[\\/]|"
+    r"(?<![A-Za-z0-9_.~:/-])/)",
+    re.IGNORECASE,
+)
+_UNESCAPED_WHITESPACE_RE = re.compile(r"(?<!\\)\s")
+_PATH_TOKEN_BODY = r"(?:\\ |[^\s|<>\"'\x60])+"
+_FILE_URL_WITH_SPACES_RE = re.compile(rf"(?i)\bfile://{_PATH_TOKEN_BODY}")
+_WINDOWS_ABSOLUTE_WITH_SPACES_RE = re.compile(
+    r"(?<![A-Za-z0-9_])(?:[A-Za-z]:[\\/]|\\\\[^\\/\s]+[\\/])"
+    + _PATH_TOKEN_BODY
+)
+_UNIX_ABSOLUTE_WITH_SPACES_RE = re.compile(
+    r"(?<![A-Za-z0-9_.~-])/" + _PATH_TOKEN_BODY
+)
 
 
 def _replace_assigned_secret(match: re.Match[str]) -> str:
@@ -85,18 +100,42 @@ def _truncate(value: str, max_length: int) -> str:
     return value[: max_length - 1] + "…"
 
 
+def _redact_absolute_paths(value: str) -> str:
+    value = _QUOTED_ABSOLUTE_PATH_RE.sub(REDACTED_PATH, value)
+    stripped = value.strip()
+    unquoted_path = _UNQUOTED_ABSOLUTE_PATH_RE.search(stripped)
+    if unquoted_path and _UNESCAPED_WHITESPACE_RE.search(
+        stripped[unquoted_path.start() :]
+    ):
+        return REDACTED_PATH
+    value = _FILE_URL_WITH_SPACES_RE.sub(REDACTED_PATH, value)
+    value = _WINDOWS_ABSOLUTE_WITH_SPACES_RE.sub(REDACTED_PATH, value)
+    return _UNIX_ABSOLUTE_WITH_SPACES_RE.sub(REDACTED_PATH, value)
+
+
+def _escape_markdown_pipes(value: str) -> str:
+    def ensure_odd_backslashes(match: re.Match[str]) -> str:
+        backslashes = match.group("backslashes")
+        if len(backslashes) % 2 == 0:
+            backslashes += "\\"
+        return backslashes + "|"
+
+    return re.sub(r"(?P<backslashes>\\*)\|", ensure_odd_backslashes, value)
+
+
 def sanitize_text(
-    value: object,
+    value: str,
     *,
     home: str | Path | None = None,
     max_length: int = DEFAULT_MAX_LENGTH,
 ) -> str:
     """Return a single-line, bounded, redacted representation of untrusted text."""
 
-    if isinstance(value, bytes):
-        text = value.decode("utf-8", errors="replace")
-    else:
-        text = str(value)
+    if not isinstance(value, str):
+        raise TypeError(
+            f"sanitize_text requires str, got {type(value).__name__}"
+        )
+    text = value
 
     text = _remove_controls(text)
     text = _ASSIGNED_SECRET_RE.sub(_replace_assigned_secret, text)
@@ -109,18 +148,12 @@ def sanitize_text(
     ):
         text = pattern.sub(REDACTED, text)
 
-    text = _FILE_URL_RE.sub(REDACTED_PATH, text)
     home_text = str(Path.home() if home is None else home)
     text = _replace_home(text, home_text)
-    text = _WINDOWS_ABSOLUTE_RE.sub(REDACTED_PATH, text)
-    text = _UNIX_ABSOLUTE_RE.sub(REDACTED_PATH, text)
-    text = re.sub(r"(?<!\\)\|", r"\\|", text)
+    text = _redact_absolute_paths(text)
+    text = _escape_markdown_pipes(text)
     text = re.sub(r"\s+", " ", text).strip()
     return _truncate(text, max_length)
-
-
-def _sort_key(value: Any) -> str:
-    return repr(value)
 
 
 def sanitize(
@@ -138,12 +171,19 @@ def sanitize(
     if value is None or isinstance(value, (bool, int)):
         return value
     if isinstance(value, float):
-        return value if math.isfinite(value) else sanitize_text(value, max_length=max_length)
-    if isinstance(value, (str, bytes, Path)):
+        if not math.isfinite(value):
+            raise TypeError("sanitize only accepts finite JSON numbers")
+        return value
+    if isinstance(value, str):
         return sanitize_text(value, home=home, max_length=max_length)
     if isinstance(value, Mapping):
-        sanitized_items: list[tuple[str, Any]] = []
+        sanitized_items: list[tuple[str, str, Any]] = []
         for key, item in value.items():
+            if not isinstance(key, str):
+                raise TypeError(
+                    "sanitize only accepts mappings with string keys, "
+                    f"got {type(key).__name__}"
+                )
             safe_key = sanitize_text(key, home=home, max_length=max_length)
             if _SENSITIVE_KEY_RE.fullmatch(safe_key):
                 safe_item = REDACTED
@@ -155,8 +195,19 @@ def sanitize(
                     max_depth=max_depth,
                     _depth=_depth + 1,
                 )
-            sanitized_items.append((safe_key, safe_item))
-        return {key: item for key, item in sorted(sanitized_items, key=lambda pair: pair[0])}
+            sanitized_items.append((safe_key, key, safe_item))
+
+        result: dict[str, Any] = {}
+        for safe_key, _, safe_item in sorted(
+            sanitized_items, key=lambda entry: (entry[0], entry[1])
+        ):
+            result_key = safe_key
+            collision_index = 2
+            while result_key in result:
+                result_key = f"{safe_key} [{collision_index}]"
+                collision_index += 1
+            result[result_key] = safe_item
+        return result
     if isinstance(value, (list, tuple)):
         return [
             sanitize(
@@ -168,15 +219,7 @@ def sanitize(
             )
             for item in value
         ]
-    if isinstance(value, (set, frozenset)):
-        return [
-            sanitize(
-                item,
-                home=home,
-                max_length=max_length,
-                max_depth=max_depth,
-                _depth=_depth + 1,
-            )
-            for item in sorted(value, key=_sort_key)
-        ]
-    return sanitize_text(value, home=home, max_length=max_length)
+    raise TypeError(
+        "sanitize only accepts JSON-like values, "
+        f"got {type(value).__name__}"
+    )
