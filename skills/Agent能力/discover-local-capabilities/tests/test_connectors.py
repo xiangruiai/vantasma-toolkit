@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -155,6 +156,77 @@ enabled = true
                 capability.tags,
                 ("enabled:enabled", "transport:http"),
             )
+
+    def test_toml_fallback_accepts_common_values_and_ignores_nested_env(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            config = base / "codex.toml"
+            secret = "gh" + "p_" + "fallback_nested_canary"
+            config.write_text(
+                """
+title = "ignored root value"
+
+[mcp_servers.alpha]
+command = "fixture-command"
+args = ["--flag", "value"]
+enabled = true
+
+[mcp_servers.alpha.env]
+TOKEN = "SECRET_CANARY"
+COMPLEX = { nested = ["ignored"] }
+
+[mcp_servers."quoted.server"]
+type = "sse"
+args = []
+disabled = false
+
+[mcp_servers.'disabled server']
+url = "https://fixture.invalid/private"
+disabled = true
+
+[unrelated.table]
+values = [1, 2, 3]
+""".replace("SECRET_CANARY", secret).strip(),
+                encoding="utf-8",
+            )
+            spec = ConnectorConfigSpec(
+                config,
+                "extra",
+                "fallback-codex",
+                "toml",
+                "extra:fallback-codex",
+                "<extra-config:fallback-codex>",
+            )
+
+            with mock.patch.object(connector_module, "_tomllib", None):
+                result = discover_connectors(
+                    home=base / "empty-home", extra_config_paths=[spec]
+                )
+
+            mcps = [item for item in result.capabilities if item.kind == "mcp"]
+            self.assertEqual(
+                [(item.name, item.tags) for item in mcps],
+                [
+                    ("alpha", ("enabled:enabled", "transport:stdio")),
+                    (
+                        "disabled server",
+                        ("enabled:disabled", "transport:http"),
+                    ),
+                    (
+                        "quoted.server",
+                        ("enabled:enabled", "transport:sse"),
+                    ),
+                ],
+            )
+            self.assertNotIn("env", {item.name for item in mcps})
+            self.assertNotIn(
+                "invalid_toml", {item.code for item in result.diagnostics}
+            )
+            public = json.dumps(
+                [item.to_public_dict() for item in result.capabilities],
+                ensure_ascii=True,
+            )
+            self.assertNotIn(secret, public)
 
     def test_mcp_public_output_never_contains_arbitrary_configuration_values(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -324,6 +396,183 @@ enabled = true
 
             self.assertEqual(
                 {item.name for item in result.capabilities}, {"first", "second"}
+            )
+
+    def test_duplicate_logical_keys_keep_distinct_sources_deterministically(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            first_path = _write_json(
+                base / "first.json",
+                {"mcpServers": {"shared": {"command": "fixture"}}},
+            )
+            second_path = _write_json(
+                base / "second.json",
+                {"mcpServers": {"shared": {"type": "sse"}}},
+            )
+            first = ConnectorConfigSpec(
+                first_path,
+                "extra",
+                "same-provider",
+                "json",
+                "duplicate-logical-key",
+                "<first-source>",
+            )
+            second = ConnectorConfigSpec(
+                second_path,
+                "extra",
+                "same-provider",
+                "json",
+                "duplicate-logical-key",
+                "<second-source>",
+            )
+
+            forward = discover_connectors(
+                home=base / "empty-home",
+                extra_config_paths=[first, second, first],
+            )
+            reverse = discover_connectors(
+                home=base / "empty-home",
+                extra_config_paths=[second, first, second],
+            )
+
+            forward_mcps = [item for item in forward.capabilities if item.kind == "mcp"]
+            reverse_mcps = [item for item in reverse.capabilities if item.kind == "mcp"]
+            self.assertEqual(len(forward_mcps), 2)
+            self.assertEqual(len(reverse_mcps), 2)
+            self.assertEqual(len({item.id for item in forward_mcps}), 2)
+            self.assertEqual(
+                [item.to_public_dict() for item in forward_mcps],
+                [item.to_public_dict() for item in reverse_mcps],
+            )
+            self.assertEqual(
+                {
+                    source.location
+                    for item in forward_mcps
+                    for source in item.source_locations
+                },
+                {"<first-source>", "<second-source>"},
+            )
+
+    @unittest.skipUnless(
+        hasattr(os, "mkfifo") and hasattr(os, "O_NONBLOCK"),
+        "nonblocking FIFOs are required",
+    )
+    def test_config_swap_to_fifo_is_opened_nonblocking_and_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            config = _write_json(
+                base / "racy.json",
+                {"mcpServers": {"must-not-load": {"command": "fixture"}}},
+            )
+            spec = ConnectorConfigSpec(
+                config,
+                "extra",
+                "race-fixture",
+                "json",
+                "extra:race-fixture",
+                "<racy-config>",
+            )
+            real_open = connector_module.os.open
+            swapped = False
+
+            def swap_before_open(
+                path: object, flags: int, *args: object, **kwargs: object
+            ) -> int:
+                nonlocal swapped
+                if (
+                    not swapped
+                    and not isinstance(path, int)
+                    and Path(path).name == config.name
+                ):
+                    swapped = True
+                    config.unlink()
+                    os.mkfifo(config)
+                    self.assertTrue(flags & os.O_NONBLOCK)
+                return real_open(path, flags, *args, **kwargs)
+
+            started = time.monotonic()
+            with mock.patch(
+                "capability_map_core.connectors.os.open", swap_before_open
+            ):
+                result = discover_connectors(
+                    home=base / "empty-home", extra_config_paths=[spec]
+                )
+
+            self.assertLess(time.monotonic() - started, 1.0)
+            self.assertTrue(swapped)
+            self.assertFalse(result.capabilities)
+            self.assertIn(
+                "source_changed", {item.code for item in result.diagnostics}
+            )
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFOs are required")
+    def test_existing_fifo_is_rejected_as_not_regular_without_opening(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            fifo = base / "config.json"
+            os.mkfifo(fifo)
+            spec = ConnectorConfigSpec(
+                fifo,
+                "extra",
+                "fifo-fixture",
+                "json",
+                "extra:fifo-fixture",
+                "<fifo-config>",
+            )
+            real_open = connector_module.os.open
+
+            def reject_fifo_open(
+                path: object, flags: int, *args: object, **kwargs: object
+            ) -> int:
+                if not isinstance(path, int) and Path(path) == fifo:
+                    raise AssertionError("a known FIFO must not be opened")
+                return real_open(path, flags, *args, **kwargs)
+
+            with mock.patch(
+                "capability_map_core.connectors.os.open", reject_fifo_open
+            ):
+                result = discover_connectors(
+                    home=base / "empty-home", extra_config_paths=[spec]
+                )
+
+            self.assertFalse(result.capabilities)
+            self.assertIn(
+                "not_regular_file", {item.code for item in result.diagnostics}
+            )
+
+    def test_invalid_unicode_mcp_name_is_skipped_and_later_item_continues(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            config = base / "unicode.json"
+            config.write_text(
+                json.dumps(
+                    {
+                        "mcpServers": {
+                            "\ud800-invalid": {"command": "fixture"},
+                            "healthy": {"command": "fixture"},
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            spec = ConnectorConfigSpec(
+                config,
+                "extra",
+                "unicode-fixture",
+                "json",
+                "extra:unicode-fixture",
+                "<unicode-config>",
+            )
+
+            result = discover_connectors(
+                home=base / "empty-home", extra_config_paths=[spec]
+            )
+
+            self.assertEqual(
+                [item.name for item in result.capabilities], ["healthy"]
+            )
+            self.assertIn(
+                "invalid_unicode", {item.code for item in result.diagnostics}
             )
 
 
@@ -627,6 +876,92 @@ class PluginDiscoveryTests(unittest.TestCase):
             )
             self.assertIn(
                 "permission_denied", {item.code for item in result.diagnostics}
+            )
+
+    @unittest.skipUnless(
+        hasattr(os, "mkfifo") and hasattr(os, "O_NONBLOCK"),
+        "nonblocking FIFOs are required",
+    )
+    def test_manifest_swap_to_fifo_is_opened_nonblocking_and_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root = base / "plugins"
+            manifest = _write_plugin(
+                root / "racy",
+                ".codex-plugin",
+                {"name": "must-not-load", "version": "1"},
+            )
+            real_open = connector_module.os.open
+            swapped = False
+
+            def swap_before_open(
+                path: object, flags: int, *args: object, **kwargs: object
+            ) -> int:
+                nonlocal swapped
+                if (
+                    not swapped
+                    and path == "plugin.json"
+                    and kwargs.get("dir_fd") is not None
+                ):
+                    swapped = True
+                    manifest.unlink()
+                    os.mkfifo(manifest)
+                    self.assertTrue(flags & os.O_NONBLOCK)
+                return real_open(path, flags, *args, **kwargs)
+
+            started = time.monotonic()
+            with mock.patch(
+                "capability_map_core.connectors.os.open", swap_before_open
+            ):
+                result = discover_connectors(
+                    home=base / "empty-home", plugin_roots=[root]
+                )
+
+            self.assertLess(time.monotonic() - started, 1.0)
+            self.assertTrue(swapped)
+            self.assertFalse(result.capabilities)
+            self.assertIn(
+                "source_changed", {item.code for item in result.diagnostics}
+            )
+
+    def test_invalid_unicode_plugin_metadata_is_skipped_per_item(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root = base / "plugins"
+            manifests = (
+                ("invalid-name", {"name": "\ud800-name", "version": "1"}),
+                (
+                    "invalid-description",
+                    {
+                        "name": "bad-description",
+                        "version": "1",
+                        "description": "\ud800-description",
+                    },
+                ),
+                (
+                    "invalid-keyword",
+                    {
+                        "name": "bad-keyword",
+                        "version": "1",
+                        "keywords": ["safe", "\ud800-keyword"],
+                    },
+                ),
+                ("healthy", {"name": "healthy-plugin", "version": "1"}),
+            )
+            for directory, manifest in manifests:
+                path = root / directory / ".claude-plugin" / "plugin.json"
+                path.parent.mkdir(parents=True)
+                path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            result = discover_connectors(
+                home=base / "empty-home", plugin_roots=[root]
+            )
+
+            plugins = [item for item in result.capabilities if item.kind == "plugin"]
+            self.assertEqual([item.name for item in plugins], ["healthy-plugin"])
+            self.assertEqual(
+                sum(item.code == "invalid_unicode" for item in result.diagnostics),
+                3,
             )
 
 

@@ -8,6 +8,7 @@ import json
 import os
 import re
 import stat
+import unicodedata
 from collections import deque
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -110,6 +111,7 @@ class _ReadResult:
     payload: bytes | None
     exact_path: Path | None
     diagnostics: tuple[Diagnostic, ...] = ()
+    physical_identity: str | None = None
 
 
 @dataclass(frozen=True)
@@ -133,6 +135,10 @@ class _EnvPathBlocked(Exception):
     pass
 
 
+class _InvalidUnicode(ValueError):
+    pass
+
+
 def _diagnostic(
     code: str,
     message: str,
@@ -145,6 +151,31 @@ def _diagnostic(
 
 def _has_env_segment(path: Path) -> bool:
     return any(part.casefold() == ".env" for part in path.parts)
+
+
+def _normalize_external_text(value: str) -> str:
+    """Normalize external text while rejecting isolated Unicode surrogates."""
+
+    normalized: list[str] = []
+    index = 0
+    while index < len(value):
+        codepoint = ord(value[index])
+        if 0xD800 <= codepoint <= 0xDBFF:
+            if index + 1 >= len(value):
+                raise _InvalidUnicode
+            low = ord(value[index + 1])
+            if not 0xDC00 <= low <= 0xDFFF:
+                raise _InvalidUnicode
+            normalized.append(
+                chr(0x10000 + ((codepoint - 0xD800) << 10) + low - 0xDC00)
+            )
+            index += 2
+            continue
+        if 0xDC00 <= codepoint <= 0xDFFF:
+            raise _InvalidUnicode
+        normalized.append(value[index])
+        index += 1
+    return unicodedata.normalize("NFC", "".join(normalized))
 
 
 def _resolve_safe_chain(path: Path, *, max_links: int = 64) -> Path:
@@ -205,11 +236,17 @@ def _file_flags() -> int:
         os.O_RDONLY
         | getattr(os, "O_CLOEXEC", 0)
         | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
     )
 
 
 def _directory_flags() -> int:
-    return _file_flags() | getattr(os, "O_DIRECTORY", 0)
+    return (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_DIRECTORY", 0)
+    )
 
 
 def _read_fd_bounded(fd: int, maximum: int) -> tuple[bytes, bool]:
@@ -221,6 +258,98 @@ def _read_fd_bounded(fd: int, maximum: int) -> tuple[bytes, bool]:
             break
         payload.extend(chunk)
     return bytes(payload[:maximum]), len(payload) > maximum
+
+
+def _physical_identity(value: os.stat_result, payload: bytes) -> str:
+    identity = _file_id(value)
+    if identity is not None:
+        return f"inode:{identity[0]}:{identity[1]}"
+    return f"content-sha256:{hashlib.sha256(payload).hexdigest()}"
+
+
+def _read_verified_regular(
+    path: str | Path,
+    expected: os.stat_result,
+    *,
+    location: str,
+    dir_fd: int | None = None,
+    too_large_code: str,
+    open_error_code: str,
+    read_error_code: str,
+) -> tuple[bytes | None, tuple[Diagnostic, ...], str | None]:
+    """Open nonblocking, verify regular-file identity, then read bounded bytes."""
+
+    try:
+        fd = os.open(path, _file_flags(), dir_fd=dir_fd)
+    except PermissionError:
+        return None, (
+            _diagnostic(
+                "permission_denied",
+                "A structured source could not be read due to permissions.",
+                location=location,
+            ),
+        ), None
+    except OSError:
+        return None, (
+            _diagnostic(
+                open_error_code,
+                "A structured source could not be opened safely.",
+                location=location,
+            ),
+        ), None
+    try:
+        opened = os.fstat(fd)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or _file_id(opened) != _file_id(expected)
+            or _stat_evidence(opened) != _stat_evidence(expected)
+        ):
+            return None, (
+                _diagnostic(
+                    "source_changed",
+                    "A structured source changed before it could be read.",
+                    location=location,
+                ),
+            ), None
+        payload, oversized = _read_fd_bounded(fd, MAX_CONFIG_BYTES)
+        final_stat = os.fstat(fd)
+        if _file_id(final_stat) != _file_id(opened) or (
+            not oversized and _stat_evidence(final_stat) != _stat_evidence(opened)
+        ):
+            return None, (
+                _diagnostic(
+                    "source_changed",
+                    "A structured source changed while it was being read.",
+                    location=location,
+                ),
+            ), None
+    except PermissionError:
+        return None, (
+            _diagnostic(
+                "permission_denied",
+                "A structured source could not be read due to permissions.",
+                location=location,
+            ),
+        ), None
+    except OSError:
+        return None, (
+            _diagnostic(
+                read_error_code,
+                "A structured source could not be read safely.",
+                location=location,
+            ),
+        ), None
+    finally:
+        os.close(fd)
+    if oversized:
+        return None, (
+            _diagnostic(
+                too_large_code,
+                "A structured source exceeded the supported size limit.",
+                location=location,
+            ),
+        ), None
+    return payload, (), _physical_identity(opened, payload)
 
 
 def _read_bounded_path(
@@ -288,111 +417,21 @@ def _read_bounded_path(
             None,
             (
                 _diagnostic(
-                    "source_not_file",
+                    "not_regular_file",
                     "A configured source is not a regular file.",
                     location=location,
                 ),
             ),
         )
-    try:
-        fd = os.open(exact_path, _file_flags())
-    except PermissionError:
-        return _ReadResult(
-            None,
-            None,
-            (
-                _diagnostic(
-                    "permission_denied",
-                    "A configured source could not be read due to permissions.",
-                    location=location,
-                ),
-            ),
-        )
-    except OSError:
-        return _ReadResult(
-            None,
-            None,
-            (
-                _diagnostic(
-                    "source_open_error",
-                    "A configured source could not be opened safely.",
-                    location=location,
-                ),
-            ),
-        )
-    try:
-        opened = os.fstat(fd)
-        if (
-            not stat.S_ISREG(opened.st_mode)
-            or _file_id(opened) != _file_id(expected)
-            or _stat_evidence(opened) != _stat_evidence(expected)
-        ):
-            return _ReadResult(
-                None,
-                None,
-                (
-                    _diagnostic(
-                        "source_changed",
-                        "A configured source changed before it could be read.",
-                        location=location,
-                    ),
-                ),
-            )
-        payload, oversized = _read_fd_bounded(fd, MAX_CONFIG_BYTES)
-        final_stat = os.fstat(fd)
-        if _file_id(final_stat) != _file_id(opened) or (
-            not oversized and _stat_evidence(final_stat) != _stat_evidence(opened)
-        ):
-            return _ReadResult(
-                None,
-                None,
-                (
-                    _diagnostic(
-                        "source_changed",
-                        "A configured source changed while it was being read.",
-                        location=location,
-                    ),
-                ),
-            )
-    except PermissionError:
-        return _ReadResult(
-            None,
-            None,
-            (
-                _diagnostic(
-                    "permission_denied",
-                    "A configured source could not be read due to permissions.",
-                    location=location,
-                ),
-            ),
-        )
-    except OSError:
-        return _ReadResult(
-            None,
-            None,
-            (
-                _diagnostic(
-                    "source_read_error",
-                    "A configured source could not be read safely.",
-                    location=location,
-                ),
-            ),
-        )
-    finally:
-        os.close(fd)
-    if oversized:
-        return _ReadResult(
-            None,
-            exact_path,
-            (
-                _diagnostic(
-                    too_large_code,
-                    "A structured source exceeded the supported size limit.",
-                    location=location,
-                ),
-            ),
-        )
-    return _ReadResult(payload, exact_path)
+    payload, diagnostics, physical_identity = _read_verified_regular(
+        exact_path,
+        expected,
+        location=location,
+        too_large_code=too_large_code,
+        open_error_code="source_open_error",
+        read_error_code="source_read_error",
+    )
+    return _ReadResult(payload, exact_path, diagnostics, physical_identity)
 
 
 def _measure_structure(value: Any) -> str | None:
@@ -446,7 +485,41 @@ def _strip_toml_comment(line: str) -> str:
     return "".join(output).strip()
 
 
-def _fallback_toml_scalar(raw: str) -> str | bool:
+def _split_toml_array(raw: str) -> tuple[str, ...]:
+    interior = raw[1:-1].strip()
+    if not interior:
+        return ()
+    items: list[str] = []
+    start = 0
+    quote = ""
+    escaped = False
+    for index, character in enumerate(interior):
+        if escaped:
+            escaped = False
+            continue
+        if character == "\\" and quote == '"':
+            escaped = True
+            continue
+        if quote:
+            if character == quote:
+                quote = ""
+            continue
+        if character in {'"', "'"}:
+            quote = character
+        elif character == ",":
+            item = interior[start:index].strip()
+            if item:
+                items.append(item)
+            start = index + 1
+    if quote:
+        raise ValueError("unterminated TOML array string")
+    final = interior[start:].strip()
+    if final:
+        items.append(final)
+    return tuple(items)
+
+
+def _fallback_toml_value(raw: str) -> str | bool | list[str | bool]:
     value = raw.strip()
     if value.casefold() in {"true", "false"}:
         return value.casefold() == "true"
@@ -456,38 +529,97 @@ def _fallback_toml_scalar(raw: str) -> str | bool:
             return decoded
     if len(value) >= 2 and value[0] == value[-1] == "'":
         return value[1:-1]
+    if len(value) >= 2 and value[0] == "[" and value[-1] == "]":
+        return [_fallback_toml_value(item) for item in _split_toml_array(value)]
     raise ValueError("unsupported TOML subset value")
 
 
+def _split_toml_dotted_key(raw: str) -> tuple[str, ...]:
+    parts: list[str] = []
+    index = 0
+    while index < len(raw):
+        while index < len(raw) and raw[index].isspace():
+            index += 1
+        if index >= len(raw):
+            break
+        if raw[index] in {'"', "'"}:
+            quote = raw[index]
+            start = index
+            index += 1
+            escaped = False
+            while index < len(raw):
+                character = raw[index]
+                if escaped:
+                    escaped = False
+                elif character == "\\" and quote == '"':
+                    escaped = True
+                elif character == quote:
+                    break
+                index += 1
+            if index >= len(raw):
+                raise ValueError("unterminated TOML quoted key")
+            token = raw[start : index + 1]
+            value = (
+                json.loads(token) if quote == '"' else token[1:-1]
+            )
+            index += 1
+        else:
+            match = re.match(r"[A-Za-z0-9_-]+", raw[index:])
+            if match is None:
+                raise ValueError("unsupported TOML key")
+            value = match.group(0)
+            index += len(value)
+        if not isinstance(value, str) or not value:
+            raise ValueError("empty TOML key")
+        parts.append(value)
+        while index < len(raw) and raw[index].isspace():
+            index += 1
+        if index >= len(raw):
+            break
+        if raw[index] != ".":
+            raise ValueError("unsupported TOML dotted key")
+        index += 1
+    return tuple(parts)
+
+
 def _parse_toml_subset(payload: bytes) -> dict[str, Any]:
-    """Parse only simple MCP tables and scalar fields on Python 3.10."""
+    """Parse only MCP metadata needed by discovery on Python 3.10."""
 
     text = payload.decode("utf-8")
     result: dict[str, dict[str, dict[str, Any]]] = {}
     current: dict[str, Any] | None = None
-    table_re = re.compile(
-        r"^\[\s*(mcp_servers|mcpServers)\s*\.\s*"
-        r"(?:\"((?:\\.|[^\"])*)\"|'([^']*)'|([A-Za-z0-9_-]+))\s*\]$"
-    )
     key_re = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*)\s*=\s*(.+)$")
+    retained_fields = frozenset(
+        {"command", "url", "type", "transport", "enabled", "disabled"}
+    )
     for source_line in text.splitlines():
         line = _strip_toml_comment(source_line)
         if not line:
             continue
-        table_match = table_re.fullmatch(line)
-        if table_match:
-            table_name = table_match.group(1)
-            quoted = table_match.group(2)
-            if quoted is not None:
-                server_name = json.loads(f'"{quoted}"')
-            else:
-                server_name = table_match.group(3) or table_match.group(4) or ""
-            current = result.setdefault(table_name, {}).setdefault(server_name, {})
+        if line.startswith("[") and line.endswith("]"):
+            current = None
+            try:
+                table_parts = _split_toml_dotted_key(line[1:-1].strip())
+            except ValueError:
+                continue
+            if (
+                len(table_parts) == 2
+                and table_parts[0] in {"mcp_servers", "mcpServers"}
+            ):
+                current = result.setdefault(table_parts[0], {}).setdefault(
+                    table_parts[1], {}
+                )
             continue
         key_match = key_re.fullmatch(line)
         if current is None or key_match is None:
-            raise ValueError("unsupported TOML subset syntax")
-        current[key_match.group(1)] = _fallback_toml_scalar(key_match.group(2))
+            continue
+        key = key_match.group(1)
+        try:
+            parsed_value = _fallback_toml_value(key_match.group(2))
+        except (TypeError, ValueError):
+            continue
+        if key in retained_fields:
+            current[key] = parsed_value
     return result
 
 
@@ -603,7 +735,7 @@ def _transport(configuration: Mapping[str, Any]) -> str:
 
 
 def _name_digest(name: str) -> str:
-    return hashlib.sha256(name.encode("utf-8", errors="replace")).hexdigest()
+    return hashlib.sha256(name.encode("utf-8")).hexdigest()
 
 
 def _mcp_pair(
@@ -614,9 +746,11 @@ def _mcp_pair(
     provider: str,
     location: str,
     logical_source: str,
+    source_identity: str,
     exact_path: Path,
 ) -> tuple[Capability, ResolverRecord]:
-    safe_name = sanitize_text(name, max_length=512) or "unnamed-mcp"
+    normalized_name = _normalize_external_text(name)
+    safe_name = sanitize_text(normalized_name, max_length=512) or "unnamed-mcp"
     enabled = _enabled_state(configuration)
     transport = _transport(configuration)
     if transport not in _TRANSPORTS:  # defensive enum gate
@@ -629,7 +763,8 @@ def _mcp_pair(
         scope=scope,
         provider=provider,
         logical_identity=(
-            f"mcp-v1:{logical_source}:name-sha256:{_name_digest(name)}"
+            f"mcp-v1:{logical_source}:source:{source_identity}:"
+            f"name-sha256:{_name_digest(normalized_name)}"
         ),
     )
     return capability, ResolverRecord(capability.resolver_id, (str(exact_path),))
@@ -722,10 +857,35 @@ def _config_specs(
                 f"<extra-config:{index}>",
             )
         )
-    unique: dict[str, ConnectorConfigSpec] = {}
-    for spec in sorted(specs, key=lambda item: item.logical_key):
-        unique.setdefault(spec.logical_key, spec)
-    return tuple(unique.values())
+    ordered = sorted(
+        specs,
+        key=lambda item: (
+            item.logical_key,
+            item.scope,
+            item.provider.casefold(),
+            item.provider,
+            item.format,
+            item.public_location.casefold(),
+            item.public_location,
+            os.path.normcase(str(item.path.absolute())),
+        ),
+    )
+    unique: list[ConnectorConfigSpec] = []
+    seen: set[tuple[str, ...]] = set()
+    for spec in ordered:
+        full_source = (
+            os.path.normcase(str(spec.path.absolute())),
+            spec.scope,
+            spec.provider,
+            spec.format,
+            spec.logical_key,
+            spec.public_location,
+        )
+        if full_source in seen:
+            continue
+        seen.add(full_source)
+        unique.append(spec)
+    return tuple(unique)
 
 
 def _plugin_root_specs(
@@ -806,61 +966,16 @@ def _read_manifest_at(
     *,
     location: str,
 ) -> tuple[bytes | None, tuple[Diagnostic, ...]]:
-    try:
-        fd = os.open("plugin.json", _file_flags(), dir_fd=directory_fd)
-    except OSError:
-        return None, (
-            _diagnostic(
-                "manifest_open_error",
-                "A plugin manifest changed before it could be opened safely.",
-                location=location,
-            ),
-        )
-    try:
-        opened = os.fstat(fd)
-        if (
-            not stat.S_ISREG(opened.st_mode)
-            or _file_id(opened) != _file_id(expected)
-            or _stat_evidence(opened) != _stat_evidence(expected)
-        ):
-            return None, (
-                _diagnostic(
-                    "source_changed",
-                    "A plugin manifest changed before it could be read.",
-                    location=location,
-                ),
-            )
-        payload, oversized = _read_fd_bounded(fd, MAX_CONFIG_BYTES)
-        final_stat = os.fstat(fd)
-        if _file_id(final_stat) != _file_id(opened) or (
-            not oversized and _stat_evidence(final_stat) != _stat_evidence(opened)
-        ):
-            return None, (
-                _diagnostic(
-                    "source_changed",
-                    "A plugin manifest changed while it was being read.",
-                    location=location,
-                ),
-            )
-    except OSError:
-        return None, (
-            _diagnostic(
-                "manifest_read_error",
-                "A plugin manifest could not be read safely.",
-                location=location,
-            ),
-        )
-    finally:
-        os.close(fd)
-    if oversized:
-        return None, (
-            _diagnostic(
-                "manifest_too_large",
-                "A plugin manifest exceeded the supported size limit.",
-                location=location,
-            ),
-        )
-    return payload, ()
+    payload, diagnostics, _ = _read_verified_regular(
+        "plugin.json",
+        expected,
+        location=location,
+        dir_fd=directory_fd,
+        too_large_code="manifest_too_large",
+        open_error_code="manifest_open_error",
+        read_error_code="manifest_read_error",
+    )
+    return payload, diagnostics
 
 
 def _scan_plugin_root(
@@ -1045,6 +1160,11 @@ def _scan_plugin_root(
                         )
                     )
                     continue
+                is_manifest_entry = (
+                    entry.name == "plugin.json"
+                    and parts
+                    and parts[-1] in _PLUGIN_MARKERS
+                )
                 if stat.S_ISDIR(entry_stat.st_mode):
                     if depth >= MAX_PLUGIN_DEPTH:
                         diagnostics.append(
@@ -1086,11 +1206,18 @@ def _scan_plugin_root(
                         continue
                     stack.append((child_fd, parts + (entry.name,), depth + 1))
                     continue
+                if is_manifest_entry and not stat.S_ISREG(entry_stat.st_mode):
+                    diagnostics.append(
+                        _diagnostic(
+                            "not_regular_file",
+                            "A plugin manifest is not a regular file and was skipped.",
+                            location=root.public_prefix,
+                        )
+                    )
+                    continue
                 if (
                     not stat.S_ISREG(entry_stat.st_mode)
-                    or entry.name != "plugin.json"
-                    or not parts
-                    or parts[-1] not in _PLUGIN_MARKERS
+                    or not is_manifest_entry
                 ):
                     continue
                 manifest_id = _file_id(entry_stat)
@@ -1162,9 +1289,7 @@ def _plugin_pairs(
             )
             continue
         raw_name = manifest.get("name")
-        if not isinstance(raw_name, str) or not sanitize_text(
-            raw_name, max_length=512
-        ):
+        if not isinstance(raw_name, str):
             diagnostics.append(
                 _diagnostic(
                     "plugin_name_missing",
@@ -1173,31 +1298,66 @@ def _plugin_pairs(
                 )
             )
             continue
-        name = sanitize_text(raw_name, max_length=512)
         raw_version = manifest.get("version")
+        raw_description = manifest.get("description")
+        raw_keywords = manifest.get("keywords")
+        raw_provider = manifest.get("provider")
+        default_provider = occurrence.marker.removeprefix(".")
+        external_strings = [raw_name]
+        external_strings.extend(
+            value
+            for value in (raw_version, raw_description, raw_provider)
+            if isinstance(value, str)
+        )
+        if isinstance(raw_keywords, list):
+            external_strings.extend(
+                item for item in raw_keywords[:128] if isinstance(item, str)
+            )
+        try:
+            normalized_strings = {
+                id(value): _normalize_external_text(value)
+                for value in external_strings
+            }
+        except _InvalidUnicode:
+            diagnostics.append(
+                _diagnostic(
+                    "invalid_unicode",
+                    "A plugin manifest contained invalid Unicode and was skipped.",
+                    location=occurrence.location,
+                )
+            )
+            continue
+        normalized_name = normalized_strings[id(raw_name)]
+        name = sanitize_text(normalized_name, max_length=512)
+        if not name:
+            diagnostics.append(
+                _diagnostic(
+                    "plugin_name_missing",
+                    "A plugin manifest had no usable name and was skipped.",
+                    location=occurrence.location,
+                )
+            )
+            continue
         version = (
-            sanitize_text(raw_version, max_length=256)
+            sanitize_text(normalized_strings[id(raw_version)], max_length=256)
             if isinstance(raw_version, str)
             else None
         )
-        raw_description = manifest.get("description")
         description = (
-            sanitize_text(raw_description, max_length=2_048)
+            sanitize_text(normalized_strings[id(raw_description)], max_length=2_048)
             if isinstance(raw_description, str)
             else ""
         )
-        raw_keywords = manifest.get("keywords")
         keywords = tuple(
-            sanitize_text(item, max_length=256)
+            sanitize_text(normalized_strings[id(item)], max_length=256)
             for item in raw_keywords[:128]
-            if isinstance(item, str) and sanitize_text(item, max_length=256)
+            if isinstance(item, str)
+            and sanitize_text(normalized_strings[id(item)], max_length=256)
         ) if isinstance(raw_keywords, list) else ()
-        raw_provider = manifest.get("provider")
-        default_provider = occurrence.marker.removeprefix(".")
         provider = (
-            sanitize_text(raw_provider, max_length=256)
+            sanitize_text(normalized_strings[id(raw_provider)], max_length=256)
             if isinstance(raw_provider, str)
-            and sanitize_text(raw_provider, max_length=256)
+            and sanitize_text(normalized_strings[id(raw_provider)], max_length=256)
             else default_provider
         )
         version_label = version or "unknown"
@@ -1218,7 +1378,8 @@ def _plugin_pairs(
             version=version,
             logical_identity=(
                 f"plugin-v1:{occurrence.marker}:provider-sha256:{_name_digest(provider)}:"
-                f"{_name_digest(raw_name)}:{_name_digest(raw_version if isinstance(raw_version, str) else '')}:"
+                f"{_name_digest(normalized_name)}:"
+                f"{_name_digest(normalized_strings[id(raw_version)] if isinstance(raw_version, str) else '')}:"
                 f"physical:{physical}"
             ),
         )
@@ -1240,17 +1401,27 @@ def _plugin_pairs(
             )
         )
         for server_name, configuration in _server_maps(manifest):
-            pairs.append(
-                _mcp_pair(
+            try:
+                pair = _mcp_pair(
                     server_name,
                     configuration,
                     scope="plugin",
                     provider=name,
                     location=f"<plugin:{capability.id}>/manifest",
                     logical_source=f"plugin:{capability.id}",
+                    source_identity=f"manifest:{physical}",
                     exact_path=occurrence.exact_path,
                 )
-            )
+            except _InvalidUnicode:
+                diagnostics.append(
+                    _diagnostic(
+                        "invalid_unicode",
+                        "A plugin-declared MCP name contained invalid Unicode and was skipped.",
+                        location=occurrence.location,
+                    )
+                )
+                continue
+            pairs.append(pair)
     return pairs, skill_roots, diagnostics
 
 
@@ -1289,17 +1460,27 @@ def discover_connectors(
         if parsed.value is None:
             continue
         for name, configuration in _server_maps(parsed.value):
-            pairs.append(
-                _mcp_pair(
+            try:
+                pair = _mcp_pair(
                     name,
                     configuration,
                     scope=spec.scope,
                     provider=spec.provider,
                     location=spec.public_location,
                     logical_source=spec.logical_key,
+                    source_identity=read.physical_identity or "unknown",
                     exact_path=read.exact_path,
                 )
-            )
+            except _InvalidUnicode:
+                diagnostics.append(
+                    _diagnostic(
+                        "invalid_unicode",
+                        "An MCP name contained invalid Unicode and was skipped.",
+                        location=spec.public_location,
+                    )
+                )
+                continue
+            pairs.append(pair)
 
     occurrences: list[_ManifestOccurrence] = []
     seen_manifest_ids: set[tuple[int, int]] = set()
