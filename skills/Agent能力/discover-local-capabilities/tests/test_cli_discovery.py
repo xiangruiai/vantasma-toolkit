@@ -121,6 +121,12 @@ class _FailingTemporaryFile:
         self.closed = True
 
 
+class _DelayedFailingTemporaryFile(_FailingTemporaryFile):
+    def write(self, data: bytes) -> int:
+        time.sleep(0.6)
+        raise OSError("synthetic delayed disk full")
+
+
 class _FakeDirEntry:
     def __init__(self, name: str, file_stat: os.stat_result) -> None:
         self.name = name
@@ -769,6 +775,37 @@ class CliVersionProbeTests(unittest.TestCase):
             self.assertTrue(process.wait_timeouts)
             self.assertTrue(process.stdout.closed)
             self.assertTrue(process.stderr.closed)
+            self.assertTrue(spool.closed)
+
+    def test_delayed_capture_error_during_cleanup_is_not_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = _write_file(Path(temporary) / "tool")
+            process = _FakeProcess(stderr=b"captured", stays_running=True)
+            spool = _DelayedFailingTemporaryFile()
+
+            with (
+                mock.patch(
+                    "capability_map_core.clis.subprocess.Popen",
+                    return_value=process,
+                ),
+                mock.patch(
+                    "capability_map_core.clis.tempfile.TemporaryFile",
+                    return_value=spool,
+                ),
+            ):
+                result = probe_cli_version(executable, timeout=0.05)
+
+            self.assertEqual(result.status, "error")
+            self.assertEqual(
+                [diagnostic.code for diagnostic in result.diagnostics],
+                ["version_probe_io_error"],
+            )
+            self.assertFalse(
+                any(
+                    thread.name.startswith("cli-version-") and thread.is_alive()
+                    for thread in threading.enumerate()
+                )
+            )
             self.assertTrue(spool.closed)
 
     def test_stream_output_is_combined_stdout_then_stderr_deterministically(self) -> None:

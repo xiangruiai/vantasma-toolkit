@@ -613,18 +613,28 @@ def _drain_pipe(
     failed: threading.Event,
     closing: threading.Event,
 ) -> None:
-    try:
-        while True:
+    while True:
+        try:
             chunk = pipe.read(PROBE_READ_CHUNK_BYTES)
-            if not chunk:
-                break
-            if isinstance(chunk, str):
-                chunk = chunk.encode("utf-8", errors="replace")
-            capture.add(chunk)
-    except Exception as error:
-        if not closing.is_set():
+        except (OSError, ValueError) as error:
+            if not closing.is_set():
+                errors.put(error)
+                failed.set()
+            return
+        except Exception as error:
             errors.put(error)
             failed.set()
+            return
+        if not chunk:
+            return
+        if isinstance(chunk, str):
+            chunk = chunk.encode("utf-8", errors="replace")
+        try:
+            capture.add(chunk)
+        except Exception as error:
+            errors.put(error)
+            failed.set()
+            return
 
 
 def _wait_for_process(
@@ -754,13 +764,15 @@ def _close_probe_pipes(process: Any) -> None:
             pass
 
 
-def _join_readers(readers: Iterable[threading.Thread], timeout: float) -> None:
+def _join_readers(readers: Iterable[threading.Thread], timeout: float) -> bool:
+    reader_list = tuple(readers)
     deadline = time.monotonic() + timeout
-    for reader in readers:
+    for reader in reader_list:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            return
+            break
         reader.join(remaining)
+    return not any(reader.is_alive() for reader in reader_list)
 
 
 def _combine_probe_output(
@@ -913,6 +925,7 @@ def probe_cli_version(
     reader_errors: queue.SimpleQueue[Exception] = queue.SimpleQueue()
     reader_failed = threading.Event()
     readers_closing = threading.Event()
+    reader_shutdown_timed_out = False
     try:
         tree = _process_tree_guard(process)
         overflow = threading.Event()
@@ -967,7 +980,22 @@ def probe_cli_version(
                 pass
         readers_closing.set()
         _close_probe_pipes(process)
-        _join_readers(started_readers, _PROBE_THREAD_JOIN_SECONDS)
+        reader_shutdown_timed_out = not _join_readers(
+            started_readers,
+            _PROBE_THREAD_JOIN_SECONDS,
+        )
+
+    if reader_shutdown_timed_out:
+        return CliVersionProbeResult(
+            "error",
+            returncode=process.returncode,
+            diagnostics=(
+                _probe_diagnostic(
+                    "reader_shutdown_timeout",
+                    "A version probe output reader did not stop within the cleanup deadline.",
+                ),
+            ),
+        )
 
     try:
         probe_io_error = reader_errors.get_nowait()
