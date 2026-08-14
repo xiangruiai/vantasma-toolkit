@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import os
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -55,12 +56,25 @@ def main(
             args = parse_args(argv)
         except SystemExit as error:
             return int(error.code)
+    runtime_cwd = Path.cwd() if cwd is None else Path(cwd).absolute()
+    injected_home = Path.home() if home is None else Path(home).absolute()
+
+    def absolute(value: str, base: Path) -> Path:
+        if value == "~":
+            return injected_home
+        if value.startswith(("~/", "~\\")):
+            return (injected_home / value[2:]).absolute()
+        path = Path(value)
+        return path.absolute() if path.is_absolute() else (base / path).absolute()
+
+    project = absolute(args.project, runtime_cwd)
+    output_directory = absolute(args.output_dir, project)
     translated = [
         "scan",
         "--project",
-        args.project,
+        os.fspath(project),
         "--output-dir",
-        args.output_dir,
+        os.fspath(output_directory),
         "--confirmed",
     ]
     for root in args.skill_root:

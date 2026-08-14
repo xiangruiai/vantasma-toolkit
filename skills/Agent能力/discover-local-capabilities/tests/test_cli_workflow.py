@@ -20,6 +20,12 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 import capability_map  # noqa: E402
 
 
+def _sha256(path: Path) -> str:
+    import hashlib
+
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def _write_skill(path: Path, name: str, description: str) -> None:
     path.mkdir(parents=True, exist_ok=True)
     (path / "SKILL.md").write_text(
@@ -55,6 +61,7 @@ class WorkflowFixture:
         self.bin = base / "bin"
         self.storage = base / "能力 地图"
         self.migrated = base / "迁移 地图"
+        self.extra_environ: dict[str, str] = {}
         self.home.mkdir()
         self.project.mkdir()
         self.bin.mkdir()
@@ -95,16 +102,21 @@ class WorkflowFixture:
 
     @property
     def environ(self) -> dict[str, str]:
-        return {"PATH": str(self.bin)}
+        return {"PATH": str(self.bin), **self.extra_environ}
 
     def run(self, *argv: str) -> tuple[int, dict[str, object], str]:
+        return self.run_from(self.project, *argv)
+
+    def run_from(
+        self, runtime_cwd: Path, *argv: str
+    ) -> tuple[int, dict[str, object], str]:
         stdout = io.StringIO()
         stderr = io.StringIO()
         code = capability_map.main(
             list(argv),
             environ=self.environ,
             home=self.home,
-            cwd=self.project,
+            cwd=runtime_cwd,
             stdout=stdout,
             stderr=stderr,
         )
@@ -160,6 +172,202 @@ class CapabilityMapEntrypointTests(unittest.TestCase):
 
 
 class CapabilityMapWorkflowTests(unittest.TestCase):
+    def test_private_runtime_state_uses_saved_targets_and_custom_codex_home(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            custom_codex = fixture.base / "custom codex"
+            custom_codex.mkdir()
+            fixture.extra_environ["CODEX_HOME"] = str(custom_codex)
+            args = (
+                "--storage",
+                str(fixture.storage),
+                "--agents",
+                "codex",
+                "--scope",
+                "user",
+                "--project",
+                str(fixture.project),
+            )
+            code, plan, error = fixture.run("setup", "plan", *args)
+            self.assertEqual((code, error), (0, ""))
+            self.assertIn("state", plan["paths"])
+            self.assertFalse(Path(plan["paths"]["state"]).exists())
+            code, applied, error = fixture.run(
+                "setup",
+                "apply",
+                *args,
+                "--confirmed",
+                "--expected-plan-hash",
+                str(plan["plan_hash"]),
+            )
+            self.assertEqual((code, error), (0, ""))
+
+            state_path = Path(applied["paths"]["state"])
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            config = json.loads(
+                Path(applied["paths"]["config"]).read_text(encoding="utf-8")
+            )
+            self.assertEqual(stat.S_IMODE(state_path.stat().st_mode), 0o600)
+            self.assertEqual(state["project_root"], str(fixture.project.resolve()))
+            self.assertEqual(state["codex_home"], str(custom_codex.resolve()))
+            self.assertEqual(state["public_root"], str(fixture.storage.resolve()))
+            self.assertEqual(
+                set(config),
+                {"schema_version", "mode", "installation_id", "state_id"},
+            )
+            self.assertNotIn(str(fixture.project), json.dumps(config))
+            self.assertTrue((custom_codex / "AGENTS.md").is_file())
+
+            elsewhere = fixture.base / "elsewhere"
+            elsewhere.mkdir()
+            code, status, error = fixture.run_from(
+                elsewhere, "status", "--storage", str(fixture.storage)
+            )
+            self.assertEqual((code, error), (0, ""))
+            self.assertTrue(status["installed"])
+            code, _, error = fixture.run_from(
+                elsewhere,
+                "uninstall",
+                "--storage",
+                str(fixture.storage),
+                "--confirmed",
+            )
+            self.assertEqual((code, error), (0, ""))
+            self.assertNotIn(
+                "vantasma:discover-local-capabilities:start",
+                (custom_codex / "AGENTS.md").read_text(encoding="utf-8"),
+            )
+
+    def test_private_namespaces_isolate_setup_scan_and_legacy_relative_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            installed = fixture.install()
+            setup_resolver = Path(installed["paths"]["resolver"])
+            setup_hash = _sha256(setup_resolver)
+            scan_output = fixture.base / "scan-output"
+            code, scan, error = fixture.run(
+                "scan",
+                "--project",
+                str(fixture.project),
+                "--output-dir",
+                str(scan_output),
+                "--confirmed",
+            )
+            self.assertEqual((code, error), (0, ""))
+            scan_resolver = Path(scan["written"]["paths"]["resolver"])
+            self.assertNotEqual(setup_resolver, scan_resolver)
+            self.assertIn("installations", setup_resolver.parts)
+            self.assertIn("installations", scan_resolver.parts)
+            self.assertEqual(_sha256(setup_resolver), setup_hash)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            import scan_capabilities
+
+            code = scan_capabilities.main(
+                ["--project", "project"],
+                environ=fixture.environ,
+                home=fixture.home,
+                cwd=fixture.base,
+                stdout=stdout,
+                stderr=stderr,
+            )
+            self.assertEqual(code, 0, stderr.getvalue())
+            written = json.loads(stdout.getvalue())["written"]["paths"]
+            self.assertEqual(
+                Path(written["map"]),
+                (fixture.project / ".capability-map" / "本机能力地图.md").resolve(),
+            )
+
+    def test_planned_hashes_match_written_bytes_and_steady_state_is_noop(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            applied = fixture.install()
+            code, plan, error = fixture.run("setup", "plan", *fixture.setup_args())
+            self.assertEqual((code, error), (0, ""))
+            self.assertEqual(plan["changes"], [])
+            self.assertEqual(plan["counts"]["storage_changes"], 0)
+            self.assertEqual(plan["counts"]["state_changes"], 0)
+            for label, expected_hash in plan["desired_hashes"].items():
+                self.assertEqual(_sha256(Path(plan["paths"][label])), expected_hash)
+
+            before = _snapshot(fixture.base)
+            code, refresh, error = fixture.run(
+                "refresh", "--storage", str(fixture.storage), "--dry-run"
+            )
+            self.assertEqual((code, error), (0, ""))
+            self.assertEqual(refresh["changes"], [])
+            self.assertEqual(refresh["counts"]["storage_changes"], 0)
+            self.assertEqual(before, _snapshot(fixture.base))
+            self.assertEqual(applied["hashes"], {
+                key: plan["desired_hashes"][key]
+                for key in ("config", "inventory", "map", "receipt", "resolver")
+            })
+
+    def test_compensation_preserves_external_overwrite_and_reports_conflict(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            code, plan, error = fixture.run("setup", "plan", *fixture.setup_args())
+            self.assertEqual((code, error), (0, ""))
+            map_path = Path(plan["paths"]["map"])
+
+            def external_then_fail(*_args: object, **_kwargs: object) -> None:
+                map_path.write_text("external owner\n", encoding="utf-8")
+                raise RuntimeError("synthetic instruction failure")
+
+            with mock.patch(
+                "capability_map.apply_instruction_plan",
+                side_effect=external_then_fail,
+            ):
+                code, _, error = fixture.run(
+                    "setup",
+                    "apply",
+                    *fixture.setup_args(),
+                    "--confirmed",
+                    "--expected-plan-hash",
+                    str(plan["plan_hash"]),
+                )
+            self.assertEqual(code, 3)
+            self.assertIn("compensation_conflict", error)
+            self.assertEqual(map_path.read_text(encoding="utf-8"), "external owner\n")
+            self.assertFalse((fixture.project / "AGENTS.md").exists())
+
+    def test_public_receipt_is_complete_safe_and_apply_stdout_is_exact(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            applied = fixture.install()
+            receipt = Path(applied["paths"]["receipt"]).read_text(encoding="utf-8")
+            for fragment in (
+                "本机能力地图.md",
+                "capability-inventory.json",
+                "capability-map.config.json",
+                "setup-receipt.md",
+                "skills",
+                "clis",
+                "mcp",
+                "plugins",
+                "unclassified",
+                "diagnostics",
+                "new session",
+                "能力地图怎么用",
+                "刷新能力地图",
+                "迁移能力地图",
+                "卸载能力地图",
+                "private",
+            ):
+                self.assertIn(fragment, receipt)
+            for exact in (
+                str(fixture.base),
+                str(applied["paths"]["resolver"]),
+                str(applied["paths"]["state"]),
+            ):
+                self.assertNotIn(exact, receipt)
+            self.assertTrue(Path(applied["paths"]["resolver"]).is_absolute())
+            self.assertTrue(Path(applied["paths"]["state"]).is_absolute())
+            self.assertIn("instruction_backup", applied["paths"])
+
     def test_scan_orchestrates_all_collectors_without_process_execution(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             fixture = WorkflowFixture(Path(temporary))

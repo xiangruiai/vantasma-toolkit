@@ -52,14 +52,26 @@ from capability_map_core.skills import discover_skills
 from capability_map_core.storage import (
     PublicArtifacts,
     StoragePaths,
+    _exact_values,
+    _json_bytes,
+    _parse_public_json,
+    _sanitize_markdown_document,
     build_private_resolver_document,
     default_storage_paths,
     write_storage_bundle,
+)
+from capability_map_core.transactions import (
+    FileMutation,
+    TransactionReceipt,
+    apply_file_transaction,
+    capture_directory_evidence,
 )
 
 
 MAX_WORKFLOW_DOCUMENT_BYTES = 64 * 1024 * 1024
 _ARTIFACT_LABELS = ("map", "inventory", "config", "receipt", "resolver")
+_STATE_FILENAME = "installation-state.json"
+_PRIVATE_INSTALLATIONS = "installations"
 
 
 class RefusedError(ValueError):
@@ -84,6 +96,25 @@ class FileSnapshot:
     existed: bool
     payload: bytes | None
     mode: int | None
+    device: int | None = None
+    inode: int | None = None
+    size: int | None = None
+
+    @property
+    def sha256(self) -> str | None:
+        return None if self.payload is None else _digest(self.payload)
+
+
+@dataclass(frozen=True)
+class StateWritePlan:
+    path: Path
+    desired_bytes: bytes
+    before: FileSnapshot
+    plan_hash: str
+
+    @property
+    def changed(self) -> bool:
+        return self.before.payload != self.desired_bytes or self.before.mode != 0o600
 
 
 @dataclass(frozen=True)
@@ -96,6 +127,19 @@ class SetupWorkflowPlan:
     instruction_plan: InstructionPlan
     target_request: InstructionTargetRequest
     installation_id: str
+    state_id: str
+    state_document: dict[str, Any]
+    state_plan: StateWritePlan
+
+
+@dataclass(frozen=True)
+class RuntimeContext:
+    paths: StoragePaths
+    state_path: Path
+    config: dict[str, Any]
+    state: dict[str, Any]
+    target_request: InstructionTargetRequest
+    project_root: Path
 
 
 def interpret_capability_map_intent(query: str) -> str:
@@ -222,9 +266,35 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 def _snapshot(path: Path) -> FileSnapshot:
     try:
+        before = os.lstat(path)
+        if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+            raise ValueError("workflow target must be a physical regular file")
         payload = _read_regular(path)
-        mode = stat.S_IMODE(os.stat(path, follow_symlinks=False).st_mode)
-        return FileSnapshot(True, payload, mode)
+        after = os.lstat(path)
+        if (
+            before.st_dev,
+            before.st_ino,
+            before.st_mode,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        ) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_mode,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        ):
+            raise ValueError("workflow target changed while snapshotting")
+        return FileSnapshot(
+            True,
+            payload,
+            stat.S_IMODE(after.st_mode),
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+        )
     except FileNotFoundError:
         return FileSnapshot(False, None, None)
 
@@ -239,8 +309,13 @@ def _artifact_paths(paths: StoragePaths) -> dict[str, Path]:
     }
 
 
-def _snapshots(paths: StoragePaths) -> dict[Path, FileSnapshot]:
-    return {path: _snapshot(path) for path in _artifact_paths(paths).values()}
+def _snapshots(
+    paths: StoragePaths, *, state_path: Path | None = None
+) -> dict[Path, FileSnapshot]:
+    targets = list(_artifact_paths(paths).values())
+    if state_path is not None:
+        targets.append(state_path)
+    return {path: _snapshot(path) for path in targets}
 
 
 def _atomic_restore(path: Path, payload: bytes, mode: int) -> None:
@@ -256,31 +331,80 @@ def _atomic_restore(path: Path, payload: bytes, mode: int) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
-    os.replace(temporary, path)
+    try:
+        os.link(temporary, path, follow_symlinks=False)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+
+def _matches_committed(current: FileSnapshot, committed: FileSnapshot) -> bool:
+    return bool(
+        current.existed
+        and committed.existed
+        and current.device == committed.device
+        and current.inode == committed.inode
+        and current.size == committed.size
+        and current.sha256 == committed.sha256
+    )
 
 
 def _restore_after_failure(
-    snapshots: Mapping[Path, FileSnapshot], *, recovery_key: str
-) -> tuple[Path, ...]:
-    """Restore prior targets and retain every displaced file beside its target."""
+    snapshots: Mapping[Path, FileSnapshot],
+    committed: Mapping[Path, FileSnapshot],
+    *,
+    recovery_key: str,
+) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+    """Restore only transaction-owned files and preserve external replacements."""
 
     recovery_directories: set[Path] = set()
+    conflicts: list[Path] = []
     for target, previous in snapshots.items():
+        installed = committed.get(target)
+        if installed is None:
+            continue
+        try:
+            current = _snapshot(target)
+        except (OSError, ValueError):
+            conflicts.append(target)
+            continue
+        if not _matches_committed(current, installed):
+            conflicts.append(target)
+            continue
         recovery = target.parent / ".vantasma-workflow-recovery" / recovery_key
-        current_exists = target.exists()
-        if current_exists:
-            recovery.mkdir(parents=True, exist_ok=True)
-            destination = recovery / target.name
-            index = 1
-            while destination.exists():
-                destination = recovery / f"{target.name}.{index}"
-                index += 1
+        recovery.mkdir(parents=True, exist_ok=True)
+        destination = recovery / target.name
+        index = 1
+        while destination.exists():
+            destination = recovery / f"{target.name}.{index}"
+            index += 1
+        try:
             os.replace(target, destination)
-            recovery_directories.add(recovery)
+            claimed = _snapshot(destination)
+        except (OSError, ValueError):
+            conflicts.append(target)
+            continue
+        if not _matches_committed(claimed, installed):
+            conflicts.append(target)
+            if not target.exists():
+                try:
+                    os.link(destination, target, follow_symlinks=False)
+                except OSError:
+                    pass
+            continue
+        recovery_directories.add(recovery)
         if previous.existed and previous.payload is not None:
             target.parent.mkdir(parents=True, exist_ok=True)
-            _atomic_restore(target, previous.payload, previous.mode or 0o600)
-    return tuple(sorted(recovery_directories, key=str))
+            try:
+                _atomic_restore(target, previous.payload, previous.mode or 0o600)
+            except OSError:
+                conflicts.append(target)
+    return (
+        tuple(sorted(recovery_directories, key=str)),
+        tuple(sorted(set(conflicts), key=str)),
+    )
 
 
 def _selected_agents(value: str) -> tuple[str, ...]:
@@ -307,6 +431,51 @@ def _storage_paths(
         local_root=local_root,
         selected_vault=selected_vault,
     )
+
+
+def _private_namespace_id(public_root: Path, installation_id: str) -> str:
+    return _digest(
+        {
+            "namespace": "capability-installation-v1",
+            "public_root": str(public_root),
+            "installation_id": installation_id,
+        }
+    )[:32]
+
+
+def _namespaced_paths(
+    base_paths: StoragePaths,
+    *,
+    installation_id: str,
+    home: Path,
+    environ: Mapping[str, str],
+) -> StoragePaths:
+    namespace = (
+        base_paths.private_root
+        / _PRIVATE_INSTALLATIONS
+        / _private_namespace_id(base_paths.public_root, installation_id)
+    )
+    return default_storage_paths(
+        home=home,
+        environ=environ,
+        local_root=base_paths.public_root,
+        private_root=namespace,
+    )
+
+
+def _state_path(paths: StoragePaths) -> Path:
+    return paths.private_root / _STATE_FILENAME
+
+
+def _state_id(paths: StoragePaths, installation_id: str) -> str:
+    return "state_" + _private_namespace_id(paths.public_root, installation_id)
+
+
+def _codex_home(environ: Mapping[str, str], *, home: Path) -> Path:
+    raw = environ.get("CODEX_HOME")
+    if not raw:
+        return (home / ".codex").absolute()
+    return _absolute(raw, cwd=home, home=home)
 
 
 def _scan(
@@ -390,7 +559,6 @@ def _installation_id(
         return provided
     evidence = {
         "public_root": str(paths.public_root),
-        "private_root": str(paths.private_root),
         "agents": list(request.agents),
         "scopes": list(request.scopes),
         "project": None if request.project_root is None else str(request.project_root),
@@ -399,78 +567,220 @@ def _installation_id(
 
 
 def _configuration(
-    *, installation_id: str, request: InstructionTargetRequest, mode: str = "setup"
+    *, installation_id: str, state_id: str, mode: str = "setup"
 ) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "mode": mode,
         "installation_id": installation_id,
-        "agents": list(request.agents),
-        "scope": request.scopes[0],
+        "state_id": state_id,
     }
 
 
-def _receipt_markdown(
-    installation_id: str, scan: ScanResult, *, action: str = "setup"
-) -> str:
-    return "\n".join(
-        (
-            "# Capability map setup receipt",
-            "",
-            f"- action: {action}",
-            f"- installation_id: {installation_id}",
-            f"- capabilities: {len(scan.capabilities)}",
-            "- exact runtime paths are retained in the private resolver and command receipt.",
-            "",
-        )
+def _capability_counts(scan: ScanResult) -> dict[str, int]:
+    counts = {"skills": 0, "clis": 0, "mcp": 0, "plugins": 0}
+    labels = {"skill": "skills", "cli": "clis", "mcp": "mcp", "plugin": "plugins"}
+    for capability in scan.capabilities:
+        counts[labels[capability.kind]] += 1
+    counts["unclassified"] = sum(
+        1 for capability in scan.capabilities if not capability.scenes
     )
+    counts["diagnostics"] = len(scan.diagnostics)
+    counts["capabilities"] = len(scan.capabilities)
+    return counts
+
+
+def _receipt_markdown(
+    installation_id: str,
+    state_id: str,
+    scan: ScanResult,
+    instruction_plan: InstructionPlan,
+) -> str:
+    counts = _capability_counts(scan)
+    lines = [
+        "# Capability map setup receipt",
+        "",
+        "## Public artifacts",
+        "",
+        "Selected location: `<selected-public-storage>`.",
+        "- map: `本机能力地图.md`",
+        "- inventory: `capability-inventory.json`",
+        "- config: `capability-map.config.json`",
+        "- receipt: `setup-receipt.md`",
+        "",
+        "## Private runtime state",
+        "",
+        f"- installation: `{installation_id}`",
+        f"- state: `{state_id}`",
+        "- resolver and installation state are private 0600 files in an opaque namespace.",
+        "- exact private paths are returned only by the confirmed apply command.",
+        "",
+        "## Counts",
+        "",
+    ]
+    for label in (
+        "skills",
+        "clis",
+        "mcp",
+        "plugins",
+        "unclassified",
+        "diagnostics",
+    ):
+        lines.append(f"- {label}: {counts[label]}")
+    lines.extend(["", "## Agent instruction targets", ""])
+    for operation in instruction_plan.operations:
+        lines.append(
+            f"- {operation.target.agent}/{operation.target.scope}: "
+            f"`{sanitize_text(operation.target.path.name, max_length=128)}`"
+        )
+    lines.extend(
+        [
+            "- backup manifest: private transaction backup; exact location is returned by apply.",
+            "",
+            "## Next steps",
+            "",
+            "Start a new session after setup so Agent instructions are reloaded.",
+            "Natural language examples:",
+            "- “能力地图怎么用”",
+            "- “刷新能力地图”",
+            "- “迁移能力地图”",
+            "- “卸载能力地图”",
+            "",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def _artifacts(
     *,
     scan: ScanResult,
     installation_id: str,
-    request: InstructionTargetRequest,
-    action: str = "setup",
+    state_id: str,
+    instruction_plan: InstructionPlan,
+    mode: str = "setup",
 ) -> PublicArtifacts:
     return PublicArtifacts(
         scan.map_markdown,
         scan.inventory_text,
         _configuration(
             installation_id=installation_id,
-            request=request,
+            state_id=state_id,
+            mode=mode,
         ),
-        _receipt_markdown(installation_id, scan, action=action),
+        _receipt_markdown(installation_id, state_id, scan, instruction_plan),
     )
 
 
-def _current_storage_state(paths: StoragePaths) -> dict[str, dict[str, Any]]:
+def _current_storage_state(
+    paths: StoragePaths, *, state_path: Path | None = None
+) -> dict[str, dict[str, Any]]:
     state: dict[str, dict[str, Any]] = {}
-    for label, path in _artifact_paths(paths).items():
+    targets = _artifact_paths(paths)
+    if state_path is not None:
+        targets = {**targets, "state": state_path}
+    for label, path in targets.items():
         snapshot = _snapshot(path)
         state[label] = {
             "exists": snapshot.existed,
-            "sha256": None if snapshot.payload is None else _digest(snapshot.payload),
+            "sha256": snapshot.sha256,
             "mode": snapshot.mode,
         }
     return state
 
 
-def _desired_hashes(
+def _desired_storage_bytes(
     paths: StoragePaths, artifacts: PublicArtifacts, scan: ScanResult
-) -> dict[str, str]:
-    private = build_private_resolver_document(paths, scan.resolvers)
-    values: dict[str, Any] = {
-        "map": artifacts.map_markdown,
-        "inventory": json.loads(scan.inventory_text),
-        "config": artifacts.config,
-        "receipt": artifacts.receipt_markdown,
-        "resolver": private,
-    }
+) -> dict[str, bytes]:
+    records = tuple(scan.resolvers)
+    exact_values = _exact_values(paths, records)
     return {
-        key: _digest(value if isinstance(value, str) else _canonical(value))
-        for key, value in values.items()
+        "map": _sanitize_markdown_document(
+            artifacts.map_markdown, exact_values=exact_values
+        ).encode("utf-8"),
+        "inventory": _json_bytes(_parse_public_json(artifacts.inventory, "inventory")),
+        "config": _json_bytes(_parse_public_json(artifacts.config, "config")),
+        "receipt": _sanitize_markdown_document(
+            artifacts.receipt_markdown, exact_values=exact_values
+        ).encode("utf-8"),
+        "resolver": _json_bytes(build_private_resolver_document(paths, records)),
     }
+
+
+def _runtime_state_document(
+    *,
+    paths: StoragePaths,
+    installation_id: str,
+    state_id: str,
+    project_root: Path,
+    request: InstructionTargetRequest,
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "installation_id": installation_id,
+        "state_id": state_id,
+        "public_root": str(paths.public_root),
+        "project_root": str(project_root),
+        "home": str(request.home),
+        "codex_home": str(request.codex_home),
+        "agents": list(request.agents),
+        "scope": request.scopes[0],
+        "target_request": request.to_private_dict(),
+    }
+
+
+def _state_write_plan(path: Path, document: Mapping[str, Any]) -> StateWritePlan:
+    desired = _json_bytes(document)
+    before = _snapshot(path)
+    plan_hash = _digest(
+        {
+            "path": str(path),
+            "before": {
+                "exists": before.existed,
+                "sha256": before.sha256,
+                "mode": before.mode,
+            },
+            "desired_sha256": _digest(desired),
+            "desired_mode": 0o600,
+        }
+    )
+    return StateWritePlan(path, desired, before, plan_hash)
+
+
+def _state_transition(plan: StateWritePlan) -> tuple[Any, ...]:
+    return (
+        str(plan.path),
+        plan.before.existed,
+        plan.before.sha256,
+        plan.before.mode,
+        _digest(plan.desired_bytes),
+    )
+
+
+def _apply_state_plan(plan: StateWritePlan) -> TransactionReceipt:
+    current = _state_write_plan(plan.path, json.loads(plan.desired_bytes))
+    if _state_transition(current) != _state_transition(plan):
+        raise WorkflowError("stale private installation state")
+    if not current.changed:
+        return TransactionReceipt(current.plan_hash, (), None, None)
+    before = current.before
+    mutation = FileMutation(
+        path=current.path,
+        operation="update" if before.existed else "install",
+        expected_exists=before.existed,
+        expected_original_sha256=before.sha256,
+        original_bytes=before.payload or b"",
+        target_bytes=current.desired_bytes,
+        mode=0o600,
+        newline="LF",
+        parent_evidence=capture_directory_evidence(current.path.parent),
+    )
+    backup_root = current.path.parent / "state-backups"
+    return apply_file_transaction(
+        (mutation,),
+        backup_root=backup_root,
+        backup_root_evidence=capture_directory_evidence(backup_root),
+        plan_hash=current.plan_hash,
+    )
 
 
 def _build_setup_plan(
@@ -480,32 +790,35 @@ def _build_setup_plan(
     cwd: Path,
     environ: Mapping[str, str],
 ) -> SetupWorkflowPlan:
-    paths = _storage_paths(
+    base_paths = _storage_paths(
         storage=args.storage,
         vault=args.vault,
         home=home,
         cwd=cwd,
         environ=environ,
     )
-    project = _absolute(args.project, cwd=cwd, home=home)
+    project = _absolute(args.project, cwd=cwd, home=home).resolve(strict=False)
     agents = _selected_agents(args.agents)
     request = InstructionTargetRequest(
-        home=home,
+        home=home.resolve(strict=False),
         project_root=project if args.scope == "project" else None,
+        codex_home=_codex_home(environ, home=home).resolve(strict=False),
         agents=agents,
         scopes=(args.scope,),
     )
-    installation_id = _installation_id(paths, request, args.installation_id)
+    installation_id = _installation_id(base_paths, request, args.installation_id)
+    paths = _namespaced_paths(
+        base_paths,
+        installation_id=installation_id,
+        home=home,
+        environ=environ,
+    )
+    state_id = _state_id(paths, installation_id)
     scan = _scan(
         home=home,
         project=project,
         cwd=cwd,
         environ=environ,
-    )
-    artifacts = _artifacts(
-        scan=scan,
-        installation_id=installation_id,
-        request=request,
     )
     instruction_plan = build_instruction_plan(
         request,
@@ -514,14 +827,36 @@ def _build_setup_plan(
         paths.resolver_path,
         backup_root=paths.private_root / "instruction-backups",
     )
-    current = _current_storage_state(paths)
-    desired = _desired_hashes(paths, artifacts, scan)
+    artifacts = _artifacts(
+        scan=scan,
+        installation_id=installation_id,
+        state_id=state_id,
+        instruction_plan=instruction_plan,
+    )
+    state_document = _runtime_state_document(
+        paths=paths,
+        installation_id=installation_id,
+        state_id=state_id,
+        project_root=project,
+        request=request,
+    )
+    state_plan = _state_write_plan(_state_path(paths), state_document)
+    current = _current_storage_state(paths, state_path=state_plan.path)
+    desired_bytes = _desired_storage_bytes(paths, artifacts, scan)
+    desired = {
+        **{label: _digest(payload) for label, payload in desired_bytes.items()},
+        "state": _digest(state_plan.desired_bytes),
+    }
     changes = [
         label
         for label in _ARTIFACT_LABELS
         if current[label]["sha256"] != desired[label]
+        or (label == "resolver" and current[label]["mode"] != 0o600)
     ]
+    if state_plan.changed:
+        changes.append("state")
     exact_paths = {label: str(path) for label, path in _artifact_paths(paths).items()}
+    exact_paths["state"] = str(state_plan.path)
     hash_input = {
         "schema_version": 1,
         "installation_id": installation_id,
@@ -529,20 +864,28 @@ def _build_setup_plan(
         "desired_hashes": desired,
         "current": current,
         "instruction_plan_hash": instruction_plan.plan_hash,
+        "state_plan_hash": state_plan.plan_hash,
     }
     plan_hash = _digest(hash_input)
+    counts = _capability_counts(scan)
+    counts.update(
+        {
+            "storage_changes": len(
+                [label for label in changes if label in _ARTIFACT_LABELS]
+            ),
+            "state_changes": int("state" in changes),
+            "instruction_changes": len(instruction_plan.changed_operations),
+        }
+    )
     public = {
         "schema_version": 1,
         "action": "setup",
         "installation_id": installation_id,
         "paths": exact_paths,
-        "counts": {
-            "capabilities": len(scan.capabilities),
-            "diagnostics": len(scan.diagnostics),
-            "storage_changes": len(changes),
-            "instruction_changes": len(instruction_plan.changed_operations),
-        },
+        "state_id": state_id,
+        "counts": counts,
         "changes": changes,
+        "desired_hashes": desired,
         "backups": [str(instruction_plan.backup_root)],
         "instruction_operations": [
             {
@@ -565,17 +908,29 @@ def _build_setup_plan(
         instruction_plan,
         request,
         installation_id,
+        state_id,
+        state_document,
+        state_plan,
     )
 
 
 def _apply_storage_then_instructions(plan: SetupWorkflowPlan) -> dict[str, Any]:
-    before = _snapshots(plan.paths)
-    storage_result = write_storage_bundle(
-        plan.paths,
-        plan.artifacts,
-        plan.scan.resolvers,
-    )
+    before = _snapshots(plan.paths, state_path=plan.state_plan.path)
+    committed: dict[Path, FileSnapshot] = {}
     try:
+        storage_result = write_storage_bundle(
+            plan.paths,
+            plan.artifacts,
+            plan.scan.resolvers,
+        )
+        committed.update(_snapshots(plan.paths))
+        current_state_plan = _state_write_plan(
+            plan.state_plan.path, plan.state_document
+        )
+        if _state_transition(current_state_plan) != _state_transition(plan.state_plan):
+            raise WorkflowError("private installation state changed after storage preparation")
+        state_result = _apply_state_plan(current_state_plan)
+        committed[plan.state_plan.path] = _snapshot(plan.state_plan.path)
         current_instruction_plan = build_instruction_plan(
             plan.target_request,
             plan.installation_id,
@@ -592,17 +947,28 @@ def _apply_storage_then_instructions(plan: SetupWorkflowPlan) -> dict[str, Any]:
             confirmed=True,
             expected_plan_hash=current_instruction_plan.plan_hash,
         )
-    except BaseException:
-        _restore_after_failure(before, recovery_key=plan.plan_hash[:24])
+    except BaseException as error:
+        _, conflicts = _restore_after_failure(
+            before,
+            committed,
+            recovery_key=plan.plan_hash[:24],
+        )
+        if conflicts:
+            raise WorkflowError(
+                f"{error}; compensation_conflict: "
+                + ", ".join(path.name for path in conflicts)
+            ) from error
         raise
+    hashes = dict(sorted(storage_result.hashes.items()))
     return {
         "status": "installed",
         "installation_id": plan.installation_id,
         "plan_hash": plan.plan_hash,
         "generation_id": storage_result.generation_id,
-        "hashes": dict(sorted(storage_result.hashes.items())),
+        "hashes": hashes,
         "paths": {
             **{label: str(path) for label, path in _artifact_paths(plan.paths).items()},
+            "state": str(plan.state_plan.path),
             "instruction_targets": [
                 str(operation.target.path)
                 for operation in plan.instruction_plan.operations
@@ -611,6 +977,16 @@ def _apply_storage_then_instructions(plan: SetupWorkflowPlan) -> dict[str, Any]:
                 None
                 if instruction_result.manifest_path is None
                 else str(instruction_result.manifest_path)
+            ),
+            "instruction_backup": str(
+                instruction_result.backup_directory or current_instruction_plan.backup_root
+            ),
+            "state_manifest": (
+                None if state_result.manifest_path is None else str(state_result.manifest_path)
+            ),
+            "state_backup": str(
+                state_result.backup_directory
+                or plan.state_plan.path.parent / "state-backups"
             ),
         },
         "counts": plan.public["counts"],
@@ -635,36 +1011,89 @@ def _instruction_transition(plan: InstructionPlan) -> tuple[tuple[Any, ...], ...
     )
 
 
+def _opaque_identifier(value: Any, prefix: str) -> str:
+    allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+    if (
+        not isinstance(value, str)
+        or not value.startswith(prefix)
+        or len(value) > 128
+        or any(character not in allowed for character in value)
+    ):
+        raise WorkflowError("capability map contains an invalid opaque identifier")
+    return value
+
+
 def _config_for(paths: StoragePaths) -> dict[str, Any]:
     try:
         config = _read_json(paths.config_path)
     except FileNotFoundError as error:
         raise WorkflowError("capability map is not installed at the selected storage") from error
-    installation_id = config.get("installation_id")
-    agents = config.get("agents")
-    scope = config.get("scope")
     if (
         config.get("schema_version") != 1
-        or not isinstance(installation_id, str)
-        or not isinstance(agents, list)
-        or not agents
-        or any(item not in {"codex", "claude"} for item in agents)
-        or scope not in {"user", "project"}
+        or config.get("mode") != "setup"
+        or set(config)
+        != {"schema_version", "mode", "installation_id", "state_id"}
     ):
         raise WorkflowError("capability map config is invalid")
+    _opaque_identifier(config.get("installation_id"), "inst_")
+    _opaque_identifier(config.get("state_id"), "state_")
     return config
 
 
-def _request_from_config(
-    config: Mapping[str, Any], *, home: Path, cwd: Path
-) -> InstructionTargetRequest:
-    scope = str(config["scope"])
-    return InstructionTargetRequest(
+def _runtime_context(
+    base_paths: StoragePaths,
+    *,
+    home: Path,
+    environ: Mapping[str, str],
+) -> RuntimeContext:
+    config = _config_for(base_paths)
+    installation_id = str(config["installation_id"])
+    paths = _namespaced_paths(
+        base_paths,
+        installation_id=installation_id,
         home=home,
-        project_root=cwd if scope == "project" else None,
-        agents=tuple(config["agents"]),
-        scopes=(scope,),
+        environ=environ,
     )
+    expected_state_id = _state_id(paths, installation_id)
+    if not hmac.compare_digest(str(config["state_id"]), expected_state_id):
+        raise WorkflowError("capability map state reference does not match storage")
+    state_path = _state_path(paths)
+    state = _read_json(state_path)
+    if stat.S_IMODE(os.stat(state_path, follow_symlinks=False).st_mode) != 0o600:
+        raise WorkflowError("private installation state must use mode 0600")
+    request_raw = state.get("target_request")
+    if (
+        state.get("schema_version") != 1
+        or state.get("installation_id") != installation_id
+        or state.get("state_id") != expected_state_id
+        or state.get("public_root") != str(paths.public_root)
+        or not isinstance(request_raw, dict)
+    ):
+        raise WorkflowError("private installation state is invalid")
+    try:
+        request = InstructionTargetRequest(
+            home=Path(request_raw["home"]),
+            project_root=(
+                None
+                if request_raw.get("project_root") is None
+                else Path(request_raw["project_root"])
+            ),
+            codex_home=Path(request_raw["codex_home"]),
+            agents=tuple(request_raw["agents"]),
+            scopes=tuple(request_raw["scopes"]),
+        )
+        project_root = Path(state["project_root"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise WorkflowError("private installation state target request is invalid") from error
+    if (
+        str(request.home) != state.get("home")
+        or str(request.codex_home) != state.get("codex_home")
+        or list(request.agents) != state.get("agents")
+        or request.scopes[0] != state.get("scope")
+        or not project_root.is_absolute()
+    ):
+        raise WorkflowError("private installation state target request does not match")
+    return RuntimeContext(paths, state_path, config, state, request, project_root)
 
 
 def _capability_from_public(raw: Any) -> Capability:
@@ -760,27 +1189,30 @@ def _handle_scan(
     if args.output_dir is not None:
         if args.confirmed is not True:
             raise RefusedError("--confirmed is required with --output-dir")
-        paths = default_storage_paths(
+        base_paths = default_storage_paths(
             home=home,
             environ=environ,
             local_root=_absolute(args.output_dir, cwd=cwd, home=home),
         )
-        request = InstructionTargetRequest(
+        installation_id = "scan_" + _digest(str(base_paths.public_root))[:24]
+        paths = _namespaced_paths(
+            base_paths,
+            installation_id=installation_id,
             home=home,
-            project_root=project,
-            agents=("codex",),
-            scopes=("project",),
+            environ=environ,
         )
-        installation_id = "scan_" + _digest(str(paths.public_root))[:24]
+        state_id = _state_id(paths, installation_id)
         artifacts = PublicArtifacts(
             result.map_markdown,
             result.inventory_text,
             _configuration(
                 installation_id=installation_id,
-                request=request,
+                state_id=state_id,
                 mode="scan",
             ),
-            _receipt_markdown(installation_id, result, action="scan"),
+            "# Capability map scan receipt\n\n"
+            f"- installation: `{installation_id}`\n"
+            f"- private namespace: `{state_id}`\n",
         )
         written = write_storage_bundle(paths, artifacts, result.resolvers)
         inventory["written"] = {
@@ -809,8 +1241,21 @@ def _handle_setup(
     return _apply_storage_then_instructions(plan)
 
 
-def _status_payload(paths: StoragePaths) -> dict[str, Any]:
+def _status_payload(
+    base_paths: StoragePaths,
+    *,
+    home: Path,
+    environ: Mapping[str, str],
+) -> dict[str, Any]:
+    context: RuntimeContext | None = None
+    try:
+        context = _runtime_context(base_paths, home=home, environ=environ)
+        paths = context.paths
+    except (FileNotFoundError, OSError, WorkflowError, ValueError):
+        paths = base_paths
     path_map = _artifact_paths(paths)
+    if context is not None:
+        path_map["state"] = context.state_path
     files: dict[str, dict[str, Any]] = {}
     for label, path in path_map.items():
         try:
@@ -821,14 +1266,11 @@ def _status_payload(paths: StoragePaths) -> dict[str, Any]:
             files[label] = {"exists": False, "sha256": None, "invalid": True}
         else:
             files[label] = {"exists": True, "sha256": _digest(payload)}
-    config: dict[str, Any] | None = None
-    try:
-        config = _config_for(paths)
-    except WorkflowError:
-        pass
     return {
-        "installed": config is not None and all(item["exists"] for item in files.values()),
-        "installation_id": None if config is None else config["installation_id"],
+        "installed": context is not None and all(item["exists"] for item in files.values()),
+        "installation_id": (
+            None if context is None else context.config["installation_id"]
+        ),
         "files": files,
     }
 
@@ -841,24 +1283,40 @@ def _handle_refresh(
 ) -> dict[str, Any]:
     if not args.dry_run and not args.confirmed:
         raise RefusedError("refresh requires --dry-run or --confirmed")
-    paths = _storage_paths(
+    base_paths = _storage_paths(
         storage=args.storage,
         vault=args.vault,
         home=home,
         cwd=cwd,
         environ=environ,
     )
-    config = _config_for(paths)
-    request = _request_from_config(config, home=home, cwd=cwd)
-    scan = _scan(home=home, project=cwd, cwd=cwd, environ=environ)
+    context = _runtime_context(base_paths, home=home, environ=environ)
+    paths = context.paths
+    installation_id = str(context.config["installation_id"])
+    scan = _scan(
+        home=home,
+        project=context.project_root,
+        cwd=context.project_root,
+        environ=environ,
+    )
+    instruction_plan = build_instruction_plan(
+        context.target_request,
+        installation_id,
+        paths.map_path,
+        paths.resolver_path,
+        backup_root=paths.private_root / "instruction-backups",
+    )
     artifacts = _artifacts(
         scan=scan,
-        installation_id=str(config["installation_id"]),
-        request=request,
-        action="refresh",
+        installation_id=installation_id,
+        state_id=str(context.config["state_id"]),
+        instruction_plan=instruction_plan,
     )
     current = _current_storage_state(paths)
-    desired = _desired_hashes(paths, artifacts, scan)
+    desired = {
+        label: _digest(payload)
+        for label, payload in _desired_storage_bytes(paths, artifacts, scan).items()
+    }
     changes = [
         label
         for label in _ARTIFACT_LABELS
@@ -867,7 +1325,7 @@ def _handle_refresh(
     plan_hash = _digest(
         {
             "action": "refresh",
-            "installation_id": config["installation_id"],
+            "installation_id": installation_id,
             "current": current,
             "desired": desired,
         }
@@ -876,11 +1334,7 @@ def _handle_refresh(
         "status": "dry-run" if args.dry_run else "refreshed",
         "plan_hash": plan_hash,
         "changes": changes,
-        "counts": {
-            "capabilities": len(scan.capabilities),
-            "diagnostics": len(scan.diagnostics),
-            "storage_changes": len(changes),
-        },
+        "counts": {**_capability_counts(scan), "storage_changes": len(changes)},
     }
     if args.dry_run:
         return payload
@@ -889,6 +1343,7 @@ def _handle_refresh(
     payload["paths"] = {
         label: str(path) for label, path in _artifact_paths(paths).items()
     }
+    payload["paths"]["state"] = str(context.state_path)
     return payload
 
 
@@ -900,30 +1355,37 @@ def _handle_migrate(
 ) -> dict[str, Any]:
     if not args.dry_run and not args.confirmed:
         raise RefusedError("migrate requires --dry-run or --confirmed")
-    old_paths = _storage_paths(
+    old_base_paths = _storage_paths(
         storage=args.storage,
         vault=args.vault,
         home=home,
         cwd=cwd,
         environ=environ,
     )
-    config = _config_for(old_paths)
-    new_paths = default_storage_paths(
+    context = _runtime_context(old_base_paths, home=home, environ=environ)
+    old_paths = context.paths
+    new_base_paths = default_storage_paths(
         home=home,
         environ=environ,
         local_root=_absolute(args.to, cwd=cwd, home=home),
     )
+    installation_id = str(context.config["installation_id"])
+    new_paths = _namespaced_paths(
+        new_base_paths,
+        installation_id=installation_id,
+        home=home,
+        environ=environ,
+    )
     if new_paths.public_root == old_paths.public_root:
         raise RefusedError("migration destination must differ from current storage")
-    request = _request_from_config(config, home=home, cwd=cwd)
-    scan = _scan(home=home, project=cwd, cwd=cwd, environ=environ)
-    installation_id = str(config["installation_id"])
-    artifacts = _artifacts(
-        scan=scan,
-        installation_id=installation_id,
-        request=request,
-        action="migrate",
+    request = context.target_request
+    scan = _scan(
+        home=home,
+        project=context.project_root,
+        cwd=context.project_root,
+        environ=environ,
     )
+    new_state_id = _state_id(new_paths, installation_id)
     instruction_plan = build_instruction_plan(
         request,
         installation_id,
@@ -931,8 +1393,30 @@ def _handle_migrate(
         new_paths.resolver_path,
         backup_root=new_paths.private_root / "instruction-backups",
     )
-    current = _current_storage_state(new_paths)
-    desired = _desired_hashes(new_paths, artifacts, scan)
+    artifacts = _artifacts(
+        scan=scan,
+        installation_id=installation_id,
+        state_id=new_state_id,
+        instruction_plan=instruction_plan,
+    )
+    state_document = _runtime_state_document(
+        paths=new_paths,
+        installation_id=installation_id,
+        state_id=new_state_id,
+        project_root=context.project_root,
+        request=request,
+    )
+    state_plan = _state_write_plan(_state_path(new_paths), state_document)
+    current = _current_storage_state(new_paths, state_path=state_plan.path)
+    desired = {
+        **{
+            label: _digest(payload)
+            for label, payload in _desired_storage_bytes(
+                new_paths, artifacts, scan
+            ).items()
+        },
+        "state": _digest(state_plan.desired_bytes),
+    }
     plan_hash = _digest(
         {
             "action": "migrate",
@@ -941,6 +1425,7 @@ def _handle_migrate(
             "current": current,
             "desired": desired,
             "instruction_plan_hash": instruction_plan.plan_hash,
+            "state_plan_hash": state_plan.plan_hash,
         }
     )
     payload = {
@@ -951,7 +1436,7 @@ def _handle_migrate(
         "plan_hash": plan_hash,
         "changes": [
             label
-            for label in _ARTIFACT_LABELS
+            for label in (*_ARTIFACT_LABELS, "state")
             if current[label]["sha256"] != desired[label]
         ],
         "instruction_operations": [
@@ -964,9 +1449,16 @@ def _handle_migrate(
     }
     if args.dry_run:
         return payload
-    before = _snapshots(new_paths)
-    storage_result = write_storage_bundle(new_paths, artifacts, scan.resolvers)
+    before = _snapshots(new_paths, state_path=state_plan.path)
+    committed: dict[Path, FileSnapshot] = {}
     try:
+        storage_result = write_storage_bundle(new_paths, artifacts, scan.resolvers)
+        committed.update(_snapshots(new_paths))
+        current_state_plan = _state_write_plan(state_plan.path, state_document)
+        if _state_transition(current_state_plan) != _state_transition(state_plan):
+            raise WorkflowError("migration state changed after storage preparation")
+        state_result = _apply_state_plan(current_state_plan)
+        committed[state_plan.path] = _snapshot(state_plan.path)
         current_instruction_plan = build_instruction_plan(
             request,
             installation_id,
@@ -983,24 +1475,45 @@ def _handle_migrate(
             confirmed=True,
             expected_plan_hash=current_instruction_plan.plan_hash,
         )
-    except BaseException:
-        _restore_after_failure(before, recovery_key=plan_hash[:24])
+    except BaseException as error:
+        _, conflicts = _restore_after_failure(
+            before, committed, recovery_key=plan_hash[:24]
+        )
+        if conflicts:
+            raise WorkflowError(
+                f"{error}; compensation_conflict: "
+                + ", ".join(path.name for path in conflicts)
+            ) from error
         raise
     payload["generation_id"] = storage_result.generation_id
     payload["paths"] = {
         label: str(path) for label, path in _artifact_paths(new_paths).items()
     }
+    payload["paths"].update(
+        {
+            "state": str(state_plan.path),
+            "state_backup": str(
+                state_result.backup_directory or state_plan.path.parent / "state-backups"
+            ),
+            "instruction_backup": str(current_instruction_plan.backup_root),
+        }
+    )
     return payload
 
 
-def _purge_data(paths: StoragePaths, installation_id: str) -> Path:
+def _purge_data(
+    paths: StoragePaths, installation_id: str, *, state_path: Path
+) -> Path:
     recovery = paths.private_root / "purge-recovery" / (
-        installation_id + "-" + _digest(_current_storage_state(paths))[:16]
+        installation_id
+        + "-"
+        + _digest(_current_storage_state(paths, state_path=state_path))[:16]
     )
     moved: list[tuple[Path, Path]] = []
     try:
         recovery.mkdir(parents=True, exist_ok=False)
-        for label, source in _artifact_paths(paths).items():
+        targets = {**_artifact_paths(paths), "state": state_path}
+        for label, source in targets.items():
             if not source.exists():
                 continue
             destination = recovery / f"{label}-{source.name}"
@@ -1023,16 +1536,17 @@ def _handle_uninstall(
 ) -> dict[str, Any]:
     if not args.dry_run and not args.confirmed:
         raise RefusedError("uninstall requires --dry-run or --confirmed")
-    paths = _storage_paths(
+    base_paths = _storage_paths(
         storage=args.storage,
         vault=args.vault,
         home=home,
         cwd=cwd,
         environ=environ,
     )
-    config = _config_for(paths)
-    request = _request_from_config(config, home=home, cwd=cwd)
-    installation_id = str(config["installation_id"])
+    context = _runtime_context(base_paths, home=home, environ=environ)
+    paths = context.paths
+    request = context.target_request
+    installation_id = str(context.config["installation_id"])
     instruction_plan = build_uninstall_plan(
         request,
         installation_id,
@@ -1062,7 +1576,9 @@ def _handle_uninstall(
         )
     if args.purge_data:
         try:
-            recovery = _purge_data(paths, installation_id)
+            recovery = _purge_data(
+                paths, installation_id, state_path=context.state_path
+            )
         except BaseException:
             reinstall = build_instruction_plan(
                 request,
@@ -1196,7 +1712,7 @@ def main(
                 environ=environment,
             )
         elif args.command in {"status", "paths"}:
-            paths = _storage_paths(
+            base_paths = _storage_paths(
                 storage=args.storage,
                 vault=args.vault,
                 home=injected_home,
@@ -1204,15 +1720,23 @@ def main(
                 environ=environment,
             )
             if args.command == "status":
-                payload = _status_payload(paths)
+                payload = _status_payload(
+                    base_paths, home=injected_home, environ=environment
+                )
             else:
+                context = _runtime_context(
+                    base_paths, home=injected_home, environ=environment
+                )
                 payload = {
                     "paths": {
                         label: str(path)
-                        for label, path in _artifact_paths(paths).items()
+                        for label, path in _artifact_paths(context.paths).items()
                     },
-                    **_status_payload(paths),
+                    **_status_payload(
+                        base_paths, home=injected_home, environ=environment
+                    ),
                 }
+                payload["paths"]["state"] = str(context.state_path)
         elif args.command == "refresh":
             payload = _handle_refresh(
                 args,
@@ -1221,14 +1745,16 @@ def main(
                 environ=environment,
             )
         elif args.command == "route":
-            paths = _storage_paths(
+            base_paths = _storage_paths(
                 storage=args.storage,
                 vault=args.vault,
                 home=injected_home,
                 cwd=injected_cwd,
                 environ=environment,
             )
-            _config_for(paths)
+            context = _runtime_context(
+                base_paths, home=injected_home, environ=environment
+            )
             intent = interpret_capability_map_intent(args.query)
             if intent != "usage" or any(
                 marker in args.query for marker in ("怎么用", "帮助")
@@ -1241,7 +1767,7 @@ def main(
             else:
                 payload = route_query(
                     args.query,
-                    _inventory_capabilities(paths),
+                    _inventory_capabilities(context.paths),
                 ).to_public_dict()
         elif args.command == "migrate":
             payload = _handle_migrate(
