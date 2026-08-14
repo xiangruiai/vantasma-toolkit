@@ -145,9 +145,11 @@ class DocumentationContractTests(unittest.TestCase):
             "不读取 `.env`、凭证存储或命令历史",
             "受支持的 MCP 配置会限长解析",
             "secret values、command、args、URL、headers、env 不采集、不持久化、不输出",
-            "private namespace 始终与公开 artifacts 分层",
+            "private namespace 使用 OS 系统数据目录并与公开 artifacts 分层",
+            "Obsidian 模式保证 private namespace 位于 Vault 外",
             "默认 local 模式位于同一应用数据根的隐藏 `.private` 子树",
-            "自定义目录或 Obsidian 模式位于所选 public root 外",
+            "custom 是否位于 public root 外取决于路径拓扑",
+            "以零写入 setup plan 展示的精确路径为准，确认前审查",
             "不进入 Obsidian",
         ):
             with self.subTest(statement=statement):
@@ -157,6 +159,10 @@ class DocumentationContractTests(unittest.TestCase):
             self.package_docs,
         )
         self.assertNotIn("stays outside the selected public directory", self.skill)
+        self.assertNotIn(
+            "自定义目录或 Obsidian 模式位于所选 public root 外",
+            self.package_docs,
+        )
 
     def test_repository_index_counts_and_v2_description_are_current(self) -> None:
         skill_count = sum(1 for _ in (REPOSITORY_DIR / "skills").rglob("SKILL.md"))

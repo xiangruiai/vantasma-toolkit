@@ -76,7 +76,7 @@ Agent 会先让你选择存储位置、Agent 和作用域，执行零写入计�
 └── installation-state.json
 ```
 
-`capability-resolver.json` 保存执行候选所需的真实位置，`installation-state.json` 保存可恢复的安装状态。private namespace 始终与公开 artifacts 分层且不进入 Obsidian：默认 local 模式位于同一应用数据根的隐藏 `.private` 子树，自定义目录或 Obsidian 模式位于所选 public root 外。Unix 上要求私有文件使用 `0600`。公开库存使用脱敏位置和 opaque ID，但分享前仍应人工检查，因为能力清单本身也是隐私数据。
+`capability-resolver.json` 保存执行候选所需的真实位置，`installation-state.json` 保存可恢复的安装状态。private namespace 使用 OS 系统数据目录并与公开 artifacts 分层，且不进入 Obsidian。Obsidian 模式保证 private namespace 位于 Vault 外；默认 local 模式位于同一应用数据根的隐藏 `.private` 子树；custom 是否位于 public root 外取决于路径拓扑，以零写入 setup plan 展示的精确路径为准，确认前审查。Unix 上要求私有文件使用 `0600`。公开库存使用脱敏位置和 opaque ID，但分享前仍应人工检查，因为能力清单本身也是隐私数据。
 
 ## Agent 与作用域
 

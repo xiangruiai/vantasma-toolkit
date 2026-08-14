@@ -48,7 +48,7 @@ Use the command entrypoint at `"<skill-dir>/scripts/capability_map.py"`. Prefer 
 
 5. Report every precise location returned under `paths`, the capability counts, changed Agent instruction targets and backup locations. Tell the person to start a new Agent session when its instruction file changed.
 
-The public storage contains `本机能力地图.md`, `capability-inventory.json`, `capability-map.config.json`, and `setup-receipt.md`. The private namespace contains `capability-resolver.json` and `installation-state.json`; it is always layered separately from public artifacts and never enters Obsidian. In default local mode it is a hidden `.private` subtree under the same application-data root. In custom-directory and Obsidian modes it is outside the selected public root.
+The public storage contains `本机能力地图.md`, `capability-inventory.json`, `capability-map.config.json`, and `setup-receipt.md`. The private namespace contains `capability-resolver.json` and `installation-state.json` in the OS system-data location, logically layered from public artifacts. Obsidian mode guarantees that it remains outside the Vault. Default local mode uses a hidden `.private` subtree under the same application-data root. With a custom public path, its physical relationship to that root depends on path topology; review the exact paths in the zero-write setup plan before confirmation.
 
 ## Route natural-language work
 
