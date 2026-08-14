@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import os
@@ -172,7 +173,67 @@ class CapabilityMapEntrypointTests(unittest.TestCase):
 
 
 class CapabilityMapWorkflowTests(unittest.TestCase):
-    def test_uninstall_commits_inactive_lifecycle_and_requires_new_id_for_setup(self) -> None:
+    def test_uninstall_refuses_corrupt_managed_block_without_mutation(self) -> None:
+        for purge_data in (False, True):
+            with self.subTest(purge_data=purge_data), tempfile.TemporaryDirectory() as temporary:
+                fixture = WorkflowFixture(Path(temporary))
+                fixture.install()
+                instructions = fixture.project / "AGENTS.md"
+                instructions.write_bytes(
+                    instructions.read_bytes().replace(
+                        b"<!-- vantasma:discover-local-capabilities:end -->", b""
+                    )
+                )
+                before = _snapshot(fixture.base)
+                dry_arguments = [
+                    "uninstall",
+                    "--storage",
+                    str(fixture.storage),
+                    "--dry-run",
+                ]
+                if purge_data:
+                    dry_arguments.append("--purge-data")
+                dry_code, dry_plan, dry_error = fixture.run(*dry_arguments)
+                self.assertEqual((dry_code, dry_error), (0, ""))
+                self.assertEqual(dry_plan["status"], "dry-run")
+                self.assertEqual(_snapshot(fixture.base), before)
+
+                arguments = [
+                    "uninstall",
+                    "--storage",
+                    str(fixture.storage),
+                    "--confirmed",
+                ]
+                if purge_data:
+                    arguments.append("--purge-data")
+
+                code, _, error = fixture.run(*arguments)
+
+                self.assertEqual(code, 2)
+                self.assertIn("instruction plan", error)
+                self.assertEqual(_snapshot(fixture.base), before)
+
+    def test_uninstall_purge_dry_run_reports_data_is_still_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            fixture.install()
+            before = _snapshot(fixture.base)
+
+            code, plan, error = fixture.run(
+                "uninstall",
+                "--storage",
+                str(fixture.storage),
+                "--dry-run",
+                "--purge-data",
+            )
+
+            self.assertEqual((code, error), (0, ""))
+            self.assertEqual(plan["status"], "dry-run")
+            self.assertTrue(plan["data_preserved"])
+            self.assertTrue(plan["would_purge_data"])
+            self.assertEqual(_snapshot(fixture.base), before)
+
+    def test_uninstall_lifecycle_never_reuses_an_installation_namespace(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             fixture = WorkflowFixture(Path(temporary))
             applied = fixture.install()
@@ -186,6 +247,7 @@ class CapabilityMapWorkflowTests(unittest.TestCase):
             state = json.loads(old_state_path.read_text(encoding="utf-8"))
             self.assertEqual(state["status"], "uninstalled")
             self.assertFalse(state["active"])
+            old_state_bytes = old_state_path.read_bytes()
 
             code, status, error = fixture.run(
                 "status", "--storage", str(fixture.storage)
@@ -207,23 +269,22 @@ class CapabilityMapWorkflowTests(unittest.TestCase):
                 self.assertEqual(code, 2, command)
                 self.assertIn("uninstalled", error)
 
-            code, _, error = fixture.run("setup", "plan", *fixture.setup_args())
-            self.assertEqual(code, 2)
-            self.assertIn("new installation id", error)
-            code, plan, error = fixture.run(
+            code, _, error = fixture.run(
                 "setup",
                 "plan",
                 *fixture.setup_args(),
                 "--installation-id",
-                "inst_reinstall",
+                old_installation_id,
             )
+            self.assertEqual(code, 2)
+            self.assertIn("already exists", error)
+
+            code, plan, error = fixture.run("setup", "plan", *fixture.setup_args())
             self.assertEqual((code, error), (0, ""))
             code, reinstalled, error = fixture.run(
                 "setup",
                 "apply",
                 *fixture.setup_args(),
-                "--installation-id",
-                "inst_reinstall",
                 "--confirmed",
                 "--expected-plan-hash",
                 str(plan["plan_hash"]),
@@ -231,10 +292,22 @@ class CapabilityMapWorkflowTests(unittest.TestCase):
             self.assertEqual((code, error), (0, ""))
             self.assertNotEqual(reinstalled["installation_id"], old_installation_id)
             self.assertNotEqual(Path(reinstalled["paths"]["state"]), old_state_path)
-            self.assertEqual(
-                json.loads(old_state_path.read_text(encoding="utf-8"))["status"],
-                "uninstalled",
+            self.assertEqual(old_state_path.read_bytes(), old_state_bytes)
+
+            code, _, error = fixture.run(
+                "uninstall", "--storage", str(fixture.storage), "--confirmed"
             )
+            self.assertEqual((code, error), (0, ""))
+            code, _, error = fixture.run(
+                "setup",
+                "plan",
+                *fixture.setup_args(),
+                "--installation-id",
+                old_installation_id,
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("already exists", error)
+            self.assertEqual(old_state_path.read_bytes(), old_state_bytes)
 
     def test_uninstalled_and_direct_purge_move_complete_owned_namespace(self) -> None:
         for direct in (False, True):
@@ -319,18 +392,29 @@ class CapabilityMapWorkflowTests(unittest.TestCase):
             fixture = WorkflowFixture(Path(temporary))
             applied = fixture.install()
             namespace = Path(applied["paths"]["state"]).parent
-            real_replace = os.replace
+            real_rename = os.rename
             replaced = False
 
-            def replace_namespace(source: object, destination: object) -> None:
+            def replace_namespace(
+                source: object,
+                destination: object,
+                *,
+                src_dir_fd: int | None = None,
+                dst_dir_fd: int | None = None,
+            ) -> None:
                 nonlocal replaced
-                real_replace(source, destination)
-                if not replaced and Path(source) == namespace:
+                real_rename(
+                    source,
+                    destination,
+                    src_dir_fd=src_dir_fd,
+                    dst_dir_fd=dst_dir_fd,
+                )
+                if not replaced and Path(source).name == namespace.name:
                     replaced = True
                     os.symlink("external-owner", namespace)
 
             with mock.patch(
-                "capability_map.os.replace", side_effect=replace_namespace
+                "capability_map.os.rename", side_effect=replace_namespace
             ):
                 code, _, error = fixture.run(
                     "uninstall",
@@ -343,6 +427,93 @@ class CapabilityMapWorkflowTests(unittest.TestCase):
             self.assertIn("purge_conflict", error)
             self.assertTrue(namespace.is_symlink())
             self.assertEqual(os.readlink(namespace), "external-owner")
+
+    def test_purge_recovery_ancestry_and_destination_are_no_clobber(self) -> None:
+        for attack in (
+            "symlink",
+            "ancestor-swap",
+            "pinned-ancestor-swap",
+            "destination",
+        ):
+            with self.subTest(attack=attack), tempfile.TemporaryDirectory() as temporary:
+                fixture = WorkflowFixture(Path(temporary))
+                applied = fixture.install()
+                state_path = Path(applied["paths"]["state"])
+                namespace = state_path.parent
+                private_base = namespace.parent.parent
+                attacker = fixture.base / "attacker-recovery"
+                attacker.mkdir()
+                canary = attacker / "keep.txt"
+                canary.write_text("external recovery owner", encoding="utf-8")
+                attacker_before = _snapshot(attacker)
+                attacker_inode = os.lstat(attacker).st_ino
+                recovery_parent = private_base / "purge-recovery"
+                patcher = contextlib.nullcontext()
+
+                if attack == "symlink":
+                    os.symlink(attacker, recovery_parent)
+                elif attack == "destination":
+                    context = capability_map._runtime_context(
+                        capability_map._storage_paths(
+                            storage=str(fixture.storage),
+                            vault=None,
+                            home=fixture.home,
+                            cwd=fixture.project,
+                            environ=fixture.environ,
+                        ),
+                        home=fixture.home,
+                        environ=fixture.environ,
+                    )
+                    recovery_name = str(applied["installation_id"]) + "-" + capability_map._digest(
+                        capability_map._current_storage_state(
+                            context.paths, state_path=context.state_path
+                        )
+                    )[:16]
+                    destination = recovery_parent / recovery_name
+                    destination.mkdir(parents=True)
+                    (destination / "external.txt").write_text(
+                        "external destination owner", encoding="utf-8"
+                    )
+                else:
+                    real_mkdir = os.mkdir
+                    swapped = False
+                    swap_trigger = (
+                        "public"
+                        if attack == "pinned-ancestor-swap"
+                        else "purge-recovery"
+                    )
+
+                    def mkdir_then_swap(
+                        path: object,
+                        mode: int = 0o777,
+                        *,
+                        dir_fd: int | None = None,
+                    ) -> None:
+                        nonlocal swapped
+                        real_mkdir(path, mode, dir_fd=dir_fd)
+                        if not swapped and Path(path).name == swap_trigger:
+                            swapped = True
+                            os.rename(recovery_parent, private_base / "swapped-recovery")
+                            os.symlink(attacker, recovery_parent)
+
+                    patcher = mock.patch(
+                        "capability_map.os.mkdir", side_effect=mkdir_then_swap
+                    )
+
+                with patcher:
+                    code, _, error = fixture.run(
+                        "uninstall",
+                        "--storage",
+                        str(fixture.storage),
+                        "--confirmed",
+                        "--purge-data",
+                    )
+
+                self.assertEqual(code, 3)
+                self.assertIn("purge", error)
+                self.assertEqual(os.lstat(attacker).st_ino, attacker_inode)
+                self.assertEqual(_snapshot(attacker), attacker_before)
+                self.assertTrue(state_path.is_file())
 
     def test_purge_failure_after_move_rolls_back_owned_data(self) -> None:
         for failure_target in ("map", "namespace"):
@@ -360,19 +531,48 @@ class CapabilityMapWorkflowTests(unittest.TestCase):
                 }
                 namespace = paths["state"].parent
                 fail_source = paths["map"] if failure_target == "map" else namespace
-                real_replace = os.replace
                 failed = False
+                if failure_target == "map":
+                    real_unlink = os.unlink
 
-                def move_then_fail(source: object, destination: object) -> None:
-                    nonlocal failed
-                    real_replace(source, destination)
-                    if not failed and Path(source) == fail_source:
-                        failed = True
-                        raise OSError("synthetic purge move failure")
+                    def move_then_fail(
+                        source: object, *, dir_fd: int | None = None
+                    ) -> None:
+                        nonlocal failed
+                        real_unlink(source, dir_fd=dir_fd)
+                        if not failed and Path(source).name == fail_source.name:
+                            failed = True
+                            raise OSError("synthetic purge move failure")
 
-                with mock.patch(
-                    "capability_map.os.replace", side_effect=move_then_fail
-                ):
+                    patcher = mock.patch(
+                        "capability_map.os.unlink", side_effect=move_then_fail
+                    )
+                else:
+                    real_rename = os.rename
+
+                    def move_then_fail(
+                        source: object,
+                        destination: object,
+                        *,
+                        src_dir_fd: int | None = None,
+                        dst_dir_fd: int | None = None,
+                    ) -> None:
+                        nonlocal failed
+                        real_rename(
+                            source,
+                            destination,
+                            src_dir_fd=src_dir_fd,
+                            dst_dir_fd=dst_dir_fd,
+                        )
+                        if not failed and Path(source).name == fail_source.name:
+                            failed = True
+                            raise OSError("synthetic purge move failure")
+
+                    patcher = mock.patch(
+                        "capability_map.os.rename", side_effect=move_then_fail
+                    )
+
+                with patcher:
                     code, _, error = fixture.run(
                         "uninstall",
                         "--storage",
@@ -692,17 +892,30 @@ class CapabilityMapWorkflowTests(unittest.TestCase):
                 (fixture.project / ".capability-map" / "本机能力地图.md").resolve(),
             )
 
-    def test_planned_hashes_match_written_bytes_and_steady_state_is_noop(self) -> None:
+    def test_planned_hashes_match_written_bytes_and_refresh_is_noop(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             fixture = WorkflowFixture(Path(temporary))
-            applied = fixture.install()
             code, plan, error = fixture.run("setup", "plan", *fixture.setup_args())
             self.assertEqual((code, error), (0, ""))
-            self.assertEqual(plan["changes"], [])
-            self.assertEqual(plan["counts"]["storage_changes"], 0)
-            self.assertEqual(plan["counts"]["state_changes"], 0)
+            code, applied, error = fixture.run(
+                "setup",
+                "apply",
+                *fixture.setup_args(),
+                "--confirmed",
+                "--expected-plan-hash",
+                str(plan["plan_hash"]),
+            )
+            self.assertEqual((code, error), (0, ""))
             for label, expected_hash in plan["desired_hashes"].items():
                 self.assertEqual(_sha256(Path(plan["paths"][label])), expected_hash)
+
+            code, next_plan, error = fixture.run(
+                "setup", "plan", *fixture.setup_args()
+            )
+            self.assertEqual((code, error), (0, ""))
+            self.assertNotEqual(
+                next_plan["installation_id"], plan["installation_id"]
+            )
 
             before = _snapshot(fixture.base)
             code, refresh, error = fixture.run(

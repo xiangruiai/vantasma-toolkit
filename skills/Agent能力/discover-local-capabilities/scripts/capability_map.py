@@ -65,6 +65,10 @@ from capability_map_core.storage import (
 from capability_map_core.transactions import (
     FileMutation,
     TransactionReceipt,
+    _fsync_directory,
+    _open_evidence_directory,
+    _secure_backend_available,
+    _snapshot_at,
     apply_file_transaction,
     capture_directory_evidence,
 )
@@ -464,6 +468,14 @@ def _private_namespace_id(public_root: Path, installation_id: str) -> str:
     )[:32]
 
 
+def _private_namespace_path(paths: StoragePaths, installation_id: str) -> Path:
+    return (
+        paths.private_root
+        / _PRIVATE_INSTALLATIONS
+        / _private_namespace_id(paths.public_root, installation_id)
+    )
+
+
 def _namespaced_paths(
     base_paths: StoragePaths,
     *,
@@ -471,11 +483,7 @@ def _namespaced_paths(
     home: Path,
     environ: Mapping[str, str],
 ) -> StoragePaths:
-    namespace = (
-        base_paths.private_root
-        / _PRIVATE_INSTALLATIONS
-        / _private_namespace_id(base_paths.public_root, installation_id)
-    )
+    namespace = _private_namespace_path(base_paths, installation_id)
     return default_storage_paths(
         home=home,
         environ=environ,
@@ -574,18 +582,43 @@ def _scan(
 def _installation_id(
     paths: StoragePaths, request: InstructionTargetRequest, provided: str | None
 ) -> str:
+    def namespace_exists(installation_id: str) -> bool:
+        try:
+            os.lstat(_private_namespace_path(paths, installation_id))
+        except FileNotFoundError:
+            return False
+        except OSError as error:
+            raise RefusedError(
+                "installation namespace could not be inspected"
+            ) from error
+        return True
+
     if provided is not None:
         try:
-            return _validate_opaque_identifier(provided, "inst_")
+            installation_id = _validate_opaque_identifier(provided, "inst_")
         except ValueError as error:
             raise RefusedError("installation id is invalid") from error
+        if namespace_exists(installation_id):
+            raise RefusedError("installation namespace already exists")
+        return installation_id
     evidence = {
         "public_root": str(paths.public_root),
         "agents": list(request.agents),
         "scopes": list(request.scopes),
         "project": None if request.project_root is None else str(request.project_root),
     }
-    return _validate_opaque_identifier("inst_" + _digest(evidence)[:24], "inst_")
+    base_id = _validate_opaque_identifier(
+        "inst_" + _digest(evidence)[:24], "inst_"
+    )
+    for attempt in range(1024):
+        candidate = (
+            base_id
+            if attempt == 0
+            else "inst_" + _digest({"base_id": base_id, "attempt": attempt})[:24]
+        )
+        if not namespace_exists(candidate):
+            return candidate
+    raise RefusedError("no unused installation namespace is available")
 
 
 def _configuration(
@@ -1758,6 +1791,8 @@ def _purge_data(
         or state_path.parent != paths.private_root
     ):
         raise WorkflowError("purge target is not an installation namespace")
+    if not _secure_backend_available() or os.rmdir not in os.supports_dir_fd:
+        raise WorkflowError("secure purge backend is unavailable")
     public_targets = {
         path
         for label, path in _artifact_paths(paths).items()
@@ -1765,135 +1800,355 @@ def _purge_data(
     }
     if set(expected_public) != public_targets:
         raise WorkflowError("purge expected state is incomplete")
-    for source, expected in expected_public.items():
-        if not _matches_committed(_snapshot(source), expected):
-            raise WorkflowError(f"purge_conflict: {source.name}")
+    if any(source.parent != paths.public_root for source in public_targets):
+        raise WorkflowError("purge public target escaped its storage root")
 
-    recovery_parent = paths.private_root.parent.parent / "purge-recovery"
-    recovery = recovery_parent / (
+    private_base = paths.private_root.parent.parent
+    recovery_name = (
         installation_id
         + "-"
         + _digest(_current_storage_state(paths, state_path=state_path))[:16]
     )
-    public_recovery = recovery / "public"
-    private_recovery = recovery / "private-namespace"
-    moved: list[tuple[Path, Path, FileSnapshot]] = []
+    recovery = private_base / "purge-recovery" / recovery_name
+    public_evidence = paths.public_root_evidence
+    if public_evidence is None:
+        raise WorkflowError("purge public root evidence is missing")
+    private_base_evidence = capture_directory_evidence(private_base)
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | os.O_DIRECTORY
+        | os.O_NOFOLLOW
+    )
 
-    def restore_no_clobber(source: Path, destination: Path) -> bool:
+    def open_directory_at(parent_fd: int, name: str, label: str) -> int:
         try:
-            os.link(destination, source, follow_symlinks=False)
-        except FileExistsError:
-            return False
-        os.unlink(destination)
-        return True
+            descriptor = os.open(name, flags, dir_fd=parent_fd)
+        except OSError as error:
+            raise WorkflowError(f"purge {label} could not be opened safely") from error
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISDIR(metadata.st_mode):  # pragma: no cover - O_DIRECTORY
+            os.close(descriptor)
+            raise WorkflowError(f"purge {label} is not a physical directory")
+        return descriptor
 
-    try:
-        public_recovery.mkdir(parents=True, exist_ok=False)
-        for source in sorted(public_targets, key=str):
-            expected = expected_public[source]
-            current = _snapshot(source)
-            if not _matches_committed(current, expected):
-                raise WorkflowError(f"purge_conflict: {source.name}")
-            destination = public_recovery / source.name
+    def entry_metadata(parent_fd: int, name: str) -> os.stat_result | None:
+        try:
+            return os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return None
+        except OSError as error:
+            raise WorkflowError("purge entry could not be inspected safely") from error
+
+    def same_directory(
+        parent_fd: int, name: str, expected: os.stat_result
+    ) -> bool:
+        current = entry_metadata(parent_fd, name)
+        return bool(
+            current is not None
+            and not stat.S_ISLNK(current.st_mode)
+            and stat.S_ISDIR(current.st_mode)
+            and current.st_dev == expected.st_dev
+            and current.st_ino == expected.st_ino
+            and current.st_mode == expected.st_mode
+        )
+
+    with contextlib.ExitStack() as stack:
+        private_base_fd = _open_evidence_directory(
+            private_base_evidence, create=False, label="purge private base"
+        )
+        stack.callback(os.close, private_base_fd)
+        public_fd = _open_evidence_directory(
+            public_evidence, create=False, label="purge public root"
+        )
+        stack.callback(os.close, public_fd)
+        installations_fd = open_directory_at(
+            private_base_fd, _PRIVATE_INSTALLATIONS, "installations root"
+        )
+        stack.callback(os.close, installations_fd)
+        namespace_name = paths.private_root.name
+        namespace_fd = open_directory_at(
+            installations_fd, namespace_name, "installation namespace"
+        )
+        stack.callback(os.close, namespace_fd)
+        namespace_metadata = os.fstat(namespace_fd)
+        if not same_directory(
+            installations_fd, namespace_name, namespace_metadata
+        ):
+            raise WorkflowError("purge installation namespace changed")
+
+        moved: list[tuple[str, FileSnapshot]] = []
+        recovery_parent_fd: int | None = None
+        recovery_fd: int | None = None
+        public_recovery_fd: int | None = None
+        recovery_parent_created = False
+        recovery_created = False
+        public_recovery_created = False
+        namespace_moved = False
+        recovery_parent_metadata: os.stat_result | None = None
+        recovery_metadata: os.stat_result | None = None
+        public_recovery_metadata: os.stat_result | None = None
+
+        def snapshot_at(parent_fd: int, name: str) -> FileSnapshot:
             try:
-                os.replace(source, destination)
-            except BaseException as move_error:
-                try:
-                    source_after = _snapshot(source)
-                    claimed = _snapshot(destination)
-                except (OSError, ValueError) as claim_error:
-                    raise WorkflowError(
-                        f"purge_conflict: {source.name}"
-                    ) from claim_error
-                if _matches_committed(source_after, expected):
-                    raise
-                if (
-                    not source_after.existed
-                    and _matches_claimed(claimed, expected)
-                    and restore_no_clobber(source, destination)
-                ):
-                    raise move_error
-                raise WorkflowError(
-                    f"purge_conflict: {source.name}"
-                ) from move_error
-            try:
-                claimed = _snapshot(destination)
+                current = _snapshot_at(parent_fd, name)
             except (OSError, ValueError) as error:
-                raise WorkflowError(f"purge_conflict: {source.name}") from error
-            if not _matches_claimed(claimed, expected):
-                raise WorkflowError(f"purge_conflict: {source.name}")
-            moved.append((source, destination, expected))
-        namespace_metadata = os.lstat(paths.private_root)
-
-        def matches_namespace(path: Path) -> bool:
-            try:
-                current_metadata = os.lstat(path)
-            except OSError:
-                return False
-            return bool(
-                not stat.S_ISLNK(current_metadata.st_mode)
-                and stat.S_ISDIR(current_metadata.st_mode)
-                and current_metadata.st_dev == namespace_metadata.st_dev
-                and current_metadata.st_ino == namespace_metadata.st_ino
-                and current_metadata.st_mode == namespace_metadata.st_mode
+                raise WorkflowError(f"purge_conflict: {name}") from error
+            return FileSnapshot(
+                current.existed,
+                current.payload,
+                current.mode,
+                current.device,
+                current.inode,
+                current.size,
+                current.ctime_ns,
             )
 
-        def namespace_absent(path: Path) -> bool:
+        def unlink_claimed(parent_fd: int, name: str, expected: FileSnapshot) -> bool:
             try:
-                os.lstat(path)
-            except FileNotFoundError:
-                return True
-            except OSError:
-                return False
-            return False
-
-        if stat.S_ISLNK(namespace_metadata.st_mode) or not stat.S_ISDIR(
-            namespace_metadata.st_mode
-        ):
-            raise WorkflowError("purge namespace is not a physical directory")
-        try:
-            os.replace(paths.private_root, private_recovery)
-        except BaseException as move_error:
-            if matches_namespace(paths.private_root):
-                raise
-            if namespace_absent(paths.private_root) and matches_namespace(
-                private_recovery
-            ):
+                claimed = snapshot_at(parent_fd, name)
+                if not _matches_claimed(claimed, expected):
+                    return False
+                os.unlink(name, dir_fd=parent_fd)
+                return not snapshot_at(parent_fd, name).existed
+            except BaseException:
                 try:
-                    os.rename(private_recovery, paths.private_root)
-                except OSError as restore_error:
-                    raise WorkflowError(
-                        "purge_conflict: private namespace"
-                    ) from restore_error
-                if matches_namespace(paths.private_root):
-                    raise move_error
-            raise WorkflowError("purge_conflict: private namespace") from move_error
-        if not namespace_absent(paths.private_root) or not matches_namespace(
-            private_recovery
-        ):
-            raise WorkflowError("purge_conflict: private namespace")
-    except BaseException as error:
-        conflicts: list[str] = []
-        for source, destination, expected in reversed(moved):
+                    return not snapshot_at(parent_fd, name).existed
+                except BaseException:
+                    return False
+
+        def restore_public(name: str, expected: FileSnapshot) -> bool:
+            if public_recovery_fd is None:
+                return False
             try:
-                claimed = _snapshot(destination)
-            except (OSError, ValueError):
-                conflicts.append(source.name)
-                continue
-            if not _matches_claimed(claimed, expected) or not restore_no_clobber(
-                source, destination
+                source = snapshot_at(public_fd, name)
+                claimed = snapshot_at(public_recovery_fd, name)
+                if source.existed or not _matches_claimed(claimed, expected):
+                    return False
+                os.link(
+                    name,
+                    name,
+                    src_dir_fd=public_recovery_fd,
+                    dst_dir_fd=public_fd,
+                    follow_symlinks=False,
+                )
+                restored = snapshot_at(public_fd, name)
+                if not _matches_claimed(restored, expected):
+                    return False
+                return unlink_claimed(public_recovery_fd, name, expected)
+            except BaseException:
+                return False
+
+        def move_public(name: str, expected: FileSnapshot) -> None:
+            if public_recovery_fd is None:  # pragma: no cover - ordered setup
+                raise WorkflowError("purge public recovery is unavailable")
+            current = snapshot_at(public_fd, name)
+            if not _matches_committed(current, expected):
+                raise WorkflowError(f"purge_conflict: {name}")
+            if snapshot_at(public_recovery_fd, name).existed:
+                raise WorkflowError(f"purge_conflict: {name}")
+            try:
+                os.link(
+                    name,
+                    name,
+                    src_dir_fd=public_fd,
+                    dst_dir_fd=public_recovery_fd,
+                    follow_symlinks=False,
+                )
+            except BaseException as error:
+                raise WorkflowError(f"purge_conflict: {name}") from error
+            claimed = snapshot_at(public_recovery_fd, name)
+            source_after_link = snapshot_at(public_fd, name)
+            if not (
+                _matches_claimed(claimed, expected)
+                and _matches_claimed(source_after_link, expected)
             ):
-                conflicts.append(source.name)
-        for directory in (public_recovery, recovery):
+                if (
+                    claimed.device == source_after_link.device
+                    and claimed.inode == source_after_link.inode
+                ):
+                    unlink_claimed(public_recovery_fd, name, expected)
+                raise WorkflowError(f"purge_conflict: {name}")
             try:
-                os.rmdir(directory)
-            except OSError:
+                os.unlink(name, dir_fd=public_fd)
+            except BaseException as move_error:
+                source_after = snapshot_at(public_fd, name)
+                if not source_after.existed and restore_public(name, expected):
+                    raise move_error
+                if (
+                    _matches_claimed(source_after, expected)
+                    and unlink_claimed(public_recovery_fd, name, expected)
+                ):
+                    raise move_error
+                raise WorkflowError(f"purge_conflict: {name}") from move_error
+            if snapshot_at(public_fd, name).existed or not _matches_claimed(
+                snapshot_at(public_recovery_fd, name), expected
+            ):
+                if restore_public(name, expected):
+                    raise WorkflowError(f"purge_conflict: {name}")
+                raise WorkflowError(f"purge_conflict: {name}")
+            moved.append((name, expected))
+
+        def recovery_chain_matches() -> bool:
+            return bool(
+                recovery_parent_fd is not None
+                and recovery_fd is not None
+                and public_recovery_fd is not None
+                and recovery_parent_metadata is not None
+                and recovery_metadata is not None
+                and public_recovery_metadata is not None
+                and same_directory(
+                    private_base_fd,
+                    "purge-recovery",
+                    recovery_parent_metadata,
+                )
+                and same_directory(
+                    recovery_parent_fd, recovery_name, recovery_metadata
+                )
+                and same_directory(
+                    recovery_fd, "public", public_recovery_metadata
+                )
+            )
+
+        try:
+            try:
+                os.mkdir("purge-recovery", 0o700, dir_fd=private_base_fd)
+                recovery_parent_created = True
+                _fsync_directory(private_base_fd)
+            except FileExistsError:
                 pass
-        if conflicts:
-            raise WorkflowError(
-                "purge_conflict: " + ", ".join(sorted(set(conflicts)))
-            ) from error
-        raise
+            recovery_parent_fd = open_directory_at(
+                private_base_fd, "purge-recovery", "recovery root"
+            )
+            stack.callback(os.close, recovery_parent_fd)
+            recovery_parent_metadata = os.fstat(recovery_parent_fd)
+            try:
+                os.mkdir(recovery_name, 0o700, dir_fd=recovery_parent_fd)
+                recovery_created = True
+                _fsync_directory(recovery_parent_fd)
+            except FileExistsError as error:
+                raise WorkflowError(
+                    "purge recovery destination already exists"
+                ) from error
+            recovery_fd = open_directory_at(
+                recovery_parent_fd, recovery_name, "recovery destination"
+            )
+            stack.callback(os.close, recovery_fd)
+            recovery_metadata = os.fstat(recovery_fd)
+            os.mkdir("public", 0o700, dir_fd=recovery_fd)
+            public_recovery_created = True
+            public_recovery_fd = open_directory_at(
+                recovery_fd, "public", "public recovery"
+            )
+            stack.callback(os.close, public_recovery_fd)
+            public_recovery_metadata = os.fstat(public_recovery_fd)
+
+            if not recovery_chain_matches():
+                raise WorkflowError("purge recovery ancestry changed")
+
+            for source in sorted(public_targets, key=str):
+                if not recovery_chain_matches():
+                    raise WorkflowError("purge recovery ancestry changed")
+                move_public(source.name, expected_public[source])
+
+            if not recovery_chain_matches():
+                raise WorkflowError("purge recovery ancestry changed")
+            if entry_metadata(recovery_fd, "private-namespace") is not None:
+                raise WorkflowError("purge recovery destination already exists")
+            try:
+                os.rename(
+                    namespace_name,
+                    "private-namespace",
+                    src_dir_fd=installations_fd,
+                    dst_dir_fd=recovery_fd,
+                )
+            except BaseException as move_error:
+                if same_directory(
+                    installations_fd, namespace_name, namespace_metadata
+                ) and entry_metadata(recovery_fd, "private-namespace") is None:
+                    raise
+                if (
+                    entry_metadata(installations_fd, namespace_name) is None
+                    and same_directory(
+                        recovery_fd, "private-namespace", namespace_metadata
+                    )
+                ):
+                    try:
+                        os.rename(
+                            "private-namespace",
+                            namespace_name,
+                            src_dir_fd=recovery_fd,
+                            dst_dir_fd=installations_fd,
+                        )
+                    except OSError as restore_error:
+                        raise WorkflowError(
+                            "purge_conflict: private namespace"
+                        ) from restore_error
+                    if same_directory(
+                        installations_fd, namespace_name, namespace_metadata
+                    ):
+                        raise move_error
+                raise WorkflowError(
+                    "purge_conflict: private namespace"
+                ) from move_error
+            if (
+                entry_metadata(installations_fd, namespace_name) is not None
+                or not same_directory(
+                    recovery_fd, "private-namespace", namespace_metadata
+                )
+            ):
+                raise WorkflowError("purge_conflict: private namespace")
+            namespace_moved = True
+            if not recovery_chain_matches():
+                raise WorkflowError("purge recovery ancestry changed")
+            _fsync_directory(public_fd)
+            _fsync_directory(public_recovery_fd)
+            _fsync_directory(installations_fd)
+            _fsync_directory(recovery_fd)
+        except BaseException as error:
+            conflicts: list[str] = []
+            if namespace_moved:
+                if (
+                    entry_metadata(installations_fd, namespace_name) is None
+                    and recovery_fd is not None
+                    and same_directory(
+                        recovery_fd, "private-namespace", namespace_metadata
+                    )
+                ):
+                    try:
+                        os.rename(
+                            "private-namespace",
+                            namespace_name,
+                            src_dir_fd=recovery_fd,
+                            dst_dir_fd=installations_fd,
+                        )
+                    except OSError:
+                        conflicts.append("private namespace")
+                else:
+                    conflicts.append("private namespace")
+            for name, expected in reversed(moved):
+                if not restore_public(name, expected):
+                    conflicts.append(name)
+            if public_recovery_created and recovery_fd is not None:
+                try:
+                    os.rmdir("public", dir_fd=recovery_fd)
+                except OSError:
+                    pass
+            if recovery_created and recovery_parent_fd is not None:
+                try:
+                    os.rmdir(recovery_name, dir_fd=recovery_parent_fd)
+                except OSError:
+                    pass
+            if recovery_parent_created:
+                try:
+                    os.rmdir("purge-recovery", dir_fd=private_base_fd)
+                except OSError:
+                    pass
+            if conflicts:
+                raise WorkflowError(
+                    "purge_conflict: " + ", ".join(sorted(set(conflicts)))
+                ) from error
+            raise
     return recovery
 
 
@@ -1929,6 +2184,8 @@ def _handle_uninstall(
         installation_id,
         backup_root=paths.private_root / "instruction-backups",
     )
+    if not args.dry_run and not instruction_plan.applicable:
+        raise RefusedError("instruction plan contains conflicts")
     uninstalled_document = {
         **context.state,
         "status": "uninstalled",
@@ -1954,9 +2211,10 @@ def _handle_uninstall(
             }
             for item in instruction_plan.operations
         ],
-        "data_preserved": not args.purge_data,
+        "data_preserved": True,
     }
     if args.dry_run:
+        payload["would_purge_data"] = bool(args.purge_data)
         return payload
     instruction_changed = bool(instruction_plan.changed_operations)
     if instruction_changed:
