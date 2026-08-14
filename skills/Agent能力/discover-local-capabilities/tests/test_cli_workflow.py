@@ -6,6 +6,7 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import stat
 import sys
 import tempfile
@@ -279,12 +280,23 @@ class CapabilityMapWorkflowTests(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertIn("already exists", error)
 
-            code, plan, error = fixture.run("setup", "plan", *fixture.setup_args())
+            code, _, error = fixture.run("setup", "plan", *fixture.setup_args())
+            self.assertEqual(code, 2)
+            self.assertIn("explicit", error)
+            code, plan, error = fixture.run(
+                "setup",
+                "plan",
+                *fixture.setup_args(),
+                "--installation-id",
+                "inst_reinstall",
+            )
             self.assertEqual((code, error), (0, ""))
             code, reinstalled, error = fixture.run(
                 "setup",
                 "apply",
                 *fixture.setup_args(),
+                "--installation-id",
+                "inst_reinstall",
                 "--confirmed",
                 "--expected-plan-hash",
                 str(plan["plan_hash"]),
@@ -392,7 +404,7 @@ class CapabilityMapWorkflowTests(unittest.TestCase):
             fixture = WorkflowFixture(Path(temporary))
             applied = fixture.install()
             namespace = Path(applied["paths"]["state"]).parent
-            real_rename = os.rename
+            real_rename = capability_map._rename_directory_no_replace
             replaced = False
 
             def replace_namespace(
@@ -414,7 +426,8 @@ class CapabilityMapWorkflowTests(unittest.TestCase):
                     os.symlink("external-owner", namespace)
 
             with mock.patch(
-                "capability_map.os.rename", side_effect=replace_namespace
+                "capability_map._rename_directory_no_replace",
+                side_effect=replace_namespace,
             ):
                 code, _, error = fixture.run(
                     "uninstall",
@@ -515,6 +528,182 @@ class CapabilityMapWorkflowTests(unittest.TestCase):
                 self.assertEqual(_snapshot(attacker), attacker_before)
                 self.assertTrue(state_path.is_file())
 
+    def test_purge_rejects_private_base_swap_after_instruction_removal(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            applied = fixture.install()
+            state_path = Path(applied["paths"]["state"])
+            namespace = state_path.parent
+            private_base = namespace.parent.parent
+            parked_base = private_base.parent / "parked-private-base"
+            original_state = state_path.read_bytes()
+            real_apply = capability_map.apply_instruction_plan
+            swap_evidence: dict[str, int] = {}
+
+            def apply_then_swap(*args: object, **kwargs: object) -> object:
+                result = real_apply(*args, **kwargs)
+                plan = args[0]
+                if getattr(plan, "action", None) == "uninstall" and not swap_evidence:
+                    os.rename(private_base, parked_base)
+                    shutil.copytree(parked_base, private_base)
+                    parked_namespace = parked_base / "installations" / namespace.name
+                    replacement_namespace = (
+                        private_base / "installations" / namespace.name
+                    )
+                    swap_evidence["parked"] = os.lstat(parked_namespace).st_ino
+                    swap_evidence["replacement"] = os.lstat(
+                        replacement_namespace
+                    ).st_ino
+                return result
+
+            with mock.patch(
+                "capability_map.apply_instruction_plan", side_effect=apply_then_swap
+            ):
+                code, _, error = fixture.run(
+                    "uninstall",
+                    "--storage",
+                    str(fixture.storage),
+                    "--confirmed",
+                    "--purge-data",
+                )
+
+            parked_namespace = parked_base / "installations" / namespace.name
+            replacement_namespace = private_base / "installations" / namespace.name
+            self.assertEqual(code, 3)
+            self.assertIn("changed", error)
+            self.assertEqual(os.lstat(parked_namespace).st_ino, swap_evidence["parked"])
+            self.assertEqual(
+                os.lstat(replacement_namespace).st_ino,
+                swap_evidence["replacement"],
+            )
+            self.assertEqual(
+                (parked_namespace / "installation-state.json").read_bytes(),
+                original_state,
+            )
+            self.assertEqual(
+                (replacement_namespace / "installation-state.json").read_bytes(),
+                original_state,
+            )
+            self.assertIn(
+                "vantasma:discover-local-capabilities:start",
+                (fixture.project / "AGENTS.md").read_text(encoding="utf-8"),
+            )
+
+    def test_purge_namespace_move_is_atomic_no_clobber(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            applied = fixture.install()
+            state_path = Path(applied["paths"]["state"])
+            private_base = state_path.parent.parent.parent
+            real_rename = capability_map._rename_directory_no_replace
+            external_inode: list[int] = []
+
+            def race_destination(
+                source: str,
+                destination: str,
+                *,
+                src_dir_fd: int,
+                dst_dir_fd: int,
+            ) -> None:
+                if destination == "private-namespace" and not external_inode:
+                    os.mkdir(destination, dir_fd=dst_dir_fd)
+                    external_inode.append(
+                        os.stat(
+                            destination,
+                            dir_fd=dst_dir_fd,
+                            follow_symlinks=False,
+                        ).st_ino
+                    )
+                real_rename(
+                    source,
+                    destination,
+                    src_dir_fd=src_dir_fd,
+                    dst_dir_fd=dst_dir_fd,
+                )
+
+            with mock.patch(
+                "capability_map._rename_directory_no_replace",
+                side_effect=race_destination,
+            ):
+                code, _, error = fixture.run(
+                    "uninstall",
+                    "--storage",
+                    str(fixture.storage),
+                    "--confirmed",
+                    "--purge-data",
+                )
+
+            raced = tuple(
+                (private_base / "purge-recovery").glob(
+                    "*/private-namespace"
+                )
+            )
+            self.assertEqual(code, 3)
+            self.assertIn("purge", error)
+            self.assertEqual(len(raced), 1)
+            self.assertEqual(os.lstat(raced[0]).st_ino, external_inode[0])
+            self.assertTrue(state_path.is_file())
+            self.assertIn(
+                "vantasma:discover-local-capabilities:start",
+                (fixture.project / "AGENTS.md").read_text(encoding="utf-8"),
+            )
+
+    def test_purge_directory_open_closes_fd_when_fstat_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            applied = fixture.install()
+            state_path = Path(applied["paths"]["state"])
+            real_open = os.open
+            real_fstat = os.fstat
+            opened_recovery: list[int] = []
+
+            def track_open(
+                path: object,
+                flags: int,
+                mode: int = 0o777,
+                *,
+                dir_fd: int | None = None,
+            ) -> int:
+                descriptor = real_open(path, flags, mode, dir_fd=dir_fd)
+                if Path(path).name == "purge-recovery":
+                    opened_recovery.append(descriptor)
+                return descriptor
+
+            def fail_recovery_fstat(descriptor: int) -> os.stat_result:
+                if opened_recovery and descriptor == opened_recovery[0]:
+                    raise OSError("synthetic recovery fstat failure")
+                return real_fstat(descriptor)
+
+            with (
+                mock.patch("capability_map.os.open", side_effect=track_open),
+                mock.patch("capability_map.os.fstat", side_effect=fail_recovery_fstat),
+            ):
+                code, _, error = fixture.run(
+                    "uninstall",
+                    "--storage",
+                    str(fixture.storage),
+                    "--confirmed",
+                    "--purge-data",
+                )
+
+            self.assertEqual(code, 3)
+            self.assertIn("fstat", error)
+            self.assertEqual(len(opened_recovery), 1)
+            descriptor_closed = False
+            try:
+                real_fstat(opened_recovery[0])
+            except OSError:
+                descriptor_closed = True
+            finally:
+                if not descriptor_closed:
+                    os.close(opened_recovery[0])
+            self.assertTrue(descriptor_closed)
+            self.assertTrue(state_path.is_file())
+            self.assertIn(
+                "vantasma:discover-local-capabilities:start",
+                (fixture.project / "AGENTS.md").read_text(encoding="utf-8"),
+            )
+
     def test_purge_failure_after_move_rolls_back_owned_data(self) -> None:
         for failure_target in ("map", "namespace"):
             with self.subTest(failure_target=failure_target), tempfile.TemporaryDirectory() as temporary:
@@ -548,7 +737,7 @@ class CapabilityMapWorkflowTests(unittest.TestCase):
                         "capability_map.os.unlink", side_effect=move_then_fail
                     )
                 else:
-                    real_rename = os.rename
+                    real_rename = capability_map._rename_directory_no_replace
 
                     def move_then_fail(
                         source: object,
@@ -569,7 +758,8 @@ class CapabilityMapWorkflowTests(unittest.TestCase):
                             raise OSError("synthetic purge move failure")
 
                     patcher = mock.patch(
-                        "capability_map.os.rename", side_effect=move_then_fail
+                        "capability_map._rename_directory_no_replace",
+                        side_effect=move_then_fail,
                     )
 
                 with patcher:
@@ -909,13 +1099,41 @@ class CapabilityMapWorkflowTests(unittest.TestCase):
             for label, expected_hash in plan["desired_hashes"].items():
                 self.assertEqual(_sha256(Path(plan["paths"][label])), expected_hash)
 
-            code, next_plan, error = fixture.run(
+            before_repeat = _snapshot(fixture.base)
+            code, _, error = fixture.run(
                 "setup", "plan", *fixture.setup_args()
             )
-            self.assertEqual((code, error), (0, ""))
-            self.assertNotEqual(
-                next_plan["installation_id"], plan["installation_id"]
+            self.assertEqual(code, 2)
+            self.assertIn("already installed", error)
+            self.assertIn("refresh", error)
+            code, _, error = fixture.run(
+                "setup",
+                "plan",
+                *fixture.setup_args(),
+                "--installation-id",
+                "inst_second",
             )
+            self.assertEqual(code, 2)
+            self.assertIn("already installed", error)
+            code, _, error = fixture.run(
+                "setup",
+                "apply",
+                *fixture.setup_args(),
+                "--confirmed",
+                "--expected-plan-hash",
+                str(plan["plan_hash"]),
+            )
+            self.assertEqual(code, 2)
+            self.assertEqual(_snapshot(fixture.base), before_repeat)
+            instructions = (fixture.project / "AGENTS.md").read_text(encoding="utf-8")
+            self.assertEqual(
+                instructions.count("vantasma:discover-local-capabilities:start"), 1
+            )
+            installation_states = tuple(
+                Path(applied["paths"]["state"])
+                .parent.parent.glob("*/installation-state.json")
+            )
+            self.assertEqual(len(installation_states), 1)
 
             before = _snapshot(fixture.base)
             code, refresh, error = fixture.run(
@@ -1165,7 +1383,24 @@ class CapabilityMapWorkflowTests(unittest.TestCase):
             self.assertTrue((fixture.migrated / "本机能力地图.md").exists())
 
             fixture.storage = fixture.migrated
-            fixture.install()
+            reinstall_args = (
+                *fixture.setup_args(),
+                "--installation-id",
+                "inst_after_uninstall",
+            )
+            code, reinstall_plan, error = fixture.run(
+                "setup", "plan", *reinstall_args
+            )
+            self.assertEqual((code, error), (0, ""))
+            code, _, error = fixture.run(
+                "setup",
+                "apply",
+                *reinstall_args,
+                "--confirmed",
+                "--expected-plan-hash",
+                str(reinstall_plan["plan_hash"]),
+            )
+            self.assertEqual((code, error), (0, ""))
             code, purged, error = fixture.run(
                 "uninstall",
                 "--storage",

@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import ctypes
 import dataclasses
+import errno
 import hashlib
 import hmac
 import json
@@ -51,6 +53,7 @@ from capability_map_core.sanitize import sanitize_text
 from capability_map_core.skills import discover_skills
 from capability_map_core.storage import (
     PublicArtifacts,
+    RootEvidence,
     StorageExpectedSnapshot,
     StoragePaths,
     _exact_values,
@@ -86,6 +89,75 @@ class RefusedError(ValueError):
 
 class WorkflowError(RuntimeError):
     """An operational failure that maps to exit code 3."""
+
+
+def _rename_directory_no_replace(
+    source: str,
+    destination: str,
+    *,
+    src_dir_fd: int,
+    dst_dir_fd: int,
+) -> None:
+    """Atomically rename one directory entry without replacing a destination."""
+
+    for value in (source, destination):
+        if (
+            not isinstance(value, str)
+            or value in {"", ".", ".."}
+            or "/" in value
+            or "\x00" in value
+        ):
+            raise ValueError("directory rename requires safe basenames")
+    library = ctypes.CDLL(None, use_errno=True)
+    if sys.platform == "darwin":
+        try:
+            native_rename = library.renameatx_np
+        except AttributeError as error:
+            raise WorkflowError(
+                "secure directory no-replace backend is unavailable"
+            ) from error
+        native_rename.argtypes = (
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        )
+        native_rename.restype = ctypes.c_int
+        result = native_rename(
+            src_dir_fd,
+            os.fsencode(source),
+            dst_dir_fd,
+            os.fsencode(destination),
+            0x00000004,
+        )
+    elif sys.platform.startswith("linux"):
+        try:
+            native_rename = library.renameat2
+        except AttributeError as error:
+            raise WorkflowError(
+                "secure directory no-replace backend is unavailable"
+            ) from error
+        native_rename.argtypes = (
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        )
+        native_rename.restype = ctypes.c_int
+        result = native_rename(
+            src_dir_fd,
+            os.fsencode(source),
+            dst_dir_fd,
+            os.fsencode(destination),
+            0x00000001,
+        )
+    else:
+        raise WorkflowError("secure directory no-replace backend is unavailable")
+    if result != 0:
+        error_number = ctypes.get_errno() or errno.EIO
+        raise OSError(error_number, os.strerror(error_number), destination)
 
 
 @dataclass(frozen=True)
@@ -889,7 +961,6 @@ def _build_setup_plan(
         agents=agents,
         scopes=(args.scope,),
     )
-    installation_id = _installation_id(base_paths, request, args.installation_id)
     try:
         existing_config = _read_json(base_paths.config_path)
     except FileNotFoundError:
@@ -898,13 +969,15 @@ def _build_setup_plan(
         existing_context = _runtime_context(
             base_paths, home=home, environ=environ, require_active=False
         )
-        if (
-            existing_context.state["status"] != "active"
-            and existing_context.config["installation_id"] == installation_id
-        ):
+        if existing_context.state["status"] == "active":
             raise RefusedError(
-                "inactive installation requires a new installation id"
+                "capability map is already installed; use status or refresh"
             )
+        if args.installation_id is None:
+            raise RefusedError(
+                "inactive installation history requires an explicit unused installation id"
+            )
+    installation_id = _installation_id(base_paths, request, args.installation_id)
     paths = _namespaced_paths(
         base_paths,
         installation_id=installation_id,
@@ -1785,6 +1858,7 @@ def _purge_data(
     *,
     state_path: Path,
     expected_public: Mapping[Path, FileSnapshot],
+    private_base_evidence: RootEvidence,
 ) -> Path:
     if (
         paths.private_root.parent.name != _PRIVATE_INSTALLATIONS
@@ -1804,6 +1878,8 @@ def _purge_data(
         raise WorkflowError("purge public target escaped its storage root")
 
     private_base = paths.private_root.parent.parent
+    if private_base_evidence.resolved_path != private_base:
+        raise WorkflowError("purge private base evidence does not match")
     recovery_name = (
         installation_id
         + "-"
@@ -1813,7 +1889,6 @@ def _purge_data(
     public_evidence = paths.public_root_evidence
     if public_evidence is None:
         raise WorkflowError("purge public root evidence is missing")
-    private_base_evidence = capture_directory_evidence(private_base)
     flags = (
         os.O_RDONLY
         | getattr(os, "O_CLOEXEC", 0)
@@ -1826,7 +1901,11 @@ def _purge_data(
             descriptor = os.open(name, flags, dir_fd=parent_fd)
         except OSError as error:
             raise WorkflowError(f"purge {label} could not be opened safely") from error
-        metadata = os.fstat(descriptor)
+        try:
+            metadata = os.fstat(descriptor)
+        except BaseException:
+            os.close(descriptor)
+            raise
         if not stat.S_ISDIR(metadata.st_mode):  # pragma: no cover - O_DIRECTORY
             os.close(descriptor)
             raise WorkflowError(f"purge {label} is not a physical directory")
@@ -2056,7 +2135,7 @@ def _purge_data(
             if entry_metadata(recovery_fd, "private-namespace") is not None:
                 raise WorkflowError("purge recovery destination already exists")
             try:
-                os.rename(
+                _rename_directory_no_replace(
                     namespace_name,
                     "private-namespace",
                     src_dir_fd=installations_fd,
@@ -2074,7 +2153,7 @@ def _purge_data(
                     )
                 ):
                     try:
-                        os.rename(
+                        _rename_directory_no_replace(
                             "private-namespace",
                             namespace_name,
                             src_dir_fd=recovery_fd,
@@ -2116,7 +2195,7 @@ def _purge_data(
                     )
                 ):
                     try:
-                        os.rename(
+                        _rename_directory_no_replace(
                             "private-namespace",
                             namespace_name,
                             src_dir_fd=recovery_fd,
@@ -2199,6 +2278,11 @@ def _handle_uninstall(
         for label, path in _artifact_paths(paths).items()
         if label != "resolver"
     }
+    purge_private_base_evidence = (
+        capture_directory_evidence(paths.private_root.parent.parent)
+        if args.purge_data and not args.dry_run
+        else None
+    )
     payload = {
         "status": "dry-run" if args.dry_run else "uninstalled",
         "installation_id": installation_id,
@@ -2224,12 +2308,15 @@ def _handle_uninstall(
             expected_plan_hash=instruction_plan.plan_hash,
         )
     if args.purge_data:
+        if purge_private_base_evidence is None:  # pragma: no cover - guarded above
+            raise WorkflowError("purge private base evidence is missing")
         try:
             recovery = _purge_data(
                 paths,
                 installation_id,
                 state_path=context.state_path,
                 expected_public=purge_expected,
+                private_base_evidence=purge_private_base_evidence,
             )
         except BaseException as error:
             if instruction_changed:
