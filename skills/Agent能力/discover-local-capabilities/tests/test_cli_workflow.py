@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import errno
 import io
 import json
 import os
@@ -670,6 +671,90 @@ class CapabilityMapWorkflowTests(unittest.TestCase):
                 "vantasma:discover-local-capabilities:start",
                 (fixture.project / "AGENTS.md").read_text(encoding="utf-8"),
             )
+
+    def test_cross_filesystem_purge_is_explicit_and_fully_compensated(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            applied = fixture.install()
+            owned_paths = {
+                label: Path(path)
+                for label, path in applied["paths"].items()
+                if label in {"map", "inventory", "config", "receipt", "resolver", "state"}
+            }
+            owned_before = {
+                label: (path.read_bytes(), stat.S_IMODE(os.lstat(path).st_mode))
+                for label, path in owned_paths.items()
+            }
+            instruction_paths = tuple(
+                Path(path) for path in applied["paths"]["instruction_targets"]
+            )
+            instructions_before = {
+                path: (path.read_bytes(), stat.S_IMODE(os.lstat(path).st_mode))
+                for path in instruction_paths
+            }
+            private_base = owned_paths["state"].parent.parent.parent
+            real_purge = capability_map._purge_data
+            real_link = capability_map.os.link
+            link_calls = 0
+
+            def purge_with_exdev(*args: object, **kwargs: object) -> object:
+                def injected_link(
+                    source: object,
+                    destination: object,
+                    *,
+                    src_dir_fd: int | None = None,
+                    dst_dir_fd: int | None = None,
+                    follow_symlinks: bool = True,
+                ) -> None:
+                    nonlocal link_calls
+                    link_calls += 1
+                    if link_calls == 2:
+                        raise OSError(
+                            errno.EXDEV,
+                            "synthetic cross-device failure",
+                            str(fixture.base / "must-not-leak"),
+                        )
+                    real_link(
+                        source,
+                        destination,
+                        src_dir_fd=src_dir_fd,
+                        dst_dir_fd=dst_dir_fd,
+                        follow_symlinks=follow_symlinks,
+                    )
+
+                with mock.patch("capability_map.os.link", side_effect=injected_link):
+                    return real_purge(*args, **kwargs)
+
+            with mock.patch(
+                "capability_map._purge_data", side_effect=purge_with_exdev
+            ):
+                code, _, error = fixture.run(
+                    "uninstall",
+                    "--storage",
+                    str(fixture.storage),
+                    "--confirmed",
+                    "--purge-data",
+                )
+
+            self.assertEqual(code, 3)
+            self.assertEqual(
+                error.strip(),
+                "cross-filesystem purge is unsupported; migrate public storage "
+                "to the private recovery filesystem before purge",
+            )
+            self.assertNotIn(str(fixture.base), error)
+            self.assertEqual(link_calls, 3)
+            for label, path in owned_paths.items():
+                self.assertEqual(
+                    (path.read_bytes(), stat.S_IMODE(os.lstat(path).st_mode)),
+                    owned_before[label],
+                )
+            for path, expected in instructions_before.items():
+                self.assertEqual(
+                    (path.read_bytes(), stat.S_IMODE(os.lstat(path).st_mode)),
+                    expected,
+                )
+            self.assertFalse((private_base / "purge-recovery").exists())
 
     def test_purge_preserves_external_namespace_replacement(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

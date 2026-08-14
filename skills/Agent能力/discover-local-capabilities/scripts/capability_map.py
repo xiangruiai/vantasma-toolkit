@@ -2145,6 +2145,11 @@ def _purge_data(
                     follow_symlinks=False,
                 )
             except BaseException as error:
+                if isinstance(error, OSError) and error.errno == errno.EXDEV:
+                    raise WorkflowError(
+                        "cross-filesystem purge is unsupported; migrate public "
+                        "storage to the private recovery filesystem before purge"
+                    ) from error
                 raise WorkflowError(f"purge_conflict: {name}") from error
             claimed = snapshot_at(public_recovery_fd, name)
             source_after_link = snapshot_at(public_fd, name)
