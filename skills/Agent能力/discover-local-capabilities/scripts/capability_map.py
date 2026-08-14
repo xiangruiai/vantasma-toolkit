@@ -51,12 +51,14 @@ from capability_map_core.sanitize import sanitize_text
 from capability_map_core.skills import discover_skills
 from capability_map_core.storage import (
     PublicArtifacts,
+    StorageExpectedSnapshot,
     StoragePaths,
     _exact_values,
     _json_bytes,
     _parse_public_json,
     _sanitize_markdown_document,
     build_private_resolver_document,
+    capture_storage_expected_state,
     default_storage_paths,
     write_storage_bundle,
 )
@@ -99,6 +101,7 @@ class FileSnapshot:
     device: int | None = None
     inode: int | None = None
     size: int | None = None
+    ctime_ns: int | None = None
 
     @property
     def sha256(self) -> str | None:
@@ -130,6 +133,7 @@ class SetupWorkflowPlan:
     state_id: str
     state_document: dict[str, Any]
     state_plan: StateWritePlan
+    storage_expected: dict[str, StorageExpectedSnapshot]
 
 
 @dataclass(frozen=True)
@@ -294,6 +298,7 @@ def _snapshot(path: Path) -> FileSnapshot:
             after.st_dev,
             after.st_ino,
             after.st_size,
+            after.st_ctime_ns,
         )
     except FileNotFoundError:
         return FileSnapshot(False, None, None)
@@ -347,6 +352,22 @@ def _matches_committed(current: FileSnapshot, committed: FileSnapshot) -> bool:
         and current.device == committed.device
         and current.inode == committed.inode
         and current.size == committed.size
+        and current.ctime_ns == committed.ctime_ns
+        and current.mode == committed.mode
+        and current.sha256 == committed.sha256
+    )
+
+
+def _matches_claimed(current: FileSnapshot, committed: FileSnapshot) -> bool:
+    """Verify the claimed inode while allowing rename to advance ctime."""
+
+    return bool(
+        current.existed
+        and committed.existed
+        and current.device == committed.device
+        and current.inode == committed.inode
+        and current.size == committed.size
+        and current.mode == committed.mode
         and current.sha256 == committed.sha256
     )
 
@@ -386,7 +407,7 @@ def _restore_after_failure(
         except (OSError, ValueError):
             conflicts.append(target)
             continue
-        if not _matches_committed(claimed, installed):
+        if not _matches_claimed(claimed, installed):
             conflicts.append(target)
             if not target.exists():
                 try:
@@ -554,16 +575,17 @@ def _installation_id(
     paths: StoragePaths, request: InstructionTargetRequest, provided: str | None
 ) -> str:
     if provided is not None:
-        if not provided or len(provided) > 128:
-            raise RefusedError("installation id is invalid")
-        return provided
+        try:
+            return _validate_opaque_identifier(provided, "inst_")
+        except ValueError as error:
+            raise RefusedError("installation id is invalid") from error
     evidence = {
         "public_root": str(paths.public_root),
         "agents": list(request.agents),
         "scopes": list(request.scopes),
         "project": None if request.project_root is None else str(request.project_root),
     }
-    return "inst_" + _digest(evidence)[:24]
+    return _validate_opaque_identifier("inst_" + _digest(evidence)[:24], "inst_")
 
 
 def _configuration(
@@ -706,6 +728,32 @@ def _desired_storage_bytes(
     }
 
 
+def _storage_expected_transition(
+    expected: Mapping[str, StorageExpectedSnapshot],
+) -> dict[str, Any]:
+    return {
+        label: {
+            "target": str(item.target),
+            "exists": item.existed,
+            "sha256": item.sha256,
+            "mode": item.mode,
+            "parent": {
+                "resolved_path": str(item.parent_evidence.resolved_path),
+                "existing_ancestors": [
+                    {
+                        "path": str(ancestor.path),
+                        "device": ancestor.device,
+                        "inode": ancestor.inode,
+                        "mode": ancestor.mode,
+                    }
+                    for ancestor in item.parent_evidence.existing_ancestors
+                ],
+            },
+        }
+        for label, item in sorted(expected.items())
+    }
+
+
 def _runtime_state_document(
     *,
     paths: StoragePaths,
@@ -716,6 +764,8 @@ def _runtime_state_document(
 ) -> dict[str, Any]:
     return {
         "schema_version": 1,
+        "status": "active",
+        "active": True,
         "installation_id": installation_id,
         "state_id": state_id,
         "public_root": str(paths.public_root),
@@ -813,6 +863,7 @@ def _build_setup_plan(
         home=home,
         environ=environ,
     )
+    storage_expected = capture_storage_expected_state(paths)
     state_id = _state_id(paths, installation_id)
     scan = _scan(
         home=home,
@@ -863,6 +914,7 @@ def _build_setup_plan(
         "paths": exact_paths,
         "desired_hashes": desired,
         "current": current,
+        "storage_expected": _storage_expected_transition(storage_expected),
         "instruction_plan_hash": instruction_plan.plan_hash,
         "state_plan_hash": state_plan.plan_hash,
     }
@@ -911,6 +963,7 @@ def _build_setup_plan(
         state_id,
         state_document,
         state_plan,
+        storage_expected,
     )
 
 
@@ -922,6 +975,7 @@ def _apply_storage_then_instructions(plan: SetupWorkflowPlan) -> dict[str, Any]:
             plan.paths,
             plan.artifacts,
             plan.scan.resolvers,
+            expected_state=plan.storage_expected,
         )
         committed.update(_snapshots(plan.paths))
         current_state_plan = _state_write_plan(
@@ -1011,16 +1065,26 @@ def _instruction_transition(plan: InstructionPlan) -> tuple[tuple[Any, ...], ...
     )
 
 
-def _opaque_identifier(value: Any, prefix: str) -> str:
+def _validate_opaque_identifier(value: Any, prefix: str) -> str:
     allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
     if (
         not isinstance(value, str)
         or not value.startswith(prefix)
+        or len(value) <= len(prefix)
         or len(value) > 128
         or any(character not in allowed for character in value)
     ):
-        raise WorkflowError("capability map contains an invalid opaque identifier")
+        raise ValueError("invalid opaque identifier")
     return value
+
+
+def _opaque_identifier(value: Any, prefix: str) -> str:
+    try:
+        return _validate_opaque_identifier(value, prefix)
+    except ValueError as error:
+        raise WorkflowError(
+            "capability map contains an invalid opaque identifier"
+        ) from error
 
 
 def _config_for(paths: StoragePaths) -> dict[str, Any]:
@@ -1045,6 +1109,7 @@ def _runtime_context(
     *,
     home: Path,
     environ: Mapping[str, str],
+    require_active: bool = True,
 ) -> RuntimeContext:
     config = _config_for(base_paths)
     installation_id = str(config["installation_id"])
@@ -1070,6 +1135,23 @@ def _runtime_context(
         or not isinstance(request_raw, dict)
     ):
         raise WorkflowError("private installation state is invalid")
+    lifecycle = state.get("status")
+    active = state.get("active")
+    if lifecycle not in {"active", "migrated"} or active is not (
+        lifecycle == "active"
+    ):
+        raise WorkflowError("private installation lifecycle is invalid")
+    if lifecycle == "migrated":
+        _opaque_identifier(state.get("migrated_to_state_id"), "state_")
+        namespace = state.get("migrated_to_namespace")
+        if (
+            not isinstance(namespace, str)
+            or len(namespace) != 32
+            or any(character not in "0123456789abcdef" for character in namespace)
+        ):
+            raise WorkflowError("private migration namespace is invalid")
+        if require_active:
+            raise RefusedError("capability map installation has migrated")
     try:
         request = InstructionTargetRequest(
             home=Path(request_raw["home"]),
@@ -1214,7 +1296,10 @@ def _handle_scan(
             f"- installation: `{installation_id}`\n"
             f"- private namespace: `{state_id}`\n",
         )
-        written = write_storage_bundle(paths, artifacts, result.resolvers)
+        expected = capture_storage_expected_state(paths)
+        written = write_storage_bundle(
+            paths, artifacts, result.resolvers, expected_state=expected
+        )
         inventory["written"] = {
             "generation_id": written.generation_id,
             "paths": {label: str(path) for label, path in _artifact_paths(paths).items()},
@@ -1248,10 +1333,18 @@ def _status_payload(
     environ: Mapping[str, str],
 ) -> dict[str, Any]:
     context: RuntimeContext | None = None
+    health_errors: list[str] = []
+    lifecycle = "missing"
     try:
-        context = _runtime_context(base_paths, home=home, environ=environ)
+        context = _runtime_context(
+            base_paths, home=home, environ=environ, require_active=False
+        )
         paths = context.paths
-    except (FileNotFoundError, OSError, WorkflowError, ValueError):
+        lifecycle = str(context.state["status"])
+    except (FileNotFoundError, OSError, WorkflowError, ValueError) as error:
+        if base_paths.config_path.exists():
+            lifecycle = "invalid"
+            health_errors.append("config/state: " + _safe_error(error))
         paths = base_paths
     path_map = _artifact_paths(paths)
     if context is not None:
@@ -1262,12 +1355,93 @@ def _status_payload(
             payload = _read_regular(path)
         except FileNotFoundError:
             files[label] = {"exists": False, "sha256": None}
+            health_errors.append(f"{label}: missing")
         except (OSError, ValueError):
             files[label] = {"exists": False, "sha256": None, "invalid": True}
+            health_errors.append(f"{label}: invalid")
         else:
             files[label] = {"exists": True, "sha256": _digest(payload)}
+            if label in {"map", "receipt"}:
+                try:
+                    text = payload.decode("utf-8")
+                except UnicodeDecodeError:
+                    text = ""
+                if not text.strip():
+                    health_errors.append(f"{label}: invalid markdown")
+    all_artifacts_exist = all(
+        files.get(label, {}).get("exists") for label in _ARTIFACT_LABELS
+    )
+    if context is not None:
+        try:
+            _inventory_capabilities(context.paths)
+        except (FileNotFoundError, OSError, RuntimeError, TypeError, ValueError):
+            health_errors.append("inventory: invalid JSON or schema")
+        try:
+            resolver = _read_json(context.paths.resolver_path)
+            storage = resolver.get("storage")
+            records = resolver.get("records")
+            expected_storage = build_private_resolver_document(
+                context.paths, ()
+            )["storage"]
+            if (
+                set(resolver) != {"schema_version", "storage", "records"}
+                or resolver.get("schema_version") != 1
+                or not isinstance(storage, dict)
+                or not isinstance(records, list)
+                or len(records) > 100_000
+                or storage != expected_storage
+                or any(
+                    not isinstance(record, dict)
+                    or set(record) != {"resolver_id", "exact_locations"}
+                    or not isinstance(record.get("resolver_id"), str)
+                    or not record["resolver_id"].startswith("res_")
+                    or len(record["resolver_id"]) > 128
+                    or any(
+                        character
+                        not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+                        for character in record["resolver_id"]
+                    )
+                    or not isinstance(record.get("exact_locations"), list)
+                    or any(
+                        not isinstance(location, str)
+                        for location in record["exact_locations"]
+                    )
+                    for record in records
+                )
+                or len({record["resolver_id"] for record in records}) != len(records)
+            ):
+                raise ValueError("resolver schema mismatch")
+            if os.name != "nt" and stat.S_IMODE(
+                os.stat(context.paths.resolver_path, follow_symlinks=False).st_mode
+            ) != 0o600:
+                raise ValueError("resolver mode mismatch")
+        except (FileNotFoundError, OSError, TypeError, ValueError):
+            health_errors.append("resolver: invalid JSON, schema, or mode")
+        if lifecycle == "active":
+            try:
+                instruction = build_instruction_plan(
+                    context.target_request,
+                    str(context.config["installation_id"]),
+                    context.paths.map_path,
+                    context.paths.resolver_path,
+                    backup_root=context.paths.private_root / "instruction-backups",
+                )
+                if not instruction.applicable or instruction.changed_operations:
+                    raise ValueError("managed instruction block is not current")
+            except (FileNotFoundError, OSError, RuntimeError, TypeError, ValueError):
+                health_errors.append("instructions: managed block is not current")
+    health_errors = sorted(set(health_errors))
+    installed = bool(
+        context is not None
+        and lifecycle == "active"
+        and all_artifacts_exist
+        and files.get("state", {}).get("exists")
+    )
     return {
-        "installed": context is not None and all(item["exists"] for item in files.values()),
+        "installed": installed,
+        "healthy": installed and not health_errors,
+        "health_errors": health_errors,
+        "lifecycle": lifecycle,
         "installation_id": (
             None if context is None else context.config["installation_id"]
         ),
@@ -1292,6 +1466,7 @@ def _handle_refresh(
     )
     context = _runtime_context(base_paths, home=home, environ=environ)
     paths = context.paths
+    storage_expected = capture_storage_expected_state(paths)
     installation_id = str(context.config["installation_id"])
     scan = _scan(
         home=home,
@@ -1328,6 +1503,7 @@ def _handle_refresh(
             "installation_id": installation_id,
             "current": current,
             "desired": desired,
+            "storage_expected": _storage_expected_transition(storage_expected),
         }
     )
     payload = {
@@ -1338,7 +1514,9 @@ def _handle_refresh(
     }
     if args.dry_run:
         return payload
-    result = write_storage_bundle(paths, artifacts, scan.resolvers)
+    result = write_storage_bundle(
+        paths, artifacts, scan.resolvers, expected_state=storage_expected
+    )
     payload["generation_id"] = result.generation_id
     payload["paths"] = {
         label: str(path) for label, path in _artifact_paths(paths).items()
@@ -1376,6 +1554,7 @@ def _handle_migrate(
         home=home,
         environ=environ,
     )
+    storage_expected = capture_storage_expected_state(new_paths)
     if new_paths.public_root == old_paths.public_root:
         raise RefusedError("migration destination must differ from current storage")
     request = context.target_request
@@ -1407,6 +1586,16 @@ def _handle_migrate(
         request=request,
     )
     state_plan = _state_write_plan(_state_path(new_paths), state_document)
+    migrated_state_document = {
+        **context.state,
+        "status": "migrated",
+        "active": False,
+        "migrated_to_state_id": new_state_id,
+        "migrated_to_namespace": new_paths.private_root.name,
+    }
+    migrated_state_plan = _state_write_plan(
+        context.state_path, migrated_state_document
+    )
     current = _current_storage_state(new_paths, state_path=state_plan.path)
     desired = {
         **{
@@ -1424,8 +1613,10 @@ def _handle_migrate(
             "to": str(new_paths.public_root),
             "current": current,
             "desired": desired,
+            "storage_expected": _storage_expected_transition(storage_expected),
             "instruction_plan_hash": instruction_plan.plan_hash,
             "state_plan_hash": state_plan.plan_hash,
+            "source_state_plan_hash": migrated_state_plan.plan_hash,
         }
     )
     payload = {
@@ -1451,8 +1642,14 @@ def _handle_migrate(
         return payload
     before = _snapshots(new_paths, state_path=state_plan.path)
     committed: dict[Path, FileSnapshot] = {}
+    instruction_applied = False
     try:
-        storage_result = write_storage_bundle(new_paths, artifacts, scan.resolvers)
+        storage_result = write_storage_bundle(
+            new_paths,
+            artifacts,
+            scan.resolvers,
+            expected_state=storage_expected,
+        )
         committed.update(_snapshots(new_paths))
         current_state_plan = _state_write_plan(state_plan.path, state_document)
         if _state_transition(current_state_plan) != _state_transition(state_plan):
@@ -1475,14 +1672,43 @@ def _handle_migrate(
             confirmed=True,
             expected_plan_hash=current_instruction_plan.plan_hash,
         )
+        instruction_applied = True
+        current_migrated_state_plan = _state_write_plan(
+            context.state_path, migrated_state_document
+        )
+        if _state_transition(current_migrated_state_plan) != _state_transition(
+            migrated_state_plan
+        ):
+            raise WorkflowError("source installation state changed during migration")
+        migrated_state_result = _apply_state_plan(current_migrated_state_plan)
     except BaseException as error:
+        instruction_compensation_error: BaseException | None = None
+        if instruction_applied:
+            try:
+                restore_instruction = build_instruction_plan(
+                    request,
+                    installation_id,
+                    old_paths.map_path,
+                    old_paths.resolver_path,
+                    backup_root=old_paths.private_root / "instruction-backups",
+                )
+                apply_instruction_plan(
+                    restore_instruction,
+                    confirmed=True,
+                    expected_plan_hash=restore_instruction.plan_hash,
+                )
+            except BaseException as compensation_error:
+                instruction_compensation_error = compensation_error
         _, conflicts = _restore_after_failure(
             before, committed, recovery_key=plan_hash[:24]
         )
-        if conflicts:
+        if conflicts or instruction_compensation_error is not None:
+            details = [path.name for path in conflicts]
+            if instruction_compensation_error is not None:
+                details.append("instructions")
             raise WorkflowError(
                 f"{error}; compensation_conflict: "
-                + ", ".join(path.name for path in conflicts)
+                + ", ".join(details)
             ) from error
         raise
     payload["generation_id"] = storage_result.generation_id
@@ -1496,6 +1722,10 @@ def _handle_migrate(
                 state_result.backup_directory or state_plan.path.parent / "state-backups"
             ),
             "instruction_backup": str(current_instruction_plan.backup_root),
+            "source_state_backup": str(
+                migrated_state_result.backup_directory
+                or context.state_path.parent / "state-backups"
+            ),
         }
     )
     return payload

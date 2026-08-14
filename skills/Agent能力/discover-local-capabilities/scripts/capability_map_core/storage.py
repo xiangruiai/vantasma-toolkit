@@ -58,6 +58,7 @@ _DIR_FD_BACKEND_SUPPORTED = bool(
     and os.unlink in os.supports_dir_fd
     and os.rmdir in os.supports_dir_fd
     and os.rename in os.supports_dir_fd
+    and os.link in os.supports_dir_fd
     and os.listdir in os.supports_fd
 )
 
@@ -351,6 +352,22 @@ class StorageWriteResult:
     hashes: dict[str, str]
     changed_paths: tuple[Path, ...]
     receipt_info: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class StorageExpectedSnapshot:
+    """Plan-time state for one stable target under its captured parent."""
+
+    target: Path = field(repr=False)
+    existed: bool
+    sha256: str | None
+    mode: int | None
+    parent_evidence: RootEvidence = field(repr=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "target", Path(self.target))
+        if self.existed != (self.sha256 is not None and self.mode is not None):
+            raise ValueError("storage expected snapshot fields are inconsistent")
 
 
 class ResolverRecordLike(Protocol):
@@ -1250,6 +1267,83 @@ def _target_snapshot(target: Path) -> _Snapshot:
         os.close(descriptor)
 
 
+def capture_storage_expected_state(
+    paths: StoragePaths,
+) -> dict[str, StorageExpectedSnapshot]:
+    """Capture hash-bound target state without creating storage directories."""
+
+    if not isinstance(paths, StoragePaths):
+        raise TypeError("paths must be a StoragePaths value")
+    targets = {
+        "map": paths.map_path,
+        "inventory": paths.inventory_path,
+        "config": paths.config_path,
+        "receipt": paths.receipt_path,
+        "resolver": paths.resolver_path,
+    }
+    result: dict[str, StorageExpectedSnapshot] = {}
+    for label, target in targets.items():
+        snapshot = _target_snapshot(target)
+        parent_evidence = (
+            paths.private_root_evidence
+            if label == "resolver"
+            else paths.public_root_evidence
+        )
+        if parent_evidence is None:  # pragma: no cover - StoragePaths enforces it
+            raise ValueError("StoragePaths is missing root evidence")
+        result[label] = StorageExpectedSnapshot(
+            target,
+            snapshot.existed,
+            None if snapshot.payload is None else _sha256(snapshot.payload),
+            snapshot.mode,
+            parent_evidence,
+        )
+    return result
+
+
+def _matches_expected_snapshot(
+    snapshot: _Snapshot, expected: StorageExpectedSnapshot
+) -> bool:
+    if snapshot.existed != expected.existed:
+        return False
+    if not snapshot.existed:
+        return True
+    return bool(
+        snapshot.payload is not None
+        and snapshot.mode == expected.mode
+        and _sha256(snapshot.payload) == expected.sha256
+    )
+
+
+def _validated_expected_state(
+    paths: StoragePaths,
+    expected_state: Mapping[str, StorageExpectedSnapshot] | None,
+) -> dict[str, StorageExpectedSnapshot] | None:
+    if expected_state is None:
+        return None
+    expected_labels = {"map", "inventory", "config", "receipt", "resolver"}
+    if set(expected_state) != expected_labels:
+        raise ValueError("storage expected state must contain every target")
+    stable_targets = {
+        "map": paths.map_path,
+        "inventory": paths.inventory_path,
+        "config": paths.config_path,
+        "receipt": paths.receipt_path,
+        "resolver": paths.resolver_path,
+    }
+    validated: dict[str, StorageExpectedSnapshot] = {}
+    for label in sorted(expected_labels):
+        item = expected_state[label]
+        if not isinstance(item, StorageExpectedSnapshot):
+            raise TypeError("storage expected state has an invalid snapshot")
+        if item.target != stable_targets[label]:
+            raise ValueError("storage expected state target mismatch")
+        if _validate_root_evidence(item.parent_evidence) != item.target.parent:
+            raise ValueError("storage expected state parent mismatch")
+        validated[label] = item
+    return validated
+
+
 def _prepare_root(root: Path) -> None:
     try:
         metadata = os.lstat(root)
@@ -1395,6 +1489,72 @@ def _stage_target_at(parent_fd: int, target: _PreparedTarget) -> str:
     if target.json_document:
         json.loads(verified.payload.decode("utf-8"))
     return name
+
+
+def _commit_staged_no_replace_at(
+    *,
+    stage_fd: int,
+    staged_name: str,
+    destination_fd: int,
+    destination_name: str,
+    expected: _Snapshot,
+) -> None:
+    """Claim an old target, verify it, then link the staged inode no-clobber."""
+
+    def restore_claim(claim: str) -> None:
+        try:
+            os.link(
+                claim,
+                destination_name,
+                src_dir_fd=destination_fd,
+                dst_dir_fd=destination_fd,
+                follow_symlinks=False,
+            )
+        except FileExistsError:
+            return
+        os.unlink(claim, dir_fd=destination_fd)
+
+    claim_name: str | None = None
+    if expected.existed:
+        claim_name = f".capability-claim-{secrets.token_hex(12)}"
+        os.rename(
+            destination_name,
+            claim_name,
+            src_dir_fd=destination_fd,
+            dst_dir_fd=destination_fd,
+        )
+        try:
+            claimed = _target_snapshot_at(destination_fd, claim_name)
+        except BaseException:
+            restore_claim(claim_name)
+            raise
+        if not (
+            claimed.existed
+            and claimed.payload == expected.payload
+            and claimed.mode == expected.mode
+            and claimed.device == expected.device
+            and claimed.inode == expected.inode
+            and claimed.size == expected.size
+        ):
+            restore_claim(claim_name)
+            raise RuntimeError(
+                f"storage target changed concurrently: {destination_name}"
+            )
+    try:
+        os.link(
+            staged_name,
+            destination_name,
+            src_dir_fd=stage_fd,
+            dst_dir_fd=destination_fd,
+            follow_symlinks=False,
+        )
+    except BaseException:
+        if claim_name is not None:
+            restore_claim(claim_name)
+        raise
+    if claim_name is not None:
+        os.unlink(claim_name, dir_fd=destination_fd)
+    _fsync_directory_fd(destination_fd)
 
 
 def _sync_committed_target_at(
@@ -1683,6 +1843,8 @@ def write_storage_bundle(
     artifacts: PublicArtifacts | Mapping[str, Any],
     resolver_records: Iterable[ResolverRecordLike],
     failure_injector: Callable[[str, Path], None] | None = None,
+    *,
+    expected_state: Mapping[str, StorageExpectedSnapshot] | None = None,
 ) -> StorageWriteResult:
     """Atomically replace a complete bundle and roll back every caught failure.
 
@@ -1695,6 +1857,7 @@ def write_storage_bundle(
     if not _secure_storage_backend_available():
         raise RuntimeError("secure_storage_backend_unavailable")
     _validate_storage_roots(paths)
+    expected_targets = _validated_expected_state(paths, expected_state)
     public_artifacts = _coerce_artifacts(artifacts)
     records = _resolver_entries(resolver_records)
 
@@ -1749,6 +1912,12 @@ def write_storage_bundle(
             raise ValueError("storage target escaped its declared root")
 
     snapshots = {target: _target_snapshot(target) for _, target, _, _ in raw_targets}
+    if expected_targets is not None:
+        for label, target, _, _ in raw_targets:
+            if not _matches_expected_snapshot(
+                snapshots[target], expected_targets[label]
+            ):
+                raise RuntimeError(f"stale storage plan: {label}")
     prepared: list[_PreparedTarget] = []
     for label, target, payload, json_document in raw_targets:
         snapshot = snapshots[target]
@@ -1834,10 +2003,14 @@ def write_storage_bundle(
                     if target.target.parent == paths.private_root
                     else public_root_fd
                 )
-                if (
-                    _target_snapshot_at(destination_fd, target.target.name)
-                    != snapshots[target.target]
+                pinned_snapshot = _target_snapshot_at(
+                    destination_fd, target.target.name
+                )
+                if expected_targets is not None and not _matches_expected_snapshot(
+                    pinned_snapshot, expected_targets[target.label]
                 ):
+                    raise RuntimeError(f"stale storage plan: {target.label}")
+                if pinned_snapshot != snapshots[target.target]:
                     raise RuntimeError(
                         f"storage target changed concurrently: {target.label}"
                     )
@@ -1847,12 +2020,18 @@ def write_storage_bundle(
                     raise RuntimeError(
                         f"storage staging changed concurrently: {target.label}"
                     )
-                os.replace(
-                    staged_name,
-                    target.target.name,
-                    src_dir_fd=stage_fd,
-                    dst_dir_fd=destination_fd,
-                )
+                try:
+                    _commit_staged_no_replace_at(
+                        stage_fd=stage_fd,
+                        staged_name=staged_name,
+                        destination_fd=destination_fd,
+                        destination_name=target.target.name,
+                        expected=pinned_snapshot,
+                    )
+                except FileExistsError as error:
+                    raise RuntimeError(
+                        f"stale storage plan: {target.label}"
+                    ) from error
                 replaced_targets.append(target)
                 _sync_committed_target_at(
                     destination_fd,
@@ -1927,10 +2106,12 @@ __all__ = [
     "RESOLVER_FILENAME",
     "RootEvidence",
     "StoragePaths",
+    "StorageExpectedSnapshot",
     "StorageWriteResult",
     "VaultCandidate",
     "VaultDiscoveryResult",
     "build_private_resolver_document",
+    "capture_storage_expected_state",
     "default_storage_paths",
     "discover_obsidian_vaults",
     "default_storage_root_text",

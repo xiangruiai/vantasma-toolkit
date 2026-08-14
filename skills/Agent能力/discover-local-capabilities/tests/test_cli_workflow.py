@@ -172,6 +172,199 @@ class CapabilityMapEntrypointTests(unittest.TestCase):
 
 
 class CapabilityMapWorkflowTests(unittest.TestCase):
+    def test_explicit_installation_id_uses_runtime_validator_and_zero_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            before = _snapshot(fixture.base)
+            code, _, error = fixture.run(
+                "setup",
+                "plan",
+                *fixture.setup_args(),
+                "--installation-id",
+                "custom",
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("installation", error)
+            self.assertEqual(before, _snapshot(fixture.base))
+
+    def test_cli_apply_binds_plan_storage_state_across_writer_race(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            code, plan, error = fixture.run("setup", "plan", *fixture.setup_args())
+            self.assertEqual((code, error), (0, ""))
+            real_write = capability_map.write_storage_bundle
+            map_path = Path(plan["paths"]["map"])
+
+            def race(*args: object, **kwargs: object) -> object:
+                map_path.parent.mkdir(parents=True, exist_ok=True)
+                map_path.write_text("external plan-race owner\n", encoding="utf-8")
+                return real_write(*args, **kwargs)
+
+            with mock.patch("capability_map.write_storage_bundle", side_effect=race):
+                code, _, error = fixture.run(
+                    "setup",
+                    "apply",
+                    *fixture.setup_args(),
+                    "--confirmed",
+                    "--expected-plan-hash",
+                    str(plan["plan_hash"]),
+                )
+            self.assertEqual(code, 3)
+            self.assertIn("stale storage plan", error)
+            self.assertEqual(
+                map_path.read_text(encoding="utf-8"), "external plan-race owner\n"
+            )
+
+    def test_compensation_treats_external_chmod_as_conflict(self) -> None:
+        if os.name == "nt":
+            self.skipTest("POSIX mode semantics")
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            code, plan, error = fixture.run("setup", "plan", *fixture.setup_args())
+            self.assertEqual((code, error), (0, ""))
+            map_path = Path(plan["paths"]["map"])
+
+            def chmod_then_fail(*_args: object, **_kwargs: object) -> None:
+                map_path.chmod(0o600)
+                raise RuntimeError("synthetic instruction failure")
+
+            with mock.patch(
+                "capability_map.apply_instruction_plan", side_effect=chmod_then_fail
+            ):
+                code, _, error = fixture.run(
+                    "setup",
+                    "apply",
+                    *fixture.setup_args(),
+                    "--confirmed",
+                    "--expected-plan-hash",
+                    str(plan["plan_hash"]),
+                )
+            self.assertEqual(code, 3)
+            self.assertIn("compensation_conflict", error)
+            self.assertTrue(map_path.is_file())
+            self.assertEqual(stat.S_IMODE(map_path.stat().st_mode), 0o600)
+
+    def test_status_reports_health_without_hiding_installed_corruption(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            applied = fixture.install()
+            Path(applied["paths"]["inventory"]).write_text("{broken", encoding="utf-8")
+
+            code, status, error = fixture.run(
+                "status", "--storage", str(fixture.storage)
+            )
+            self.assertEqual((code, error), (0, ""))
+            self.assertTrue(status["installed"])
+            self.assertFalse(status["healthy"])
+            self.assertEqual(status["lifecycle"], "active")
+            self.assertTrue(
+                any("inventory" in item for item in status["health_errors"])
+            )
+
+        cases = ["empty-map", "resolver-schema", "instruction-block"]
+        if os.name != "nt":
+            cases.append("resolver-mode")
+        for case in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
+                fixture = WorkflowFixture(Path(temporary))
+                applied = fixture.install()
+                if case == "empty-map":
+                    Path(applied["paths"]["map"]).write_bytes(b"")
+                elif case == "resolver-schema":
+                    resolver_path = Path(applied["paths"]["resolver"])
+                    resolver = json.loads(resolver_path.read_text(encoding="utf-8"))
+                    resolver["records"] = [{}]
+                    resolver_path.write_text(json.dumps(resolver), encoding="utf-8")
+                    resolver_path.chmod(0o600)
+                elif case == "instruction-block":
+                    (fixture.project / "AGENTS.md").write_text(
+                        "external instructions\n", encoding="utf-8"
+                    )
+                else:
+                    Path(applied["paths"]["resolver"]).chmod(0o644)
+                code, status, error = fixture.run(
+                    "status", "--storage", str(fixture.storage)
+                )
+                self.assertEqual((code, error), (0, ""))
+                self.assertTrue(status["installed"])
+                self.assertFalse(status["healthy"])
+                self.assertTrue(status["health_errors"])
+
+    def test_migrated_source_is_inactive_and_cannot_mutate_active_install(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            applied = fixture.install()
+            old_state = Path(applied["paths"]["state"])
+            code, migrated, error = fixture.run(
+                "migrate",
+                "--storage",
+                str(fixture.storage),
+                "--to",
+                str(fixture.migrated),
+                "--confirmed",
+            )
+            self.assertEqual((code, error), (0, ""))
+            state = json.loads(old_state.read_text(encoding="utf-8"))
+            self.assertEqual(state["status"], "migrated")
+            self.assertFalse(state["active"])
+            self.assertEqual(state["migrated_to_state_id"], json.loads(
+                Path(migrated["paths"]["state"]).read_text(encoding="utf-8")
+            )["state_id"])
+
+            code, status, error = fixture.run(
+                "status", "--storage", str(fixture.storage)
+            )
+            self.assertEqual((code, error), (0, ""))
+            self.assertFalse(status["installed"])
+            self.assertEqual(status["lifecycle"], "migrated")
+
+            instructions_before = (fixture.project / "AGENTS.md").read_bytes()
+            for command in (
+                ("refresh", "--confirmed"),
+                ("migrate", "--to", str(fixture.base / "third"), "--confirmed"),
+                ("uninstall", "--confirmed"),
+                ("uninstall", "--confirmed", "--purge-data"),
+            ):
+                code, _, error = fixture.run(
+                    command[0], "--storage", str(fixture.storage), *command[1:]
+                )
+                self.assertEqual(code, 2, command)
+                self.assertIn("migrated", error)
+            self.assertEqual(
+                (fixture.project / "AGENTS.md").read_bytes(), instructions_before
+            )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            applied = fixture.install()
+            old_state_path = Path(applied["paths"]["state"])
+            original_state = old_state_path.read_bytes()
+            original_apply_state = capability_map._apply_state_plan
+
+            def fail_source_state(plan: object) -> object:
+                if getattr(plan, "path", None) == old_state_path:
+                    raise RuntimeError("synthetic source-state failure")
+                return original_apply_state(plan)
+
+            with mock.patch(
+                "capability_map._apply_state_plan", side_effect=fail_source_state
+            ):
+                code, _, error = fixture.run(
+                    "migrate",
+                    "--storage",
+                    str(fixture.storage),
+                    "--to",
+                    str(fixture.migrated),
+                    "--confirmed",
+                )
+            self.assertEqual(code, 3)
+            self.assertIn("synthetic source-state failure", error)
+            self.assertEqual(old_state_path.read_bytes(), original_state)
+            self.assertTrue(json.loads(original_state)["active"])
+            instructions = (fixture.project / "AGENTS.md").read_text(encoding="utf-8")
+            self.assertIn(str(fixture.storage / "本机能力地图.md"), instructions)
+            self.assertNotIn(str(fixture.migrated / "本机能力地图.md"), instructions)
+
     def test_private_runtime_state_uses_saved_targets_and_custom_codex_home(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             fixture = WorkflowFixture(Path(temporary))
@@ -565,6 +758,9 @@ class CapabilityMapWorkflowTests(unittest.TestCase):
             )
             self.assertEqual((code, code2, error, error2), (0, 0, "", ""))
             self.assertTrue(status["installed"])
+            self.assertTrue(status["healthy"])
+            self.assertEqual(status["health_errors"], [])
+            self.assertEqual(status["lifecycle"], "active")
             self.assertEqual(
                 paths["paths"]["map"],
                 str((fixture.storage / "本机能力地图.md").resolve()),

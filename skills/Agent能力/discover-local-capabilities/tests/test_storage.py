@@ -24,6 +24,7 @@ from capability_map_core.storage import (  # noqa: E402
     RootEvidence,
     StoragePaths,
     build_private_resolver_document,
+    capture_storage_expected_state,
     default_storage_paths,
     discover_obsidian_vaults,
     write_storage_bundle,
@@ -584,6 +585,41 @@ class ResolverDocumentTests(unittest.TestCase):
 
 
 class AtomicStorageWriterTests(unittest.TestCase):
+    def test_plan_expected_state_refuses_later_create_and_modify(self) -> None:
+        cases = ("create", "modify")
+        if os.name != "nt":
+            cases += ("chmod",)
+        for mutation in cases:
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
+                base = Path(temporary)
+                paths = default_storage_paths(
+                    home=base / "home",
+                    local_root=base / "map",
+                    private_root=base / "private",
+                )
+                if mutation != "create":
+                    write_storage_bundle(paths, _artifacts("old"), ())
+                expected = capture_storage_expected_state(paths)
+                paths.public_root.mkdir(parents=True, exist_ok=True)
+                if mutation == "chmod":
+                    concurrent = paths.map_path.read_bytes()
+                    paths.map_path.chmod(0o600)
+                else:
+                    concurrent = b"external plan-race owner\n"
+                    paths.map_path.write_bytes(concurrent)
+
+                with self.assertRaisesRegex(RuntimeError, "stale storage plan"):
+                    write_storage_bundle(
+                        paths,
+                        _artifacts("new"),
+                        (),
+                        expected_state=expected,
+                    )
+
+                self.assertEqual(paths.map_path.read_bytes(), concurrent)
+                if mutation == "chmod":
+                    self.assertEqual(stat.S_IMODE(paths.map_path.stat().st_mode), 0o600)
+
     @staticmethod
     def _file_evidence(path: Path) -> tuple[int, int, int, int, int, bytes]:
         metadata = os.lstat(path)
@@ -753,7 +789,7 @@ class AtomicStorageWriterTests(unittest.TestCase):
             self.assertEqual(before, _bundle_bytes(paths))
             self.assertEqual(mtimes, {path: path.stat().st_mtime_ns for path in before})
 
-    def test_normal_commit_replace_is_handle_bound(self) -> None:
+    def test_normal_commit_is_no_replace_and_handle_bound(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
             paths = default_storage_paths(
@@ -761,22 +797,41 @@ class AtomicStorageWriterTests(unittest.TestCase):
                 local_root=base / "map",
                 private_root=base / "private",
             )
+            write_storage_bundle(
+                paths,
+                _artifacts("old"),
+                (ResolverRecord("res_old", ["/old"]),),
+            )
 
             with mock.patch.object(
                 storage_module.os, "replace", wraps=os.replace
             ) as replaced, mock.patch.object(
+                storage_module.os, "link", wraps=os.link
+            ) as linked, mock.patch.object(
+                storage_module.os, "rename", wraps=os.rename
+            ) as renamed, mock.patch.object(
                 storage_module.os, "open", wraps=os.open
             ) as opened, mock.patch.object(
                 storage_module.os,
                 "chmod",
                 side_effect=AssertionError("path-based chmod is forbidden"),
             ):
-                write_storage_bundle(paths, _artifacts("secure"), ())
+                write_storage_bundle(
+                    paths,
+                    _artifacts("secure"),
+                    (ResolverRecord("res_new", ["/new"]),),
+                )
 
-            self.assertEqual(replaced.call_count, 5)
-            for call in replaced.call_args_list:
+            self.assertEqual(replaced.call_count, 0)
+            self.assertEqual(linked.call_count, 5)
+            self.assertEqual(renamed.call_count, 5)
+            for call in linked.call_args_list:
                 self.assertEqual(Path(call.args[0]).name, call.args[0])
                 self.assertEqual(Path(call.args[1]).name, call.args[1])
+                self.assertIsInstance(call.kwargs.get("src_dir_fd"), int)
+                self.assertIsInstance(call.kwargs.get("dst_dir_fd"), int)
+                self.assertFalse(call.kwargs.get("follow_symlinks"))
+            for call in renamed.call_args_list:
                 self.assertIsInstance(call.kwargs.get("src_dir_fd"), int)
                 self.assertIsInstance(call.kwargs.get("dst_dir_fd"), int)
             stable_names = {
@@ -812,7 +867,7 @@ class AtomicStorageWriterTests(unittest.TestCase):
             self.assertFalse(paths.public_root.exists())
             self.assertFalse(paths.private_root.exists())
 
-    def test_root_and_stage_swap_during_replace_cannot_write_attacker_artifact(self) -> None:
+    def test_root_and_stage_swap_during_link_cannot_write_attacker_artifact(self) -> None:
         if not hasattr(os, "symlink"):
             self.skipTest("symlinks unsupported")
         with tempfile.TemporaryDirectory() as temporary:
@@ -826,10 +881,10 @@ class AtomicStorageWriterTests(unittest.TestCase):
                 local_root=public_root,
                 private_root=base / "private",
             )
-            real_replace = os.replace
+            real_link = os.link
             swapped = False
 
-            def swap_before_replace(
+            def swap_before_link(
                 source: object, destination: object, *args: object, **kwargs: object
             ) -> None:
                 nonlocal swapped
@@ -839,15 +894,10 @@ class AtomicStorageWriterTests(unittest.TestCase):
                     original_stage = next(public_root.glob(".capability-stage-*"))
                     public_root.rename(parked_public)
                     public_root.symlink_to(attacker_root, target_is_directory=True)
-                    attacker_stage = attacker_root / original_stage.name
-                    attacker_stage.mkdir()
-                    (attacker_stage / Path(os.fspath(source)).name).write_bytes(
-                        b"attacker staged bytes"
-                    )
-                real_replace(source, destination, *args, **kwargs)
+                real_link(source, destination, *args, **kwargs)
 
             with mock.patch.object(
-                storage_module.os, "replace", side_effect=swap_before_replace
+                storage_module.os, "link", side_effect=swap_before_link
             ):
                 with self.assertRaises((ValueError, RuntimeError)):
                     write_storage_bundle(paths, _artifacts("raced"), ())
