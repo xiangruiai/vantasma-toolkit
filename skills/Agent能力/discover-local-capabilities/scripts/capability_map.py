@@ -704,7 +704,17 @@ def _installation_id(
             not evidence.existing_ancestors
             or evidence.existing_ancestors[-1].path != evidence.resolved_path
         ):
-            return frozenset(), frozenset()
+            try:
+                os.lstat(paths.private_root)
+            except FileNotFoundError:
+                return frozenset(), frozenset()
+            except OSError as error:
+                raise RefusedError(
+                    "installation history root could not be inspected safely"
+                ) from error
+            raise RefusedError(
+                "installation history root appeared after path capture"
+            )
         try:
             descriptor = _open_evidence_directory(
                 evidence, create=False, label="installation history root"
@@ -1294,6 +1304,27 @@ def _config_for(paths: StoragePaths) -> dict[str, Any]:
     return config
 
 
+def _runtime_paths_for_config(
+    base_paths: StoragePaths,
+    config: Mapping[str, Any],
+    *,
+    home: Path,
+    environ: Mapping[str, str],
+) -> StoragePaths:
+    installation_id = str(config["installation_id"])
+    paths = _namespaced_paths(
+        base_paths,
+        installation_id=installation_id,
+        home=home,
+        environ=environ,
+    )
+    if not hmac.compare_digest(
+        str(config["state_id"]), _state_id(paths, installation_id)
+    ):
+        raise WorkflowError("capability map state reference does not match storage")
+    return paths
+
+
 def _runtime_context(
     base_paths: StoragePaths,
     *,
@@ -1303,15 +1334,10 @@ def _runtime_context(
 ) -> RuntimeContext:
     config = _config_for(base_paths)
     installation_id = str(config["installation_id"])
-    paths = _namespaced_paths(
-        base_paths,
-        installation_id=installation_id,
-        home=home,
-        environ=environ,
+    paths = _runtime_paths_for_config(
+        base_paths, config, home=home, environ=environ
     )
     expected_state_id = _state_id(paths, installation_id)
-    if not hmac.compare_digest(str(config["state_id"]), expected_state_id):
-        raise WorkflowError("capability map state reference does not match storage")
     state_path = _state_path(paths)
     state = _read_json(state_path)
     if stat.S_IMODE(os.stat(state_path, follow_symlinks=False).st_mode) != 0o600:
@@ -2047,6 +2073,7 @@ def _purge_data(
         recovery_created = False
         public_recovery_created = False
         namespace_moved = False
+        moved_namespace_metadata: os.stat_result | None = None
         recovery_parent_metadata: os.stat_result | None = None
         recovery_metadata: os.stat_result | None = None
         public_recovery_metadata: os.stat_result | None = None
@@ -2253,14 +2280,20 @@ def _purge_data(
                 raise WorkflowError(
                     "purge_conflict: private namespace"
                 ) from move_error
+            namespace_moved = True
+            moved_namespace_metadata = entry_metadata(
+                recovery_fd, "private-namespace"
+            )
             if (
                 entry_metadata(installations_fd, namespace_name) is not None
-                or not same_directory(
-                    recovery_fd, "private-namespace", namespace_metadata
-                )
+                or moved_namespace_metadata is None
+                or stat.S_ISLNK(moved_namespace_metadata.st_mode)
+                or not stat.S_ISDIR(moved_namespace_metadata.st_mode)
+                or moved_namespace_metadata.st_dev != namespace_metadata.st_dev
+                or moved_namespace_metadata.st_ino != namespace_metadata.st_ino
+                or moved_namespace_metadata.st_mode != namespace_metadata.st_mode
             ):
                 raise WorkflowError("purge_conflict: private namespace")
-            namespace_moved = True
             if not recovery_chain_matches():
                 raise WorkflowError("purge recovery ancestry changed")
             _fsync_directory(public_fd)
@@ -2269,12 +2302,35 @@ def _purge_data(
             _fsync_directory(recovery_fd)
         except BaseException as error:
             conflicts: list[str] = []
+
+            def record_namespace_conflict() -> None:
+                try:
+                    retained = bool(
+                        recovery_fd is not None
+                        and moved_namespace_metadata is not None
+                        and same_directory(
+                            recovery_fd,
+                            "private-namespace",
+                            moved_namespace_metadata,
+                        )
+                    )
+                except BaseException:
+                    retained = False
+                conflicts.append(
+                    "private namespace retained in recovery"
+                    if retained
+                    else "private namespace"
+                )
+
             if namespace_moved:
                 if (
-                    entry_metadata(installations_fd, namespace_name) is None
+                    moved_namespace_metadata is not None
+                    and entry_metadata(installations_fd, namespace_name) is None
                     and recovery_fd is not None
                     and same_directory(
-                        recovery_fd, "private-namespace", namespace_metadata
+                        recovery_fd,
+                        "private-namespace",
+                        moved_namespace_metadata,
                     )
                 ):
                     try:
@@ -2284,10 +2340,23 @@ def _purge_data(
                             src_dir_fd=recovery_fd,
                             dst_dir_fd=installations_fd,
                         )
-                    except OSError:
-                        conflicts.append("private namespace")
+                    except BaseException:
+                        record_namespace_conflict()
+                    else:
+                        if (
+                            not same_directory(
+                                installations_fd,
+                                namespace_name,
+                                moved_namespace_metadata,
+                            )
+                            or entry_metadata(
+                                recovery_fd, "private-namespace"
+                            )
+                            is not None
+                        ):
+                            record_namespace_conflict()
                 else:
-                    conflicts.append("private namespace")
+                    record_namespace_conflict()
             for name, expected in reversed(moved):
                 if not restore_public(name, expected):
                     conflicts.append(name)
@@ -2355,27 +2424,64 @@ def _handle_uninstall(
         if args.purge_data and not args.dry_run
         else None
     )
-    context = _runtime_context(
-        base_paths,
-        home=home,
-        environ=environ,
-        require_active=not args.purge_data,
-    )
-    lifecycle = str(context.state["status"])
-    if args.purge_data and lifecycle not in {"active", "uninstalled"}:
-        raise RefusedError(f"capability map installation has {lifecycle}")
-    paths = context.paths
+    prepared_config: dict[str, Any] | None = None
+    prepared_paths: StoragePaths | None = None
     purge_namespace_evidence: RootEvidence | None = None
     if purge_private_base_evidence is not None:
-        private_base = paths.private_root.parent.parent
+        prepared_config = _config_for(base_paths)
+        prepared_paths = _runtime_paths_for_config(
+            base_paths, prepared_config, home=home, environ=environ
+        )
+        private_base = prepared_paths.private_root.parent.parent
         if (
             purge_private_base_evidence.resolved_path != private_base
             or not _directory_evidence_is_current(
                 purge_private_base_evidence, label="purge private base"
             )
         ):
+            raise WorkflowError("purge private base changed before state read")
+        purge_namespace_evidence = capture_directory_evidence(
+            prepared_paths.private_root
+        )
+        if not _directory_evidence_is_current(
+            purge_namespace_evidence, label="purge installation namespace"
+        ):
+            raise WorkflowError(
+                "purge installation namespace changed before state read"
+            )
+    context = _runtime_context(
+        base_paths,
+        home=home,
+        environ=environ,
+        require_active=not args.purge_data,
+    )
+    if purge_private_base_evidence is not None:
+        if (
+            prepared_config is None
+            or prepared_paths is None
+            or purge_namespace_evidence is None
+            or context.config != prepared_config
+            or context.paths.public_root != prepared_paths.public_root
+            or context.paths.private_root != prepared_paths.private_root
+        ):
+            raise WorkflowError(
+                "purge installation namespace changed while reading state"
+            )
+        if not _directory_evidence_is_current(
+            purge_private_base_evidence, label="purge private base"
+        ):
             raise WorkflowError("purge private base changed while reading state")
-        purge_namespace_evidence = capture_directory_evidence(paths.private_root)
+        if not _directory_evidence_is_current(
+            purge_namespace_evidence,
+            label="purge installation namespace",
+        ):
+            raise WorkflowError(
+                "purge installation namespace changed while reading state"
+            )
+    lifecycle = str(context.state["status"])
+    if args.purge_data and lifecycle not in {"active", "uninstalled"}:
+        raise RefusedError(f"capability map installation has {lifecycle}")
+    paths = context.paths
     request = context.target_request
     installation_id = str(context.config["installation_id"])
     instruction_plan = build_uninstall_plan(

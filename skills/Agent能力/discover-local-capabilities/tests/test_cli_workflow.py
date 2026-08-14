@@ -439,6 +439,68 @@ class CapabilityMapWorkflowTests(unittest.TestCase):
             self.assertEqual(_snapshot(parked_base), swapped["parked"])
             self.assertEqual(_snapshot(private_base), swapped["replacement"])
 
+    def test_installation_history_refuses_root_restored_after_missing_capture(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            setup_args = (
+                *fixture.setup_args(),
+                "--installation-id",
+                "inst_restored_history",
+            )
+            code, plan, error = fixture.run("setup", "plan", *setup_args)
+            self.assertEqual((code, error), (0, ""))
+            code, applied, error = fixture.run(
+                "setup",
+                "apply",
+                *setup_args,
+                "--confirmed",
+                "--expected-plan-hash",
+                str(plan["plan_hash"]),
+            )
+            self.assertEqual((code, error), (0, ""))
+            code, _, error = fixture.run(
+                "uninstall",
+                "--storage",
+                str(fixture.storage),
+                "--confirmed",
+                "--purge-data",
+            )
+            self.assertEqual((code, error), (0, ""))
+            private_base = Path(applied["paths"]["state"]).parent.parent.parent
+            parked_base = private_base.parent / "parked-before-storage-paths"
+            original_inode = os.lstat(private_base).st_ino
+            original_snapshot = _snapshot(private_base)
+            real_storage_paths = capability_map._storage_paths
+            captured_missing = False
+
+            def storage_paths_while_parked(*args: object, **kwargs: object) -> object:
+                nonlocal captured_missing
+                if captured_missing:
+                    return real_storage_paths(*args, **kwargs)
+                captured_missing = True
+                os.rename(private_base, parked_base)
+                try:
+                    paths = real_storage_paths(*args, **kwargs)
+                finally:
+                    os.rename(parked_base, private_base)
+                return paths
+
+            with mock.patch(
+                "capability_map._storage_paths", side_effect=storage_paths_while_parked
+            ):
+                code, _, error = fixture.run(
+                    "setup",
+                    "plan",
+                    *fixture.setup_args(),
+                    "--installation-id",
+                    "inst_restored_history",
+                )
+
+            self.assertEqual(code, 2)
+            self.assertIn("history", error)
+            self.assertEqual(os.lstat(private_base).st_ino, original_inode)
+            self.assertEqual(_snapshot(private_base), original_snapshot)
+
     def test_installation_history_scan_is_bounded_and_closes_iterator(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             fixture = WorkflowFixture(Path(temporary))
@@ -896,6 +958,146 @@ class CapabilityMapWorkflowTests(unittest.TestCase):
                 "vantasma:discover-local-capabilities:start",
                 (fixture.project / "AGENTS.md").read_text(encoding="utf-8"),
             )
+
+    def test_purge_rejects_namespace_swap_after_state_read(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            applied = fixture.install()
+            namespace = Path(applied["paths"]["state"]).parent
+            parked_namespace = namespace.parent / "parked-after-state-read"
+            real_runtime = capability_map._runtime_context
+            swapped: dict[str, object] = {}
+
+            def runtime_then_swap(*args: object, **kwargs: object) -> object:
+                context = real_runtime(*args, **kwargs)
+                if not swapped:
+                    os.rename(namespace, parked_namespace)
+                    shutil.copytree(parked_namespace, namespace)
+                    swapped["parked_inode"] = os.lstat(parked_namespace).st_ino
+                    swapped["replacement_inode"] = os.lstat(namespace).st_ino
+                    swapped["parked"] = _snapshot(parked_namespace)
+                    swapped["replacement"] = _snapshot(namespace)
+                return context
+
+            with mock.patch(
+                "capability_map._runtime_context", side_effect=runtime_then_swap
+            ):
+                code, _, error = fixture.run(
+                    "uninstall",
+                    "--storage",
+                    str(fixture.storage),
+                    "--confirmed",
+                    "--purge-data",
+                )
+
+            self.assertEqual(code, 3)
+            self.assertIn("namespace", error)
+            self.assertEqual(
+                os.lstat(parked_namespace).st_ino, swapped["parked_inode"]
+            )
+            self.assertEqual(os.lstat(namespace).st_ino, swapped["replacement_inode"])
+            self.assertEqual(_snapshot(parked_namespace), swapped["parked"])
+            self.assertEqual(_snapshot(namespace), swapped["replacement"])
+            self.assertIn(
+                "vantasma:discover-local-capabilities:start",
+                (fixture.project / "AGENTS.md").read_text(encoding="utf-8"),
+            )
+
+    def test_purge_rolls_back_actual_substituted_namespace(self) -> None:
+        for occupy_source in (False, True):
+            with self.subTest(occupy_source=occupy_source), tempfile.TemporaryDirectory() as temporary:
+                fixture = WorkflowFixture(Path(temporary))
+                applied = fixture.install()
+                namespace = Path(applied["paths"]["state"]).parent
+                parked_namespace = namespace.parent / "parked-before-native-rename"
+                real_rename = capability_map._rename_directory_no_replace
+                moved: dict[str, object] = {}
+
+                def substitute_then_rename(
+                    source: object,
+                    destination: object,
+                    *,
+                    src_dir_fd: int | None = None,
+                    dst_dir_fd: int | None = None,
+                ) -> None:
+                    if not moved and Path(source).name == namespace.name:
+                        os.rename(namespace, parked_namespace)
+                        shutil.copytree(parked_namespace, namespace)
+                        moved["parked_inode"] = os.lstat(parked_namespace).st_ino
+                        moved["replacement_inode"] = os.lstat(namespace).st_ino
+                        moved["parked"] = _snapshot(parked_namespace)
+                        moved["replacement"] = _snapshot(namespace)
+                        real_rename(
+                            source,
+                            destination,
+                            src_dir_fd=src_dir_fd,
+                            dst_dir_fd=dst_dir_fd,
+                        )
+                        if occupy_source:
+                            namespace.mkdir(mode=0o700)
+                            (namespace / "external.txt").write_text(
+                                "external source owner", encoding="utf-8"
+                            )
+                            moved["external_inode"] = os.lstat(namespace).st_ino
+                            moved["external"] = _snapshot(namespace)
+                        return
+                    real_rename(
+                        source,
+                        destination,
+                        src_dir_fd=src_dir_fd,
+                        dst_dir_fd=dst_dir_fd,
+                    )
+
+                with mock.patch(
+                    "capability_map._rename_directory_no_replace",
+                    side_effect=substitute_then_rename,
+                ):
+                    code, _, error = fixture.run(
+                        "uninstall",
+                        "--storage",
+                        str(fixture.storage),
+                        "--confirmed",
+                        "--purge-data",
+                    )
+
+                self.assertEqual(code, 3)
+                self.assertIn("purge_conflict", error)
+                self.assertIn("compensation_conflict: instructions", error)
+                self.assertEqual(
+                    os.lstat(parked_namespace).st_ino, moved["parked_inode"]
+                )
+                self.assertEqual(_snapshot(parked_namespace), moved["parked"])
+                if occupy_source:
+                    self.assertIn("recovery", error)
+                    self.assertEqual(
+                        os.lstat(namespace).st_ino, moved["external_inode"]
+                    )
+                    self.assertEqual(_snapshot(namespace), moved["external"])
+                    recovery_names = tuple(
+                        namespace.parent.parent.glob(
+                            "purge-recovery/*/private-namespace"
+                        )
+                    )
+                    self.assertEqual(len(recovery_names), 1)
+                    self.assertEqual(
+                        os.lstat(recovery_names[0]).st_ino,
+                        moved["replacement_inode"],
+                    )
+                    self.assertEqual(
+                        _snapshot(recovery_names[0]), moved["replacement"]
+                    )
+                else:
+                    self.assertEqual(
+                        os.lstat(namespace).st_ino, moved["replacement_inode"]
+                    )
+                    self.assertEqual(_snapshot(namespace), moved["replacement"])
+                    self.assertFalse(
+                        tuple(
+                            namespace.parent.parent.glob(
+                                "purge-recovery/*/private-namespace"
+                            )
+                        )
+                    )
 
     def test_compensation_builder_reuses_original_backup_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
