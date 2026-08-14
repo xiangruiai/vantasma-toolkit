@@ -355,6 +355,150 @@ class CapabilityMapWorkflowTests(unittest.TestCase):
             self.assertNotEqual(plan["installation_id"], old_installation_id)
             self.assertEqual(_snapshot(fixture.base), before)
 
+    def test_recovery_history_matches_only_an_exact_installation_id(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            setup_args = (
+                *fixture.setup_args(),
+                "--installation-id",
+                "inst_alpha-beta",
+            )
+            code, plan, error = fixture.run("setup", "plan", *setup_args)
+            self.assertEqual((code, error), (0, ""))
+            code, _, error = fixture.run(
+                "setup",
+                "apply",
+                *setup_args,
+                "--confirmed",
+                "--expected-plan-hash",
+                str(plan["plan_hash"]),
+            )
+            self.assertEqual((code, error), (0, ""))
+            code, _, error = fixture.run(
+                "uninstall",
+                "--storage",
+                str(fixture.storage),
+                "--confirmed",
+                "--purge-data",
+            )
+            self.assertEqual((code, error), (0, ""))
+            before = _snapshot(fixture.base)
+
+            code, plan, error = fixture.run(
+                "setup",
+                "plan",
+                *fixture.setup_args(),
+                "--installation-id",
+                "inst_alpha",
+            )
+
+            self.assertEqual((code, error), (0, ""))
+            self.assertEqual(plan["installation_id"], "inst_alpha")
+            self.assertEqual(_snapshot(fixture.base), before)
+
+    def test_installation_history_uses_storage_root_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            applied = fixture.install()
+            code, _, error = fixture.run(
+                "uninstall",
+                "--storage",
+                str(fixture.storage),
+                "--confirmed",
+                "--purge-data",
+            )
+            self.assertEqual((code, error), (0, ""))
+            private_base = Path(applied["paths"]["state"]).parent.parent.parent
+            parked_base = private_base.parent / "parked-history-root"
+            real_installation_id = capability_map._installation_id
+            swapped: dict[str, object] = {}
+
+            def swap_then_select(*args: object, **kwargs: object) -> str:
+                if not swapped:
+                    os.rename(private_base, parked_base)
+                    shutil.copytree(parked_base, private_base)
+                    swapped["parked"] = _snapshot(parked_base)
+                    swapped["replacement"] = _snapshot(private_base)
+                    swapped["parked_inode"] = os.lstat(parked_base).st_ino
+                    swapped["replacement_inode"] = os.lstat(private_base).st_ino
+                return real_installation_id(*args, **kwargs)
+
+            with mock.patch(
+                "capability_map._installation_id", side_effect=swap_then_select
+            ):
+                code, _, error = fixture.run(
+                    "setup", "plan", *fixture.setup_args()
+                )
+
+            self.assertEqual(code, 2)
+            self.assertIn("history", error)
+            self.assertEqual(os.lstat(parked_base).st_ino, swapped["parked_inode"])
+            self.assertEqual(
+                os.lstat(private_base).st_ino, swapped["replacement_inode"]
+            )
+            self.assertEqual(_snapshot(parked_base), swapped["parked"])
+            self.assertEqual(_snapshot(private_base), swapped["replacement"])
+
+    def test_installation_history_scan_is_bounded_and_closes_iterator(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            fixture.install()
+            code, _, error = fixture.run(
+                "uninstall",
+                "--storage",
+                str(fixture.storage),
+                "--confirmed",
+                "--purge-data",
+            )
+            self.assertEqual((code, error), (0, ""))
+            real_scandir = os.scandir
+            observed = {"yielded": 0, "closed": False}
+
+            class Entry:
+                def __init__(self, name: str) -> None:
+                    self.name = name
+
+            class Entries:
+                def __enter__(self) -> "Entries":
+                    return self
+
+                def __exit__(self, *args: object) -> None:
+                    observed["closed"] = True
+
+                def __iter__(self) -> "Entries":
+                    return self
+
+                def __next__(self) -> Entry:
+                    observed["yielded"] += 1
+                    return Entry(f"history-{observed['yielded']}")
+
+            def bounded_scandir(path: object) -> object:
+                if isinstance(path, int):
+                    return Entries()
+                return real_scandir(path)
+
+            fake_scandir = mock.Mock(side_effect=bounded_scandir)
+            supported = set(os.supports_fd)
+            supported.add(fake_scandir)
+            before = _snapshot(fixture.base)
+            with mock.patch("capability_map.os.scandir", fake_scandir), mock.patch.object(
+                capability_map.os, "supports_fd", supported
+            ), mock.patch(
+                "capability_map._scan",
+                side_effect=capability_map.WorkflowError(
+                    "installation history scan did not fail closed"
+                ),
+            ):
+                code, _, error = fixture.run(
+                    "setup", "plan", *fixture.setup_args()
+                )
+
+            self.assertEqual(code, 2)
+            self.assertIn("too large", error)
+            self.assertEqual(observed["yielded"], 4097)
+            self.assertTrue(observed["closed"])
+            self.assertEqual(_snapshot(fixture.base), before)
+
     def test_setup_fails_closed_when_purge_history_is_a_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             fixture = WorkflowFixture(Path(temporary))
@@ -703,6 +847,101 @@ class CapabilityMapWorkflowTests(unittest.TestCase):
                 original_state,
             )
             self.assertEqual(_snapshot(replacement_namespace), replacement_snapshot)
+            self.assertNotIn(
+                "vantasma:discover-local-capabilities:start",
+                (fixture.project / "AGENTS.md").read_text(encoding="utf-8"),
+            )
+
+    def test_purge_rejects_namespace_only_swap_after_instruction_removal(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            applied = fixture.install()
+            namespace = Path(applied["paths"]["state"]).parent
+            parked_namespace = namespace.parent / "parked-installation-namespace"
+            real_apply = capability_map.apply_instruction_plan
+            swapped: dict[str, object] = {}
+
+            def apply_then_swap(*args: object, **kwargs: object) -> object:
+                result = real_apply(*args, **kwargs)
+                plan = args[0]
+                if getattr(plan, "action", None) == "uninstall" and not swapped:
+                    os.rename(namespace, parked_namespace)
+                    shutil.copytree(parked_namespace, namespace)
+                    swapped["parked_inode"] = os.lstat(parked_namespace).st_ino
+                    swapped["replacement_inode"] = os.lstat(namespace).st_ino
+                    swapped["parked"] = _snapshot(parked_namespace)
+                    swapped["replacement"] = _snapshot(namespace)
+                return result
+
+            with mock.patch(
+                "capability_map.apply_instruction_plan", side_effect=apply_then_swap
+            ):
+                code, _, error = fixture.run(
+                    "uninstall",
+                    "--storage",
+                    str(fixture.storage),
+                    "--confirmed",
+                    "--purge-data",
+                )
+
+            self.assertEqual(code, 3)
+            self.assertIn("compensation_conflict: instructions", error)
+            self.assertEqual(
+                os.lstat(parked_namespace).st_ino, swapped["parked_inode"]
+            )
+            self.assertEqual(os.lstat(namespace).st_ino, swapped["replacement_inode"])
+            self.assertEqual(_snapshot(parked_namespace), swapped["parked"])
+            self.assertEqual(_snapshot(namespace), swapped["replacement"])
+            self.assertNotIn(
+                "vantasma:discover-local-capabilities:start",
+                (fixture.project / "AGENTS.md").read_text(encoding="utf-8"),
+            )
+
+    def test_compensation_builder_reuses_original_backup_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            applied = fixture.install()
+            namespace = Path(applied["paths"]["state"]).parent
+            parked_namespace = namespace.parent / "parked-before-compensation-build"
+            real_build = capability_map.build_instruction_plan
+            swapped: dict[str, object] = {}
+            evidence_was_passed = False
+
+            def fail_purge(*args: object, **kwargs: object) -> object:
+                raise capability_map.WorkflowError("forced purge failure")
+
+            def swap_then_build(*args: object, **kwargs: object) -> object:
+                nonlocal evidence_was_passed
+                evidence_was_passed = kwargs.get("backup_root_evidence") is not None
+                if not swapped:
+                    os.rename(namespace, parked_namespace)
+                    shutil.copytree(parked_namespace, namespace)
+                    swapped["parked_inode"] = os.lstat(parked_namespace).st_ino
+                    swapped["replacement_inode"] = os.lstat(namespace).st_ino
+                    swapped["parked"] = _snapshot(parked_namespace)
+                    swapped["replacement"] = _snapshot(namespace)
+                return real_build(*args, **kwargs)
+
+            with mock.patch("capability_map._purge_data", side_effect=fail_purge), mock.patch(
+                "capability_map.build_instruction_plan", side_effect=swap_then_build
+            ):
+                code, _, error = fixture.run(
+                    "uninstall",
+                    "--storage",
+                    str(fixture.storage),
+                    "--confirmed",
+                    "--purge-data",
+                )
+
+            self.assertEqual(code, 3)
+            self.assertIn("compensation_conflict: instructions", error)
+            self.assertTrue(evidence_was_passed)
+            self.assertEqual(
+                os.lstat(parked_namespace).st_ino, swapped["parked_inode"]
+            )
+            self.assertEqual(os.lstat(namespace).st_ino, swapped["replacement_inode"])
+            self.assertEqual(_snapshot(parked_namespace), swapped["parked"])
+            self.assertEqual(_snapshot(namespace), swapped["replacement"])
             self.assertNotIn(
                 "vantasma:discover-local-capabilities:start",
                 (fixture.project / "AGENTS.md").read_text(encoding="utf-8"),

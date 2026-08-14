@@ -676,32 +676,36 @@ def _installation_id(
                     "installation history is not a physical directory"
                 )
             try:
-                names = os.listdir(descriptor)
-            except OSError as error:
+                names: set[str] = set()
+                with os.scandir(descriptor) as entries:
+                    for index, entry in enumerate(entries, start=1):
+                        if index > 4096:
+                            raise RefusedError(
+                                "installation history is too large to inspect"
+                            )
+                        names.add(entry.name)
+            except RefusedError:
+                raise
+            except (OSError, TypeError) as error:
                 raise RefusedError(
                     "installation history could not be inspected safely"
                 ) from error
-            if len(names) > 4096:
-                raise RefusedError("installation history is too large to inspect")
             return frozenset(names)
         finally:
             os.close(descriptor)
 
     def installation_history() -> tuple[frozenset[str], frozenset[str]]:
-        if not _secure_backend_available() or os.listdir not in os.supports_fd:
+        if not _secure_backend_available() or os.scandir not in os.supports_fd:
             raise RefusedError("secure installation history inspection is unavailable")
-        try:
-            metadata = os.lstat(paths.private_root)
-        except FileNotFoundError:
+        evidence = paths.private_root_evidence
+        if evidence is None or evidence.resolved_path != paths.private_root:
+            raise RefusedError("installation history root evidence is invalid")
+        if (
+            not evidence.existing_ancestors
+            or evidence.existing_ancestors[-1].path != evidence.resolved_path
+        ):
             return frozenset(), frozenset()
-        except OSError as error:
-            raise RefusedError(
-                "installation history could not be inspected safely"
-            ) from error
-        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
-            raise RefusedError("installation history root is not a physical directory")
         try:
-            evidence = capture_directory_evidence(paths.private_root)
             descriptor = _open_evidence_directory(
                 evidence, create=False, label="installation history root"
             )
@@ -717,12 +721,18 @@ def _installation_id(
         return live, recovered
 
     live_names, recovery_names = installation_history()
+    recovered_ids = frozenset(
+        owner
+        for name in recovery_names
+        for owner, separator, suffix in (name.rpartition("-"),)
+        if separator
+        and len(suffix) == 16
+        and all(character in "0123456789abcdef" for character in suffix)
+    )
 
     def namespace_exists(installation_id: str) -> bool:
         namespace_name = _private_namespace_id(paths.public_root, installation_id)
-        return namespace_name in live_names or any(
-            name.startswith(installation_id + "-") for name in recovery_names
-        )
+        return namespace_name in live_names or installation_id in recovered_ids
 
     if provided is not None:
         try:
@@ -1918,6 +1928,7 @@ def _purge_data(
     state_path: Path,
     expected_public: Mapping[Path, FileSnapshot],
     private_base_evidence: RootEvidence,
+    namespace_evidence: RootEvidence,
 ) -> Path:
     if (
         paths.private_root.parent.name != _PRIVATE_INSTALLATIONS
@@ -1939,6 +1950,12 @@ def _purge_data(
     private_base = paths.private_root.parent.parent
     if private_base_evidence.resolved_path != private_base:
         raise WorkflowError("purge private base evidence does not match")
+    if (
+        namespace_evidence.resolved_path != paths.private_root
+        or not namespace_evidence.existing_ancestors
+        or namespace_evidence.existing_ancestors[-1].path != paths.private_root
+    ):
+        raise WorkflowError("purge installation namespace evidence does not match")
     recovery_name = (
         installation_id
         + "-"
@@ -2010,6 +2027,13 @@ def _purge_data(
         )
         stack.callback(os.close, namespace_fd)
         namespace_metadata = os.fstat(namespace_fd)
+        expected_namespace = namespace_evidence.existing_ancestors[-1]
+        if (
+            namespace_metadata.st_dev != expected_namespace.device
+            or namespace_metadata.st_ino != expected_namespace.inode
+            or namespace_metadata.st_mode != expected_namespace.mode
+        ):
+            raise WorkflowError("purge installation namespace changed")
         if not same_directory(
             installations_fd, namespace_name, namespace_metadata
         ):
@@ -2409,8 +2433,11 @@ def _handle_uninstall(
             expected_plan_hash=instruction_plan.plan_hash,
         )
     if args.purge_data:
-        if purge_private_base_evidence is None:  # pragma: no cover - guarded above
-            raise WorkflowError("purge private base evidence is missing")
+        if (
+            purge_private_base_evidence is None
+            or purge_namespace_evidence is None
+        ):  # pragma: no cover - guarded above
+            raise WorkflowError("purge ownership evidence is missing")
         try:
             recovery = _purge_data(
                 paths,
@@ -2418,6 +2445,7 @@ def _handle_uninstall(
                 state_path=context.state_path,
                 expected_public=purge_expected,
                 private_base_evidence=purge_private_base_evidence,
+                namespace_evidence=purge_namespace_evidence,
             )
         except BaseException as error:
             if instruction_changed:
@@ -2441,6 +2469,7 @@ def _handle_uninstall(
                         paths.map_path,
                         paths.resolver_path,
                         backup_root=paths.private_root / "instruction-backups",
+                        backup_root_evidence=instruction_plan.backup_root_evidence,
                     )
                     apply_instruction_plan(
                         reinstall,

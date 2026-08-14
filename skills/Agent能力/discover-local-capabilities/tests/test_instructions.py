@@ -224,6 +224,39 @@ class InstructionPlanTests(unittest.TestCase):
             self.assertFalse((base / "public").exists())
             self.assertFalse((base / "private").exists())
 
+    def test_install_plan_reuses_pinned_backup_evidence_at_apply(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            target_path = base / "AGENTS.md"
+            namespace = base / "private" / "installation"
+            namespace.mkdir(parents=True)
+            backup_root = namespace / "instruction-backups"
+            backup_evidence = capture_directory_evidence(backup_root)
+            plan = build_instruction_plan(
+                self._request(target_path),
+                installation_id="install_pinned",
+                map_path=base / "public" / "map.md",
+                resolver_path=namespace / "resolver.json",
+                backup_root=backup_root,
+                backup_root_evidence=backup_evidence,
+            )
+            parked = namespace.parent / "parked-installation"
+            os.rename(namespace, parked)
+            namespace.mkdir()
+
+            with self.assertRaisesRegex(
+                (TransactionError, ValueError), "ancestry|stale|backup"
+            ):
+                apply_instruction_plan(
+                    plan,
+                    confirmed=True,
+                    expected_plan_hash=plan.plan_hash,
+                )
+
+            self.assertFalse(target_path.exists())
+            self.assertFalse(backup_root.exists())
+            self.assertFalse((parked / "instruction-backups").exists())
+
     def test_rendered_block_is_private_neutral_and_uses_exact_absolute_paths(self) -> None:
         block = render_managed_block(
             installation_id="opaque.1",

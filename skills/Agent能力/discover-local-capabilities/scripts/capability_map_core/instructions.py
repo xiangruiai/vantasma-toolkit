@@ -613,12 +613,30 @@ def _make_plan(
     )
 
 
+def _selected_backup_evidence(
+    backup_root: Path,
+    provided: DirectoryEvidence | None,
+) -> DirectoryEvidence:
+    if provided is None:
+        return capture_directory_evidence(backup_root)
+    if not isinstance(provided, DirectoryEvidence):
+        raise TypeError("backup_root_evidence must be DirectoryEvidence")
+    try:
+        resolved_backup = backup_root.resolve(strict=False)
+    except OSError as error:
+        raise ValueError("backup_root could not be resolved") from error
+    if provided.resolved_path != resolved_backup:
+        raise ValueError("backup_root_evidence does not match backup_root")
+    return provided
+
+
 def build_instruction_plan(
     target_request: InstructionTargetRequest,
     installation_id: str,
     map_path: Path,
     resolver_path: Path,
     backup_root: Path | None = None,
+    backup_root_evidence: DirectoryEvidence | None = None,
 ) -> InstructionPlan:
     """Build a deterministic install/update plan without any filesystem writes."""
 
@@ -637,7 +655,9 @@ def build_instruction_plan(
         map_path=exact_map,
         resolver_path=exact_resolver,
     )
-    backup_evidence = capture_directory_evidence(private_backup)
+    backup_evidence = _selected_backup_evidence(
+        private_backup, backup_root_evidence
+    )
     operations = tuple(
         _operation_for_target(
             target,
@@ -663,6 +683,7 @@ def build_uninstall_plan(
     target_request: InstructionTargetRequest,
     installation_id: str,
     backup_root: Path | None = None,
+    backup_root_evidence: DirectoryEvidence | None = None,
 ) -> InstructionPlan:
     """Build a block-only uninstall plan; capability data is deliberately untouched."""
 
@@ -694,7 +715,9 @@ def build_uninstall_plan(
         for operation in candidate_operations
         if operation.operation != "noop" or operation.diagnostics
     )
-    backup_evidence = capture_directory_evidence(private_backup)
+    backup_evidence = _selected_backup_evidence(
+        private_backup, backup_root_evidence
+    )
     return _make_plan(
         action="uninstall",
         installation_id=safe_id,
@@ -794,12 +817,14 @@ def apply_instruction_plan(
             map_path=plan.map_path,
             resolver_path=plan.resolver_path,
             backup_root=plan.backup_root,
+            backup_root_evidence=plan.backup_root_evidence,
         )
     elif plan.action == "uninstall":
         current = build_uninstall_plan(
             plan.target_request,
             installation_id=plan.installation_id,
             backup_root=plan.backup_root,
+            backup_root_evidence=plan.backup_root_evidence,
         )
     else:  # pragma: no cover - constructed plans constrain this
         raise ValueError("unsupported instruction plan action")
