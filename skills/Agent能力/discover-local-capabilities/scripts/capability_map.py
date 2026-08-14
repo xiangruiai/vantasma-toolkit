@@ -19,6 +19,7 @@ import json
 import os
 import stat
 import sys
+from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -1456,15 +1457,220 @@ def _capability_from_public(raw: Any) -> Capability:
     return capability
 
 
+_INVENTORY_KEYS = {
+    "metadata",
+    "summary",
+    "capabilities",
+    "unclassified",
+    "diagnostics",
+}
+_CAPABILITY_KEYS = {
+    "id",
+    "kind",
+    "name",
+    "description",
+    "aliases",
+    "tags",
+    "scenes",
+    "source_locations",
+    "resolver_id",
+    "scope",
+    "provider",
+    "version",
+    "states",
+    "classification_confidence",
+    "diagnostics",
+}
+_DIAGNOSTIC_KEYS = {"severity", "code", "message", "details"}
+_MAP_MARKERS = (
+    "# 本机能力地图",
+    "## 使用方式",
+    "## 状态边界",
+    "## 场景 → 候选能力",
+    "## 待人工归类",
+    "## 扫描诊断",
+    "## 刷新、迁移、卸载与帮助",
+)
+_RECEIPT_MARKERS = (
+    "# Capability map setup receipt",
+    "## Public artifacts",
+    "## Private runtime state",
+    "## Counts",
+    "## Agent instruction targets",
+    "## Next steps",
+)
+
+
+def _generated_identifier(value: Any, prefix: str) -> bool:
+    return bool(
+        isinstance(value, str)
+        and len(value) == len(prefix) + 24
+        and value.startswith(prefix)
+        and all(character in "0123456789abcdef" for character in value[len(prefix) :])
+    )
+
+
+def _public_diagnostic(raw: Any) -> Diagnostic:
+    if (
+        not isinstance(raw, dict)
+        or set(raw) != _DIAGNOSTIC_KEYS
+        or not isinstance(raw.get("severity"), str)
+        or not isinstance(raw.get("code"), str)
+        or not isinstance(raw.get("message"), str)
+        or not isinstance(raw.get("details"), dict)
+    ):
+        raise ValueError("inventory diagnostic schema mismatch")
+    diagnostic = Diagnostic(
+        raw["severity"], raw["code"], raw["message"], raw["details"]
+    )
+    if diagnostic.to_public_dict() != raw:
+        raise ValueError("inventory diagnostic is not canonical public data")
+    return diagnostic
+
+
+def _integer_count(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _count_mapping(value: Any) -> bool:
+    return bool(
+        isinstance(value, dict)
+        and all(
+            isinstance(key, str) and key and _integer_count(count) and count > 0
+            for key, count in value.items()
+        )
+    )
+
+
+def _validated_inventory_document(inventory: Any) -> tuple[Capability, ...]:
+    if not isinstance(inventory, dict) or set(inventory) != _INVENTORY_KEYS:
+        raise ValueError("inventory top-level schema mismatch")
+    metadata = inventory["metadata"]
+    summary = inventory["summary"]
+    raw_capabilities = inventory["capabilities"]
+    raw_unclassified = inventory["unclassified"]
+    raw_diagnostics = inventory["diagnostics"]
+    if (
+        not isinstance(metadata, dict)
+        or set(metadata)
+        != {"schema_version", "generated_at", "capability_count", "diagnostics"}
+        or metadata.get("schema_version") != 2
+        or not _integer_count(metadata.get("schema_version"))
+        or not isinstance(metadata.get("generated_at"), str)
+        or sanitize_text(metadata.get("generated_at"), max_length=128)
+        != metadata.get("generated_at")
+        or not _integer_count(metadata.get("capability_count"))
+        or not isinstance(metadata.get("diagnostics"), list)
+        or len(metadata.get("diagnostics")) > 100_000
+        or not isinstance(summary, dict)
+        or set(summary)
+        != {"total", "by_kind", "by_scene", "unclassified", "diagnostics"}
+        or not isinstance(raw_capabilities, list)
+        or len(raw_capabilities) > 100_000
+        or not isinstance(raw_unclassified, list)
+        or len(raw_unclassified) > 100_000
+        or not isinstance(raw_diagnostics, list)
+        or len(raw_diagnostics) > 100_000
+    ):
+        raise ValueError("inventory metadata or collection schema mismatch")
+
+    metadata_diagnostics = tuple(
+        _public_diagnostic(item) for item in metadata["diagnostics"]
+    )
+    diagnostics = tuple(_public_diagnostic(item) for item in raw_diagnostics)
+    diagnostic_keys = tuple(
+        json.dumps(item.to_public_dict(), ensure_ascii=False, sort_keys=True)
+        for item in diagnostics
+    )
+    if len(set(diagnostic_keys)) != len(diagnostic_keys):
+        raise ValueError("inventory diagnostics are not unique")
+
+    capabilities: list[Capability] = []
+    public_ids: set[str] = set()
+    resolver_ids: set[str] = set()
+    capability_diagnostic_keys: set[str] = set()
+    for raw in raw_capabilities:
+        if not isinstance(raw, dict) or set(raw) != _CAPABILITY_KEYS:
+            raise ValueError("inventory capability schema mismatch")
+        if isinstance(raw["classification_confidence"], bool) or not isinstance(
+            raw["classification_confidence"], (int, float)
+        ):
+            raise ValueError("inventory capability confidence is invalid")
+        capability = _capability_from_public(raw)
+        if capability.to_public_dict() != raw:
+            raise ValueError("inventory capability is not canonical public data")
+        if not _generated_identifier(raw["id"], "cap_") or not _generated_identifier(
+            raw["resolver_id"], "res_"
+        ):
+            raise ValueError("inventory capability IDs are invalid")
+        if raw["id"] in public_ids or raw["resolver_id"] in resolver_ids:
+            raise ValueError("inventory capability IDs are not unique")
+        public_ids.add(raw["id"])
+        resolver_ids.add(raw["resolver_id"])
+        capability_diagnostic_keys.update(
+            json.dumps(item.to_public_dict(), ensure_ascii=False, sort_keys=True)
+            for item in capability.diagnostics
+        )
+        capabilities.append(capability)
+
+    metadata_diagnostic_keys = {
+        json.dumps(item.to_public_dict(), ensure_ascii=False, sort_keys=True)
+        for item in metadata_diagnostics
+    }
+    if not metadata_diagnostic_keys.union(capability_diagnostic_keys) <= set(
+        diagnostic_keys
+    ):
+        raise ValueError("inventory diagnostics are not associated")
+
+    expected_unclassified = [
+        raw for raw in raw_capabilities if not raw.get("scenes")
+    ]
+    by_kind = Counter(capability.kind for capability in capabilities)
+    by_scene = Counter(
+        scene for capability in capabilities for scene in capability.scenes
+    )
+    by_severity = Counter(diagnostic.severity for diagnostic in diagnostics)
+    by_code = Counter(diagnostic.code for diagnostic in diagnostics)
+    diagnostic_summary = summary.get("diagnostics")
+    if (
+        metadata["capability_count"] != len(capabilities)
+        or summary.get("total") != len(capabilities)
+        or isinstance(summary.get("total"), bool)
+        or summary.get("by_kind") != dict(sorted(by_kind.items()))
+        or not _count_mapping(summary.get("by_kind"))
+        or summary.get("by_scene") != dict(sorted(by_scene.items()))
+        or not _count_mapping(summary.get("by_scene"))
+        or summary.get("unclassified") != len(expected_unclassified)
+        or isinstance(summary.get("unclassified"), bool)
+        or raw_unclassified != expected_unclassified
+        or not isinstance(diagnostic_summary, dict)
+        or set(diagnostic_summary) != {"total", "by_severity", "by_code"}
+        or diagnostic_summary.get("total") != len(diagnostics)
+        or isinstance(diagnostic_summary.get("total"), bool)
+        or diagnostic_summary.get("by_severity")
+        != dict(sorted(by_severity.items()))
+        or not _count_mapping(diagnostic_summary.get("by_severity"))
+        or diagnostic_summary.get("by_code") != dict(sorted(by_code.items()))
+        or not _count_mapping(diagnostic_summary.get("by_code"))
+    ):
+        raise ValueError("inventory summary counts do not match its records")
+    return tuple(capabilities)
+
+
 def _inventory_capabilities(paths: StoragePaths) -> tuple[Capability, ...]:
     inventory = _read_json(paths.inventory_path)
-    raw = inventory.get("capabilities")
-    if not isinstance(raw, list) or len(raw) > 100_000:
-        raise WorkflowError("capability inventory is invalid")
     try:
-        return tuple(_capability_from_public(item) for item in raw)
+        return _validated_inventory_document(inventory)
     except (TypeError, ValueError) as error:
         raise WorkflowError("capability inventory is invalid") from error
+
+
+def _markdown_has_structure(text: str, markers: Sequence[str]) -> bool:
+    ordered_lines = text.splitlines()
+    lines = set(ordered_lines)
+    return bool(ordered_lines and ordered_lines[0] == markers[0]) and all(
+        marker in lines for marker in markers
+    )
 
 
 def _handle_scan(
@@ -1582,16 +1788,24 @@ def _status_payload(
                     text = payload.decode("utf-8")
                 except UnicodeDecodeError:
                     text = ""
-                if not text.strip():
-                    health_errors.append(f"{label}: invalid markdown")
+                markers = _MAP_MARKERS if label == "map" else _RECEIPT_MARKERS
+                if not _markdown_has_structure(text, markers):
+                    health_errors.append(f"{label}: invalid markdown structure")
     all_artifacts_exist = all(
         files.get(label, {}).get("exists") for label in _ARTIFACT_LABELS
     )
     if context is not None:
+        inventory_resolver_ids: frozenset[str] | None = None
         try:
-            _inventory_capabilities(context.paths)
+            capabilities = _inventory_capabilities(context.paths)
         except (FileNotFoundError, OSError, RuntimeError, TypeError, ValueError):
-            health_errors.append("inventory: invalid JSON or schema")
+            health_errors.append(
+                "inventory: invalid complete schema, types, IDs, or counts"
+            )
+        else:
+            inventory_resolver_ids = frozenset(
+                capability.resolver_id for capability in capabilities
+            )
         try:
             resolver = _read_json(context.paths.resolver_path)
             storage = resolver.get("storage")
@@ -1609,17 +1823,11 @@ def _status_payload(
                 or any(
                     not isinstance(record, dict)
                     or set(record) != {"resolver_id", "exact_locations"}
-                    or not isinstance(record.get("resolver_id"), str)
-                    or not record["resolver_id"].startswith("res_")
-                    or len(record["resolver_id"]) > 128
-                    or any(
-                        character
-                        not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
-                        for character in record["resolver_id"]
-                    )
+                    or not _generated_identifier(record.get("resolver_id"), "res_")
                     or not isinstance(record.get("exact_locations"), list)
+                    or not record["exact_locations"]
                     or any(
-                        not isinstance(location, str)
+                        not isinstance(location, str) or not location
                         for location in record["exact_locations"]
                     )
                     for record in records
@@ -1631,6 +1839,12 @@ def _status_payload(
                 os.stat(context.paths.resolver_path, follow_symlinks=False).st_mode
             ) != 0o600:
                 raise ValueError("resolver mode mismatch")
+            resolver_ids = frozenset(record["resolver_id"] for record in records)
+            if (
+                inventory_resolver_ids is not None
+                and resolver_ids != inventory_resolver_ids
+            ):
+                health_errors.append("resolver: inventory association mismatch")
         except (FileNotFoundError, OSError, TypeError, ValueError):
             health_errors.append("resolver: invalid JSON, schema, or mode")
         if lifecycle == "active":
@@ -2788,20 +3002,10 @@ def main(
             context = _runtime_context(
                 base_paths, home=injected_home, environ=environment
             )
-            intent = interpret_capability_map_intent(args.query)
-            if intent != "usage" or any(
-                marker in args.query for marker in ("怎么用", "帮助")
-            ):
-                payload = {
-                    "query": sanitize_text(args.query, max_length=1024),
-                    "intent": intent,
-                    "matches": [],
-                }
-            else:
-                payload = route_query(
-                    args.query,
-                    _inventory_capabilities(context.paths),
-                ).to_public_dict()
+            payload = route_query(
+                args.query,
+                _inventory_capabilities(context.paths),
+            ).to_public_dict()
         elif args.command == "migrate":
             payload = _handle_migrate(
                 args,

@@ -1596,6 +1596,198 @@ class CapabilityMapWorkflowTests(unittest.TestCase):
                 self.assertFalse(status["healthy"])
                 self.assertTrue(status["health_errors"])
 
+    def test_status_validates_complete_inventory_resolver_and_markdown_structure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            applied = fixture.install()
+            paths = {
+                label: Path(applied["paths"][label])
+                for label in ("inventory", "resolver", "map", "receipt")
+            }
+            originals = {label: path.read_bytes() for label, path in paths.items()}
+            inventory_original = json.loads(originals["inventory"])
+            resolver_original = json.loads(originals["resolver"])
+
+            def incomplete_inventory(
+                inventory: dict[str, object], _resolver: dict[str, object]
+            ) -> None:
+                inventory.clear()
+                inventory["capabilities"] = []
+
+            def invalid_schema_version(
+                inventory: dict[str, object], _resolver: dict[str, object]
+            ) -> None:
+                metadata = inventory["metadata"]
+                assert isinstance(metadata, dict)
+                metadata["schema_version"] = 2.0
+
+            def mismatched_counts(
+                inventory: dict[str, object], _resolver: dict[str, object]
+            ) -> None:
+                summary = inventory["summary"]
+                assert isinstance(summary, dict)
+                summary["total"] = int(summary["total"]) + 1
+
+            def duplicate_capability(
+                inventory: dict[str, object], _resolver: dict[str, object]
+            ) -> None:
+                capabilities = inventory["capabilities"]
+                assert isinstance(capabilities, list)
+                capabilities.append(json.loads(json.dumps(capabilities[0])))
+
+            def missing_resolver(
+                _inventory: dict[str, object], resolver: dict[str, object]
+            ) -> None:
+                resolver["records"] = []
+
+            def extra_resolver(
+                _inventory: dict[str, object], resolver: dict[str, object]
+            ) -> None:
+                records = resolver["records"]
+                assert isinstance(records, list)
+                records.append(
+                    {
+                        "resolver_id": "res_0123456789abcdef01234567",
+                        "exact_locations": ["/synthetic/external/location"],
+                    }
+                )
+
+            def empty_resolver_locations(
+                _inventory: dict[str, object], resolver: dict[str, object]
+            ) -> None:
+                records = resolver["records"]
+                assert isinstance(records, list)
+                records[0]["exact_locations"] = []
+
+            cases = (
+                ("incomplete-inventory", incomplete_inventory, "inventory:"),
+                ("schema-version", invalid_schema_version, "inventory:"),
+                ("count-mismatch", mismatched_counts, "inventory:"),
+                ("duplicate-capability", duplicate_capability, "inventory:"),
+                ("missing-resolver", missing_resolver, "resolver:"),
+                ("extra-resolver", extra_resolver, "resolver:"),
+                ("empty-locations", empty_resolver_locations, "resolver:"),
+            )
+            for name, mutate, expected_error in cases:
+                with self.subTest(name=name):
+                    inventory = json.loads(json.dumps(inventory_original))
+                    resolver = json.loads(json.dumps(resolver_original))
+                    mutate(inventory, resolver)
+                    paths["inventory"].write_text(
+                        json.dumps(inventory), encoding="utf-8"
+                    )
+                    paths["resolver"].write_text(
+                        json.dumps(resolver), encoding="utf-8"
+                    )
+                    paths["map"].write_bytes(originals["map"])
+                    paths["receipt"].write_bytes(originals["receipt"])
+
+                    code, status, error = fixture.run(
+                        "status", "--storage", str(fixture.storage)
+                    )
+
+                    self.assertEqual((code, error), (0, ""))
+                    self.assertTrue(status["installed"])
+                    self.assertFalse(status["healthy"])
+                    self.assertTrue(
+                        any(
+                            item.startswith(expected_error)
+                            for item in status["health_errors"]
+                        ),
+                        status["health_errors"],
+                    )
+
+            for label in ("map", "receipt"):
+                with self.subTest(name=f"arbitrary-{label}"):
+                    for restore_label, payload in originals.items():
+                        paths[restore_label].write_bytes(payload)
+                    paths[label].write_text(
+                        "arbitrary non-empty markdown\n", encoding="utf-8"
+                    )
+
+                    code, status, error = fixture.run(
+                        "status", "--storage", str(fixture.storage)
+                    )
+
+                    self.assertEqual((code, error), (0, ""))
+                    self.assertTrue(status["installed"])
+                    self.assertFalse(status["healthy"])
+                    self.assertIn(
+                        f"{label}: invalid markdown structure",
+                        status["health_errors"],
+                    )
+
+    def test_status_accepts_complete_zero_capability_inventory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            applied = fixture.install()
+            inventory_path = Path(applied["paths"]["inventory"])
+            resolver_path = Path(applied["paths"]["resolver"])
+            inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+            inventory["metadata"]["capability_count"] = 0
+            inventory["metadata"]["diagnostics"] = []
+            inventory["summary"] = {
+                "total": 0,
+                "by_kind": {},
+                "by_scene": {},
+                "unclassified": 0,
+                "diagnostics": {
+                    "total": 0,
+                    "by_severity": {},
+                    "by_code": {},
+                },
+            }
+            inventory["capabilities"] = []
+            inventory["unclassified"] = []
+            inventory["diagnostics"] = []
+            inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
+            resolver = json.loads(resolver_path.read_text(encoding="utf-8"))
+            resolver["records"] = []
+            resolver_path.write_text(json.dumps(resolver), encoding="utf-8")
+
+            code, status, error = fixture.run(
+                "status", "--storage", str(fixture.storage)
+            )
+
+            self.assertEqual((code, error), (0, ""))
+            self.assertTrue(status["installed"])
+            self.assertTrue(status["healthy"], status["health_errors"])
+            self.assertEqual(status["health_errors"], [])
+
+    def test_route_queries_are_never_short_circuited_by_operational_intents(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            _write_skill(
+                fixture.home / ".codex" / "skills" / "fixture-skill",
+                "portable-task",
+                "Portable task workflow helper.",
+            )
+            fixture.install()
+
+            results = []
+            for query in ("portable task", "portable task 路径"):
+                code, routed, error = fixture.run(
+                    "route",
+                    "--storage",
+                    str(fixture.storage),
+                    "--query",
+                    query,
+                    "--json",
+                )
+                self.assertEqual((code, error), (0, ""))
+                self.assertTrue(routed["matches"], routed)
+                results.append(routed)
+            self.assertEqual(
+                results[0]["matches"][0]["resolver_id"],
+                results[1]["matches"][0]["resolver_id"],
+            )
+
+            code, intent, error = fixture.run(
+                "help-intent", "--query", "能力地图在哪"
+            )
+            self.assertEqual((code, error), (0, ""))
+            self.assertEqual(intent["intent"], "paths")
+
     def test_migrated_source_is_inactive_and_cannot_mutate_active_install(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             fixture = WorkflowFixture(Path(temporary))
