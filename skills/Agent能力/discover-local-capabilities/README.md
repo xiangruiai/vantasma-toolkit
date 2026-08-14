@@ -111,7 +111,7 @@ python3 "<skill-dir>/scripts/capability_map.py" setup apply \
 
 目标内容在确认后发生变化、参数不同或 hash 过期时，apply 会拒绝。重新运行 plan，并重新取得确认，不要复用之前的许可。
 
-通常让 setup 自动生成 opaque installation ID。只有延续已有集成时才在 plan 与 apply 中同时传入相同的 `--installation-id "<inst-id>"`；该值必须以 `inst_` 开头并通过安全字符与长度校验。
+首次 setup 通常可让命令自动生成 opaque installation ID。需要新身份时，由 Agent 生成新的 opaque `inst_...` installation ID，使用者不需要设计 installation ID；Agent 必须在 plan 与 apply 复用同一值，通过 `--installation-id "<inst-id>"` 传入，且不得复用 inactive 安装的旧 ID。
 
 `setup apply` 的 stdout 会返回地图、库存、配置、持久化回执、私有 resolver、私有 state、指令文件、manifest 和备份的精确操作位置，并给出 Skill、CLI、MCP、plugin、未分类项与诊断计数。持久化的 `setup-receipt.md` 是脱敏 artifact，不等同于这份 stdout。指令文件变化后，新开 Agent 会话再使用路由。
 
@@ -165,9 +165,23 @@ python3 "<skill-dir>/scripts/capability_map.py" help-intent --query "能力地�
 
 `--to` 接收目标公开目录。迁移到另一个 Obsidian Vault 时，传入该 Vault 内最终的 `<vault-root>/Agent/本机能力地图` 目录；私有 resolver 和 state 仍留在系统数据目录。
 
-`uninstall` 默认只移除 Agent 中的托管路由，公开地图与私有 state 保留，同时写入 `lifecycle=uninstalled、active=false`。此后 `status` 返回 `installed=false、healthy=false 且 health_errors 为空`，`refresh、migrate 与重复 uninstall 会拒绝`。在同一公开目录重新 setup 必须显式提供新的 `inst_` installation ID，使新安装使用新的 private namespace，而旧 state 继续保留为 uninstalled 证据。
+`uninstall` 默认只移除 Agent 中的托管路由，公开地图与私有 state 保留，同时写入 `lifecycle=uninstalled、active=false`。此后 `status` 返回 `installed=false、healthy=false 且 health_errors 为空`，`refresh、migrate 与重复 uninstall 会拒绝`。在同一公开目录重新 setup 时，由 Agent 生成新的 opaque `inst_...` installation ID，并在 plan 与 apply 复用同一值，使新安装使用新的 private namespace，而旧 state 继续保留为 uninstalled 证据。
 
-数据清理是单独的破坏性选择：先预览，再取得一次新的当次明确确认，然后在 uninstall 命令添加 `--purge-data`。`--purge-data` 可从 active 或 uninstalled lifecycle 执行，它会将托管的 public artifacts 和完整 owned private namespace 可恢复地移入命令回传的 recovery directory，包括 resolver、state、instruction/state backups 与 manifests。它不移动非托管公开文件或其他 private namespace。外部变更冲突时拒绝 purge 并保留外部内容，并在可安全恢复时回滚本次托管变更。
+数据清理是单独的破坏性 scope。必须先用完整 purge 参数预览：
+
+```bash
+python3 "<skill-dir>/scripts/capability_map.py" uninstall --storage "<storage-root>" --dry-run --purge-data
+```
+
+确认 stdout 中 `would_purge_data=true`，再向使用者取得针对本次 purge scope 的新的当次明确确认，然后使用相同 selector 和 `--purge-data` 执行：
+
+```bash
+python3 "<skill-dir>/scripts/capability_map.py" uninstall --storage "<storage-root>" --confirmed --purge-data
+```
+
+不能先预览普通 uninstall 再添加 `--purge-data`。`--purge-data` 可从 active 或 uninstalled lifecycle 执行，它会将托管的 public artifacts 和完整 owned private namespace 可恢复地移入命令回传的 recovery directory，包括 resolver、state、instruction/state backups 与 manifests。它不移动非托管公开文件或其他 private namespace。外部变更冲突时拒绝 purge 并保留外部内容，并在可安全恢复时回滚本次托管变更。
+
+当前可恢复 purge 要求 public storage 与 private recovery 必须位于同一 filesystem。跨 filesystem 时保守拒绝并恢复安装，明确返回 `cross-filesystem purge is unsupported; migrate public storage to the private recovery filesystem before purge`。active 时可先 migrate 到同一 filesystem，再重新走完整的 purge 预览与确认；uninstalled 时 migrate 会拒绝。后者的安全路径是保留 recovery 和数据，选择由 Agent 生成的新 installation ID 重装，或由使用者审查此前 `paths` 返回的精确路径后自行管理，不能自动删除。
 
 ## Standalone scan
 
@@ -200,9 +214,9 @@ python3 "<skill-dir>/scripts/capability_map.py" scan \
 
 先运行 `status`。`installed=true` 只说明活动安装和必需文件存在；只有 `healthy=true` 才说明配置、state、库存、resolver 权限与 Agent 托管块通过校验。逐项报告 `health_errors`，不要把存在性当作健康性。
 
-计划过期时重新 plan。托管标记冲突时停止，不自动编辑使用者内容。迁移成功后旧安装显示 `lifecycle=migrated`，旧位置的 refresh、migrate、uninstall 与 purge 会拒绝，后续操作使用新位置。普通 uninstall 后保留数据并进入 uninstalled lifecycle，只允许之后执行 purge，或用新 installation ID 重新 setup。
+计划过期时重新 plan。托管标记冲突时停止，不自动编辑使用者内容。迁移成功后旧安装显示 `lifecycle=migrated`，旧位置的 refresh、migrate、uninstall 与 purge 会拒绝，后续操作使用新位置。普通 uninstall 后保留数据并进入 uninstalled lifecycle，只允许之后执行 purge，或让 Agent 生成新 installation ID 重新 setup。
 
-发现层面针对 macOS、Linux 和 Windows 的 Skill roots、PATH 与 PATHEXT 设计。完整 setup 的强事务保证目前以 POSIX 的 secure directory-fd、no-follow、atomic replace 与 `0600` 为基础；Windows 上缺少相应语义时可能 fail closed。此时可以使用只读 scan，但不要在 setup 与 status 未实际通过前宣称持久 Agent 路由已经安全安装。
+发现层面针对 macOS、Linux 和 Windows 的 Skill roots、PATH 与 PATHEXT 设计。完整 setup 的强事务保证目前以 POSIX 的 secure directory-fd、no-follow、atomic replace 与 `0600` 为基础；可恢复 purge 还要求 public storage 与 private recovery 在同一 filesystem。Windows 上缺少相应 POSIX 语义时，setup 或 purge 可能 fail closed。此时可以使用只读 scan，但不要在 setup 与 status 未实际通过前宣称持久 Agent 路由已经安全安装。
 
 ## License
 

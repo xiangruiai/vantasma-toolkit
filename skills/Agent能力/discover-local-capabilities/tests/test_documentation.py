@@ -44,7 +44,11 @@ def _subcommands(parser: argparse.ArgumentParser) -> dict[str, argparse.Argument
 
 def _documented_capability_map_argv(document: str) -> tuple[tuple[str, ...], ...]:
     invocations: list[tuple[str, ...]] = []
-    for match in re.finditer(r"```bash\s*\n(.*?)\n```", document, re.DOTALL):
+    for match in re.finditer(
+        r"^[ \t]*```bash[ \t]*\n(.*?)^[ \t]*```[ \t]*$",
+        document,
+        re.DOTALL | re.MULTILINE,
+    ):
         block = match.group(1).replace("\\\n", " ")
         for line in block.splitlines():
             if "capability_map.py" not in line:
@@ -126,6 +130,47 @@ class DocumentationContractTests(unittest.TestCase):
             with self.subTest(argv=argv), contextlib.redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit):
                     parser.parse_args(argv)
+
+    def test_purge_uses_matching_preview_and_confirmed_scope(self) -> None:
+        parser = capability_map._parser()
+        expected = (
+            ("uninstall", "--storage", "fixture", "--dry-run", "--purge-data"),
+            ("uninstall", "--storage", "fixture", "--confirmed", "--purge-data"),
+        )
+        for document_name, document in (
+            ("SKILL.md", self.skill),
+            ("README.md", self.readme),
+        ):
+            invocations = _documented_capability_map_argv(document)
+            for argv in expected:
+                with self.subTest(document=document_name, argv=argv):
+                    self.assertIn(argv, invocations)
+                    parser.parse_args(argv)
+
+        for statement in (
+            "would_purge_data=true",
+            "新的当次明确确认",
+            "不能先预览普通 uninstall 再添加 `--purge-data`",
+        ):
+            with self.subTest(statement=statement):
+                self.assertIn(statement, self.package_docs)
+
+    def test_purge_filesystem_and_reinstall_limits_are_explicit(self) -> None:
+        for statement in (
+            "public storage 与 private recovery 必须位于同一 filesystem",
+            "cross-filesystem purge is unsupported; migrate public storage to the private recovery filesystem before purge",
+            "跨 filesystem 时保守拒绝并恢复安装",
+            "active 时可先 migrate 到同一 filesystem",
+            "uninstalled 时 migrate 会拒绝",
+            "保留 recovery 和数据",
+            "审查此前 `paths` 返回的精确路径后自行管理",
+            "不能自动删除",
+            "Agent 生成新的 opaque `inst_...` installation ID",
+            "plan 与 apply 复用同一值",
+            "使用者不需要设计 installation ID",
+        ):
+            with self.subTest(statement=statement):
+                self.assertIn(statement, self.package_docs)
 
     def test_documentation_covers_artifacts_and_private_boundary(self) -> None:
         for artifact in (
@@ -243,7 +288,7 @@ class DocumentationContractTests(unittest.TestCase):
             "lifecycle=uninstalled、active=false",
             "installed=false、healthy=false 且 health_errors 为空",
             "refresh、migrate 与重复 uninstall 会拒绝",
-            "重新 setup 必须显式提供新的 `inst_` installation ID",
+            "Agent 生成新的 opaque `inst_...` installation ID",
             "`--purge-data` 可从 active 或 uninstalled lifecycle 执行",
             "public artifacts 和完整 owned private namespace",
             "resolver、state、instruction/state backups 与 manifests",

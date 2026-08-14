@@ -44,7 +44,7 @@ Use the command entrypoint at `"<skill-dir>/scripts/capability_map.py"`. Prefer 
      --expected-plan-hash "<plan-hash>"
    ```
 
-   Normally let setup generate its opaque installation ID. Only preserve an existing integration when explicitly required by passing the same validated `--installation-id "<inst-id>"` to plan and apply; the value must start with `inst_`.
+   On a first setup, the command can generate its opaque installation ID. When a new identity is required, the Agent generates a fresh opaque `inst_...` installation ID; do not ask a non-technical person to design it. Pass the exact same validated value as `--installation-id "<inst-id>"` in plan and apply, and never reuse an inactive installation's ID.
 
 5. Report every precise location returned under `paths`, the capability counts, changed Agent instruction targets and backup locations. Tell the person to start a new Agent session when its instruction file changed.
 
@@ -83,9 +83,25 @@ python3 "<skill-dir>/scripts/capability_map.py" uninstall --storage "<storage-ro
 python3 "<skill-dir>/scripts/capability_map.py" uninstall --storage "<storage-root>" --confirmed
 ```
 
-Plain `uninstall` removes managed Agent instructions, preserves data, and commits an inactive `uninstalled` lifecycle. Its old `refresh`, `migrate`, and repeated plain `uninstall` operations then refuse; reinstalling at the same public root requires a new explicit `inst_` installation ID. Preview and obtain a separate当次明确确认 before adding `--purge-data`.
+Plain `uninstall` removes managed Agent instructions, preserves data, and commits an inactive `uninstalled` lifecycle. Its old `refresh`, `migrate`, and repeated plain `uninstall` operations then refuse. If reinstalling at the same public root, the Agent must generate a fresh opaque `inst_...` installation ID and reuse that exact value in setup plan and apply.
 
 Purge is accepted from either an active or uninstalled lifecycle. It recoverably moves the owned public artifacts and the complete owned private namespace, including resolver, state, instruction/state backups, and manifests, to the reported recovery directory. It leaves unrelated public files and other private namespaces in place. If external content changed or replaced an owned target, refuse the purge, preserve the external content, and restore this operation's managed changes where safe.
+
+Treat purge as a separate destructive scope. Preview that exact scope first:
+
+```bash
+python3 "<skill-dir>/scripts/capability_map.py" uninstall --storage "<storage-root>" --dry-run --purge-data
+```
+
+Check that stdout reports `would_purge_data=true`. Only after a new explicit confirmation for this purge scope, run the same selector and purge flag with `--confirmed`:
+
+```bash
+python3 "<skill-dir>/scripts/capability_map.py" uninstall --storage "<storage-root>" --confirmed --purge-data
+```
+
+Never preview plain `uninstall` and then add `--purge-data` only at apply time. Recoverable purge currently requires public storage and private recovery to be on the same filesystem. Otherwise the command fails with `cross-filesystem purge is unsupported; migrate public storage to the private recovery filesystem before purge`, conservatively refuses the operation, and restores the installation.
+
+For an active installation, first migrate its public storage onto the private recovery filesystem, then rerun the exact purge preview and confirmation flow. An uninstalled installation refuses `migrate`; safely preserve its recovery and data, then either have the Agent generate a new opaque `inst_...` installation ID for a reinstall or let the person review the exact paths previously returned by `setup` or `paths` and manage those files manually. Never automate deletion in this fallback.
 
 Interpret a help request without touching an installation:
 
@@ -123,4 +139,4 @@ Add `--skill-root "<extra-skill-root>"` for an extra source. Only add `--probe-v
 - After plain uninstall, report `lifecycle=uninstalled`, `installed=false`, `healthy=false`, and an empty healthy-error list; use purge or a new installation ID for the next transition.
 - If routing returns no reliable candidate, inspect the sanitized inventory and keep unknown capabilities unclassified.
 
-Discovery is designed for macOS, Linux, and Windows roots and executable conventions. Transactional setup has its strongest guarantees on POSIX systems because it relies on secure directory-fd, no-follow, atomic replacement, and `0600` semantics. On Windows those primitives can be unavailable, so setup may fail closed; do not claim durable Agent integration until the environment passes its own setup and status checks.
+Discovery is designed for macOS, Linux, and Windows roots and executable conventions. Transactional setup has its strongest guarantees on POSIX systems because it relies on secure directory-fd, no-follow, atomic replacement, and `0600` semantics. Recoverable purge also requires public storage and private recovery on the same filesystem. On Windows the POSIX primitives can be unavailable, so setup or purge may fail closed; do not claim durable Agent integration until the environment passes its own setup and status checks.
