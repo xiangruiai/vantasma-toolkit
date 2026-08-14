@@ -355,4 +355,3 @@ Expected final report:
 - Public map/inventory and private resolver design summary.
 - Confirmation/rollback guarantees.
 - Explicit statement that no local capabilities or author preferences were shipped.
-

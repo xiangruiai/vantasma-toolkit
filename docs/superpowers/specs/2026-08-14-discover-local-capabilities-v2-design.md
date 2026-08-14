@@ -1,7 +1,7 @@
 # discover-local-capabilities v2 设计规格
 
-日期：2026-08-14  
-状态：已确认方向，待实现  
+日期：2026-08-14
+状态：已确认方向，待实现
 目标目录：`skills/Agent能力/discover-local-capabilities`
 
 ## 1. 背景
@@ -441,4 +441,3 @@ v2 不负责：
 - 为未识别工具编造用途。
 - 把万涂幻象本机能力快照发布给安装者。
 - 在未确认时修改 Obsidian、AGENTS.md、CLAUDE.md 或其他用户文件。
-
