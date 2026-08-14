@@ -172,6 +172,224 @@ class CapabilityMapEntrypointTests(unittest.TestCase):
 
 
 class CapabilityMapWorkflowTests(unittest.TestCase):
+    def test_uninstall_commits_inactive_lifecycle_and_requires_new_id_for_setup(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            applied = fixture.install()
+            old_state_path = Path(applied["paths"]["state"])
+            old_installation_id = str(applied["installation_id"])
+
+            code, uninstalled, error = fixture.run(
+                "uninstall", "--storage", str(fixture.storage), "--confirmed"
+            )
+            self.assertEqual((code, error, uninstalled["status"]), (0, "", "uninstalled"))
+            state = json.loads(old_state_path.read_text(encoding="utf-8"))
+            self.assertEqual(state["status"], "uninstalled")
+            self.assertFalse(state["active"])
+
+            code, status, error = fixture.run(
+                "status", "--storage", str(fixture.storage)
+            )
+            self.assertEqual((code, error), (0, ""))
+            self.assertFalse(status["installed"])
+            self.assertFalse(status["healthy"])
+            self.assertEqual(status["lifecycle"], "uninstalled")
+            self.assertEqual(status["health_errors"], [])
+
+            for command in (
+                ("refresh", "--confirmed"),
+                ("migrate", "--to", str(fixture.migrated), "--confirmed"),
+                ("uninstall", "--confirmed"),
+            ):
+                code, _, error = fixture.run(
+                    command[0], "--storage", str(fixture.storage), *command[1:]
+                )
+                self.assertEqual(code, 2, command)
+                self.assertIn("uninstalled", error)
+
+            code, _, error = fixture.run("setup", "plan", *fixture.setup_args())
+            self.assertEqual(code, 2)
+            self.assertIn("new installation id", error)
+            code, plan, error = fixture.run(
+                "setup",
+                "plan",
+                *fixture.setup_args(),
+                "--installation-id",
+                "inst_reinstall",
+            )
+            self.assertEqual((code, error), (0, ""))
+            code, reinstalled, error = fixture.run(
+                "setup",
+                "apply",
+                *fixture.setup_args(),
+                "--installation-id",
+                "inst_reinstall",
+                "--confirmed",
+                "--expected-plan-hash",
+                str(plan["plan_hash"]),
+            )
+            self.assertEqual((code, error), (0, ""))
+            self.assertNotEqual(reinstalled["installation_id"], old_installation_id)
+            self.assertNotEqual(Path(reinstalled["paths"]["state"]), old_state_path)
+            self.assertEqual(
+                json.loads(old_state_path.read_text(encoding="utf-8"))["status"],
+                "uninstalled",
+            )
+
+    def test_uninstalled_and_direct_purge_move_complete_owned_namespace(self) -> None:
+        for direct in (False, True):
+            with self.subTest(direct=direct), tempfile.TemporaryDirectory() as temporary:
+                fixture = WorkflowFixture(Path(temporary))
+                applied = fixture.install()
+                paths = {key: Path(value) for key, value in applied["paths"].items()
+                         if key in {"map", "inventory", "config", "receipt", "resolver", "state"}}
+                namespace = paths["state"].parent
+                unrelated_private = namespace.parent / "other-namespace"
+                unrelated_private.mkdir()
+                (unrelated_private / "keep.txt").write_text("keep", encoding="utf-8")
+                user_public = fixture.storage / "user-note.txt"
+                user_public.write_text("keep", encoding="utf-8")
+                if not direct:
+                    code, _, error = fixture.run(
+                        "uninstall", "--storage", str(fixture.storage), "--confirmed"
+                    )
+                    self.assertEqual((code, error), (0, ""))
+
+                code, purged, error = fixture.run(
+                    "uninstall",
+                    "--storage",
+                    str(fixture.storage),
+                    "--confirmed",
+                    "--purge-data",
+                )
+                self.assertEqual((code, error, purged["status"]), (0, "", "purged"))
+                recovery = Path(purged["recovery_directory"])
+                self.assertTrue(recovery.is_dir())
+                self.assertFalse(namespace.exists())
+                self.assertTrue((unrelated_private / "keep.txt").is_file())
+                self.assertEqual(user_public.read_text(encoding="utf-8"), "keep")
+                for path in paths.values():
+                    self.assertFalse(path.exists())
+                recovered_names = {item.name for item in recovery.rglob("*")}
+                for required in (
+                    "本机能力地图.md",
+                    "capability-inventory.json",
+                    "capability-map.config.json",
+                    "setup-receipt.md",
+                    "capability-resolver.json",
+                    "installation-state.json",
+                    "instruction-backups",
+                    "state-backups",
+                ):
+                    self.assertIn(required, recovered_names)
+
+    def test_purge_preserves_external_public_overwrite_and_restores_install(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            applied = fixture.install()
+            map_path = Path(applied["paths"]["map"])
+            namespace = Path(applied["paths"]["state"]).parent
+            real_purge = capability_map._purge_data
+
+            def external_then_purge(*args: object, **kwargs: object) -> object:
+                map_path.write_text("external purge owner\n", encoding="utf-8")
+                return real_purge(*args, **kwargs)
+
+            with mock.patch("capability_map._purge_data", side_effect=external_then_purge):
+                code, _, error = fixture.run(
+                    "uninstall",
+                    "--storage",
+                    str(fixture.storage),
+                    "--confirmed",
+                    "--purge-data",
+                )
+            self.assertEqual(code, 3)
+            self.assertIn("purge_conflict", error)
+            self.assertEqual(
+                map_path.read_text(encoding="utf-8"), "external purge owner\n"
+            )
+            self.assertTrue(namespace.is_dir())
+            self.assertIn(
+                "vantasma:discover-local-capabilities:start",
+                (fixture.project / "AGENTS.md").read_text(encoding="utf-8"),
+            )
+
+    def test_purge_preserves_external_namespace_replacement(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            applied = fixture.install()
+            namespace = Path(applied["paths"]["state"]).parent
+            real_replace = os.replace
+            replaced = False
+
+            def replace_namespace(source: object, destination: object) -> None:
+                nonlocal replaced
+                real_replace(source, destination)
+                if not replaced and Path(source) == namespace:
+                    replaced = True
+                    os.symlink("external-owner", namespace)
+
+            with mock.patch(
+                "capability_map.os.replace", side_effect=replace_namespace
+            ):
+                code, _, error = fixture.run(
+                    "uninstall",
+                    "--storage",
+                    str(fixture.storage),
+                    "--confirmed",
+                    "--purge-data",
+                )
+            self.assertEqual(code, 3)
+            self.assertIn("purge_conflict", error)
+            self.assertTrue(namespace.is_symlink())
+            self.assertEqual(os.readlink(namespace), "external-owner")
+
+    def test_purge_failure_after_move_rolls_back_owned_data(self) -> None:
+        for failure_target in ("map", "namespace"):
+            with self.subTest(failure_target=failure_target), tempfile.TemporaryDirectory() as temporary:
+                fixture = WorkflowFixture(Path(temporary))
+                applied = fixture.install()
+                paths = {
+                    key: Path(value)
+                    for key, value in applied["paths"].items()
+                    if key
+                    in {"map", "inventory", "config", "receipt", "resolver", "state"}
+                }
+                contents = {
+                    label: path.read_bytes() for label, path in paths.items()
+                }
+                namespace = paths["state"].parent
+                fail_source = paths["map"] if failure_target == "map" else namespace
+                real_replace = os.replace
+                failed = False
+
+                def move_then_fail(source: object, destination: object) -> None:
+                    nonlocal failed
+                    real_replace(source, destination)
+                    if not failed and Path(source) == fail_source:
+                        failed = True
+                        raise OSError("synthetic purge move failure")
+
+                with mock.patch(
+                    "capability_map.os.replace", side_effect=move_then_fail
+                ):
+                    code, _, error = fixture.run(
+                        "uninstall",
+                        "--storage",
+                        str(fixture.storage),
+                        "--confirmed",
+                        "--purge-data",
+                    )
+                self.assertEqual(code, 3)
+                self.assertIn("synthetic purge move failure", error)
+                for label, path in paths.items():
+                    self.assertTrue(path.is_file(), label)
+                    self.assertEqual(path.read_bytes(), contents[label], label)
+                self.assertIn(
+                    "vantasma:discover-local-capabilities:start",
+                    (fixture.project / "AGENTS.md").read_text(encoding="utf-8"),
+                )
+
     def test_explicit_installation_id_uses_runtime_validator_and_zero_writes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             fixture = WorkflowFixture(Path(temporary))

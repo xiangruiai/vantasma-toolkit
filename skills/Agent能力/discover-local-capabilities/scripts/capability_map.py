@@ -857,6 +857,21 @@ def _build_setup_plan(
         scopes=(args.scope,),
     )
     installation_id = _installation_id(base_paths, request, args.installation_id)
+    try:
+        existing_config = _read_json(base_paths.config_path)
+    except FileNotFoundError:
+        existing_config = None
+    if existing_config is not None and existing_config.get("mode") == "setup":
+        existing_context = _runtime_context(
+            base_paths, home=home, environ=environ, require_active=False
+        )
+        if (
+            existing_context.state["status"] != "active"
+            and existing_context.config["installation_id"] == installation_id
+        ):
+            raise RefusedError(
+                "inactive installation requires a new installation id"
+            )
     paths = _namespaced_paths(
         base_paths,
         installation_id=installation_id,
@@ -1137,7 +1152,7 @@ def _runtime_context(
         raise WorkflowError("private installation state is invalid")
     lifecycle = state.get("status")
     active = state.get("active")
-    if lifecycle not in {"active", "migrated"} or active is not (
+    if lifecycle not in {"active", "migrated", "uninstalled"} or active is not (
         lifecycle == "active"
     ):
         raise WorkflowError("private installation lifecycle is invalid")
@@ -1150,8 +1165,8 @@ def _runtime_context(
             or any(character not in "0123456789abcdef" for character in namespace)
         ):
             raise WorkflowError("private migration namespace is invalid")
-        if require_active:
-            raise RefusedError("capability map installation has migrated")
+    if require_active and lifecycle != "active":
+        raise RefusedError(f"capability map installation has {lifecycle}")
     try:
         request = InstructionTargetRequest(
             home=Path(request_raw["home"]),
@@ -1732,28 +1747,152 @@ def _handle_migrate(
 
 
 def _purge_data(
-    paths: StoragePaths, installation_id: str, *, state_path: Path
+    paths: StoragePaths,
+    installation_id: str,
+    *,
+    state_path: Path,
+    expected_public: Mapping[Path, FileSnapshot],
 ) -> Path:
-    recovery = paths.private_root / "purge-recovery" / (
+    if (
+        paths.private_root.parent.name != _PRIVATE_INSTALLATIONS
+        or state_path.parent != paths.private_root
+    ):
+        raise WorkflowError("purge target is not an installation namespace")
+    public_targets = {
+        path
+        for label, path in _artifact_paths(paths).items()
+        if label != "resolver"
+    }
+    if set(expected_public) != public_targets:
+        raise WorkflowError("purge expected state is incomplete")
+    for source, expected in expected_public.items():
+        if not _matches_committed(_snapshot(source), expected):
+            raise WorkflowError(f"purge_conflict: {source.name}")
+
+    recovery_parent = paths.private_root.parent.parent / "purge-recovery"
+    recovery = recovery_parent / (
         installation_id
         + "-"
         + _digest(_current_storage_state(paths, state_path=state_path))[:16]
     )
-    moved: list[tuple[Path, Path]] = []
+    public_recovery = recovery / "public"
+    private_recovery = recovery / "private-namespace"
+    moved: list[tuple[Path, Path, FileSnapshot]] = []
+
+    def restore_no_clobber(source: Path, destination: Path) -> bool:
+        try:
+            os.link(destination, source, follow_symlinks=False)
+        except FileExistsError:
+            return False
+        os.unlink(destination)
+        return True
+
     try:
-        recovery.mkdir(parents=True, exist_ok=False)
-        targets = {**_artifact_paths(paths), "state": state_path}
-        for label, source in targets.items():
-            if not source.exists():
+        public_recovery.mkdir(parents=True, exist_ok=False)
+        for source in sorted(public_targets, key=str):
+            expected = expected_public[source]
+            current = _snapshot(source)
+            if not _matches_committed(current, expected):
+                raise WorkflowError(f"purge_conflict: {source.name}")
+            destination = public_recovery / source.name
+            try:
+                os.replace(source, destination)
+            except BaseException as move_error:
+                try:
+                    source_after = _snapshot(source)
+                    claimed = _snapshot(destination)
+                except (OSError, ValueError) as claim_error:
+                    raise WorkflowError(
+                        f"purge_conflict: {source.name}"
+                    ) from claim_error
+                if _matches_committed(source_after, expected):
+                    raise
+                if (
+                    not source_after.existed
+                    and _matches_claimed(claimed, expected)
+                    and restore_no_clobber(source, destination)
+                ):
+                    raise move_error
+                raise WorkflowError(
+                    f"purge_conflict: {source.name}"
+                ) from move_error
+            try:
+                claimed = _snapshot(destination)
+            except (OSError, ValueError) as error:
+                raise WorkflowError(f"purge_conflict: {source.name}") from error
+            if not _matches_claimed(claimed, expected):
+                raise WorkflowError(f"purge_conflict: {source.name}")
+            moved.append((source, destination, expected))
+        namespace_metadata = os.lstat(paths.private_root)
+
+        def matches_namespace(path: Path) -> bool:
+            try:
+                current_metadata = os.lstat(path)
+            except OSError:
+                return False
+            return bool(
+                not stat.S_ISLNK(current_metadata.st_mode)
+                and stat.S_ISDIR(current_metadata.st_mode)
+                and current_metadata.st_dev == namespace_metadata.st_dev
+                and current_metadata.st_ino == namespace_metadata.st_ino
+                and current_metadata.st_mode == namespace_metadata.st_mode
+            )
+
+        def namespace_absent(path: Path) -> bool:
+            try:
+                os.lstat(path)
+            except FileNotFoundError:
+                return True
+            except OSError:
+                return False
+            return False
+
+        if stat.S_ISLNK(namespace_metadata.st_mode) or not stat.S_ISDIR(
+            namespace_metadata.st_mode
+        ):
+            raise WorkflowError("purge namespace is not a physical directory")
+        try:
+            os.replace(paths.private_root, private_recovery)
+        except BaseException as move_error:
+            if matches_namespace(paths.private_root):
+                raise
+            if namespace_absent(paths.private_root) and matches_namespace(
+                private_recovery
+            ):
+                try:
+                    os.rename(private_recovery, paths.private_root)
+                except OSError as restore_error:
+                    raise WorkflowError(
+                        "purge_conflict: private namespace"
+                    ) from restore_error
+                if matches_namespace(paths.private_root):
+                    raise move_error
+            raise WorkflowError("purge_conflict: private namespace") from move_error
+        if not namespace_absent(paths.private_root) or not matches_namespace(
+            private_recovery
+        ):
+            raise WorkflowError("purge_conflict: private namespace")
+    except BaseException as error:
+        conflicts: list[str] = []
+        for source, destination, expected in reversed(moved):
+            try:
+                claimed = _snapshot(destination)
+            except (OSError, ValueError):
+                conflicts.append(source.name)
                 continue
-            destination = recovery / f"{label}-{source.name}"
-            os.replace(source, destination)
-            moved.append((source, destination))
-    except BaseException:
-        for source, destination in reversed(moved):
-            if destination.exists() and not source.exists():
-                source.parent.mkdir(parents=True, exist_ok=True)
-                os.replace(destination, source)
+            if not _matches_claimed(claimed, expected) or not restore_no_clobber(
+                source, destination
+            ):
+                conflicts.append(source.name)
+        for directory in (public_recovery, recovery):
+            try:
+                os.rmdir(directory)
+            except OSError:
+                pass
+        if conflicts:
+            raise WorkflowError(
+                "purge_conflict: " + ", ".join(sorted(set(conflicts)))
+            ) from error
         raise
     return recovery
 
@@ -1773,7 +1912,15 @@ def _handle_uninstall(
         cwd=cwd,
         environ=environ,
     )
-    context = _runtime_context(base_paths, home=home, environ=environ)
+    context = _runtime_context(
+        base_paths,
+        home=home,
+        environ=environ,
+        require_active=not args.purge_data,
+    )
+    lifecycle = str(context.state["status"])
+    if args.purge_data and lifecycle not in {"active", "uninstalled"}:
+        raise RefusedError(f"capability map installation has {lifecycle}")
     paths = context.paths
     request = context.target_request
     installation_id = str(context.config["installation_id"])
@@ -1782,6 +1929,19 @@ def _handle_uninstall(
         installation_id,
         backup_root=paths.private_root / "instruction-backups",
     )
+    uninstalled_document = {
+        **context.state,
+        "status": "uninstalled",
+        "active": False,
+    }
+    uninstalled_state_plan = _state_write_plan(
+        context.state_path, uninstalled_document
+    )
+    purge_expected = {
+        path: _snapshot(path)
+        for label, path in _artifact_paths(paths).items()
+        if label != "resolver"
+    }
     payload = {
         "status": "dry-run" if args.dry_run else "uninstalled",
         "installation_id": installation_id,
@@ -1798,7 +1958,8 @@ def _handle_uninstall(
     }
     if args.dry_run:
         return payload
-    if instruction_plan.operations:
+    instruction_changed = bool(instruction_plan.changed_operations)
+    if instruction_changed:
         apply_instruction_plan(
             instruction_plan,
             confirmed=True,
@@ -1807,25 +1968,68 @@ def _handle_uninstall(
     if args.purge_data:
         try:
             recovery = _purge_data(
-                paths, installation_id, state_path=context.state_path
-            )
-        except BaseException:
-            reinstall = build_instruction_plan(
-                request,
+                paths,
                 installation_id,
-                paths.map_path,
-                paths.resolver_path,
-                backup_root=paths.private_root / "instruction-backups",
+                state_path=context.state_path,
+                expected_public=purge_expected,
             )
-            apply_instruction_plan(
-                reinstall,
-                confirmed=True,
-                expected_plan_hash=reinstall.plan_hash,
-            )
+        except BaseException as error:
+            if instruction_changed:
+                try:
+                    reinstall = build_instruction_plan(
+                        request,
+                        installation_id,
+                        paths.map_path,
+                        paths.resolver_path,
+                        backup_root=paths.private_root / "instruction-backups",
+                    )
+                    apply_instruction_plan(
+                        reinstall,
+                        confirmed=True,
+                        expected_plan_hash=reinstall.plan_hash,
+                    )
+                except BaseException as compensation_error:
+                    raise WorkflowError(
+                        f"{error}; compensation_conflict: instructions"
+                    ) from compensation_error
             raise
         payload["status"] = "purged"
         payload["recovery_directory"] = str(recovery)
         payload["data_preserved"] = False
+    else:
+        try:
+            current_state_plan = _state_write_plan(
+                context.state_path, uninstalled_document
+            )
+            if _state_transition(current_state_plan) != _state_transition(
+                uninstalled_state_plan
+            ):
+                raise WorkflowError("installation state changed during uninstall")
+            state_result = _apply_state_plan(current_state_plan)
+        except BaseException as error:
+            if instruction_changed:
+                try:
+                    reinstall = build_instruction_plan(
+                        request,
+                        installation_id,
+                        paths.map_path,
+                        paths.resolver_path,
+                        backup_root=paths.private_root / "instruction-backups",
+                    )
+                    apply_instruction_plan(
+                        reinstall,
+                        confirmed=True,
+                        expected_plan_hash=reinstall.plan_hash,
+                    )
+                except BaseException as compensation_error:
+                    raise WorkflowError(
+                        f"{error}; compensation_conflict: instructions"
+                    ) from compensation_error
+            raise
+        payload["state_backup"] = str(
+            state_result.backup_directory
+            or context.state_path.parent / "state-backups"
+        )
     return payload
 
 
