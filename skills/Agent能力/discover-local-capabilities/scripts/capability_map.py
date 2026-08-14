@@ -654,16 +654,75 @@ def _scan(
 def _installation_id(
     paths: StoragePaths, request: InstructionTargetRequest, provided: str | None
 ) -> str:
-    def namespace_exists(installation_id: str) -> bool:
+    def owned_names(parent_fd: int, directory: str) -> frozenset[str]:
+        flags = (
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | os.O_DIRECTORY
+            | os.O_NOFOLLOW
+        )
         try:
-            os.lstat(_private_namespace_path(paths, installation_id))
+            descriptor = os.open(directory, flags, dir_fd=parent_fd)
         except FileNotFoundError:
-            return False
+            return frozenset()
         except OSError as error:
             raise RefusedError(
-                "installation namespace could not be inspected"
+                "installation history could not be inspected safely"
             ) from error
-        return True
+        try:
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISDIR(metadata.st_mode):  # pragma: no cover - O_DIRECTORY
+                raise RefusedError(
+                    "installation history is not a physical directory"
+                )
+            try:
+                names = os.listdir(descriptor)
+            except OSError as error:
+                raise RefusedError(
+                    "installation history could not be inspected safely"
+                ) from error
+            if len(names) > 4096:
+                raise RefusedError("installation history is too large to inspect")
+            return frozenset(names)
+        finally:
+            os.close(descriptor)
+
+    def installation_history() -> tuple[frozenset[str], frozenset[str]]:
+        if not _secure_backend_available() or os.listdir not in os.supports_fd:
+            raise RefusedError("secure installation history inspection is unavailable")
+        try:
+            metadata = os.lstat(paths.private_root)
+        except FileNotFoundError:
+            return frozenset(), frozenset()
+        except OSError as error:
+            raise RefusedError(
+                "installation history could not be inspected safely"
+            ) from error
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+            raise RefusedError("installation history root is not a physical directory")
+        try:
+            evidence = capture_directory_evidence(paths.private_root)
+            descriptor = _open_evidence_directory(
+                evidence, create=False, label="installation history root"
+            )
+        except (OSError, ValueError) as error:
+            raise RefusedError(
+                "installation history could not be inspected safely"
+            ) from error
+        try:
+            live = owned_names(descriptor, _PRIVATE_INSTALLATIONS)
+            recovered = owned_names(descriptor, "purge-recovery")
+        finally:
+            os.close(descriptor)
+        return live, recovered
+
+    live_names, recovery_names = installation_history()
+
+    def namespace_exists(installation_id: str) -> bool:
+        namespace_name = _private_namespace_id(paths.public_root, installation_id)
+        return namespace_name in live_names or any(
+            name.startswith(installation_id + "-") for name in recovery_names
+        )
 
     if provided is not None:
         try:
@@ -671,7 +730,7 @@ def _installation_id(
         except ValueError as error:
             raise RefusedError("installation id is invalid") from error
         if namespace_exists(installation_id):
-            raise RefusedError("installation namespace already exists")
+            raise RefusedError("installation id already exists in installation history")
         return installation_id
     evidence = {
         "public_root": str(paths.public_root),
@@ -2231,6 +2290,27 @@ def _purge_data(
     return recovery
 
 
+def _directory_evidence_is_current(evidence: RootEvidence, *, label: str) -> bool:
+    """Return whether an existing directory is still the captured physical object."""
+
+    descriptor: int | None = None
+    try:
+        descriptor = _open_evidence_directory(evidence, create=False, label=label)
+        metadata = os.fstat(descriptor)
+        expected = evidence.existing_ancestors[-1]
+        return bool(
+            expected.path == evidence.resolved_path
+            and metadata.st_dev == expected.device
+            and metadata.st_ino == expected.inode
+            and metadata.st_mode == expected.mode
+        )
+    except (OSError, ValueError):
+        return False
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
 def _handle_uninstall(
     args: argparse.Namespace,
     *, home: Path,
@@ -2246,6 +2326,11 @@ def _handle_uninstall(
         cwd=cwd,
         environ=environ,
     )
+    purge_private_base_evidence = (
+        capture_directory_evidence(base_paths.private_root)
+        if args.purge_data and not args.dry_run
+        else None
+    )
     context = _runtime_context(
         base_paths,
         home=home,
@@ -2256,6 +2341,17 @@ def _handle_uninstall(
     if args.purge_data and lifecycle not in {"active", "uninstalled"}:
         raise RefusedError(f"capability map installation has {lifecycle}")
     paths = context.paths
+    purge_namespace_evidence: RootEvidence | None = None
+    if purge_private_base_evidence is not None:
+        private_base = paths.private_root.parent.parent
+        if (
+            purge_private_base_evidence.resolved_path != private_base
+            or not _directory_evidence_is_current(
+                purge_private_base_evidence, label="purge private base"
+            )
+        ):
+            raise WorkflowError("purge private base changed while reading state")
+        purge_namespace_evidence = capture_directory_evidence(paths.private_root)
     request = context.target_request
     installation_id = str(context.config["installation_id"])
     instruction_plan = build_uninstall_plan(
@@ -2278,11 +2374,6 @@ def _handle_uninstall(
         for label, path in _artifact_paths(paths).items()
         if label != "resolver"
     }
-    purge_private_base_evidence = (
-        capture_directory_evidence(paths.private_root.parent.parent)
-        if args.purge_data and not args.dry_run
-        else None
-    )
     payload = {
         "status": "dry-run" if args.dry_run else "uninstalled",
         "installation_id": installation_id,
@@ -2301,6 +2392,16 @@ def _handle_uninstall(
         payload["would_purge_data"] = bool(args.purge_data)
         return payload
     instruction_changed = bool(instruction_plan.changed_operations)
+    if purge_private_base_evidence is not None and (
+        purge_namespace_evidence is None
+        or not _directory_evidence_is_current(
+            purge_private_base_evidence, label="purge private base"
+        )
+        or not _directory_evidence_is_current(
+            purge_namespace_evidence, label="purge installation namespace"
+        )
+    ):
+        raise WorkflowError("purge private ownership changed before instructions")
     if instruction_changed:
         apply_instruction_plan(
             instruction_plan,
@@ -2320,6 +2421,19 @@ def _handle_uninstall(
             )
         except BaseException as error:
             if instruction_changed:
+                if (
+                    purge_namespace_evidence is None
+                    or not _directory_evidence_is_current(
+                        purge_private_base_evidence, label="purge private base"
+                    )
+                    or not _directory_evidence_is_current(
+                        purge_namespace_evidence,
+                        label="purge installation namespace",
+                    )
+                ):
+                    raise WorkflowError(
+                        f"{error}; compensation_conflict: instructions"
+                    ) from error
                 try:
                     reinstall = build_instruction_plan(
                         request,
