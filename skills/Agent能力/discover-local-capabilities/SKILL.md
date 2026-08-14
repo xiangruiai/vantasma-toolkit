@@ -83,7 +83,9 @@ python3 "<skill-dir>/scripts/capability_map.py" uninstall --storage "<storage-ro
 python3 "<skill-dir>/scripts/capability_map.py" uninstall --storage "<storage-root>" --confirmed
 ```
 
-`uninstall` removes only managed Agent instructions and preserves map data. Preview and obtain a separate当次明确确认 before adding `--purge-data`; purge moves data to a reported recovery directory.
+Plain `uninstall` removes managed Agent instructions, preserves data, and commits an inactive `uninstalled` lifecycle. Its old `refresh`, `migrate`, and repeated plain `uninstall` operations then refuse; reinstalling at the same public root requires a new explicit `inst_` installation ID. Preview and obtain a separate当次明确确认 before adding `--purge-data`.
+
+Purge is accepted from either an active or uninstalled lifecycle. It recoverably moves the owned public artifacts and the complete owned private namespace, including resolver, state, instruction/state backups, and manifests, to the reported recovery directory. It leaves unrelated public files and other private namespaces in place. If external content changed or replaced an owned target, refuse the purge, preserve the external content, and restore this operation's managed changes where safe.
 
 Interpret a help request without touching an installation:
 
@@ -108,7 +110,7 @@ Add `--skill-root "<extra-skill-root>"` for an extra source. Only add `--probe-v
 - Scan the installer's computer. Do not inject a packaged capability snapshot, concrete preferred-tool list, or another person's preferences.
 - Default to no network access and no execution of discovered CLIs.
 - Do not read `.env`, credential stores, or command histories. Supported MCP configuration files are parsed with size bounds, but secret values, command, args, URL, headers, and env fields are not collected, persisted, or emitted.
-- Keep exact local paths only in the private resolver and runtime state. Treat public artifacts as reviewable but still potentially sensitive inventory.
+- Persisted public artifacts contain sanitized capability data. Private resolver and state files persist exact local paths. The `setup` and `paths` stdout intentionally returns exact operational locations at the person's request; treat that stdout as private operational output, not as a shareable public artifact.
 - Do not install, authorize, update, invoke, or delete discovered capabilities as part of discovery.
 
 ## Troubleshoot safely
@@ -118,6 +120,7 @@ Add `--skill-root "<extra-skill-root>"` for an extra source. Only add `--probe-v
 - If the plan hash is stale, discard it, rerun `setup plan`, and request fresh confirmation.
 - If managed instruction markers conflict or are damaged, stop and show the diagnostics. Do not repair user content automatically.
 - After migration, operate only on the new storage; the old lifecycle is `migrated` and its mutating commands must refuse.
+- After plain uninstall, report `lifecycle=uninstalled`, `installed=false`, `healthy=false`, and an empty healthy-error list; use purge or a new installation ID for the next transition.
 - If routing returns no reliable candidate, inspect the sanitized inventory and keep unknown capabilities unclassified.
 
 Discovery is designed for macOS, Linux, and Windows roots and executable conventions. Transactional setup has its strongest guarantees on POSIX systems because it relies on secure directory-fd, no-follow, atomic replacement, and `0600` semantics. On Windows those primitives can be unavailable, so setup may fail closed; do not claim durable Agent integration until the environment passes its own setup and status checks.

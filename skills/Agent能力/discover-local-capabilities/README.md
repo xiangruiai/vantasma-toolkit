@@ -24,7 +24,7 @@ cp -R "<repo-root>/skills/Agent能力/discover-local-capabilities" "<agent-skill
 扫描我的电脑有哪些 Skill、CLI、MCP 和插件，生成能力地图。
 ```
 
-Agent 会先让你选择存储位置、Agent 和作用域，执行零写入计划，展示将涉及的绝对路径。只有得到当次明确确认后，它才能写入地图和托管指令。完成后 Agent 必须告知每个文件的精确位置。
+Agent 会先让你选择存储位置、Agent 和作用域，执行零写入计划，展示将涉及的绝对路径。只有得到当次明确确认后，它才能写入地图和托管指令。完成后 Agent 必须告知本次操作返回的精确位置，并提醒这些 stdout 信息应作为私有运维输出处理。
 
 日常也可以直接说：
 
@@ -78,6 +78,8 @@ Agent 会先让你选择存储位置、Agent 和作用域，执行零写入计�
 
 `capability-resolver.json` 保存执行候选所需的真实位置，`installation-state.json` 保存可恢复的安装状态。private namespace 使用 OS 系统数据目录并与公开 artifacts 分层，且不进入 Obsidian。Obsidian 模式保证 private namespace 位于 Vault 外；默认 local 模式位于同一应用数据根的隐藏 `.private` 子树；custom 是否位于 public root 外取决于路径拓扑，以零写入 setup plan 展示的精确路径为准，确认前审查。Unix 上要求私有文件使用 `0600`。公开库存使用脱敏位置和 opaque ID，但分享前仍应人工检查，因为能力清单本身也是隐私数据。
 
+持久化 public artifacts 只保存脱敏内容，private files 持久化精确路径。setup 与 paths 的 stdout 按使用者请求返回精确操作位置，用于当前会话的安装、排错和交付；该 stdout 不属于可分享的 public artifacts，不要将它当作脱敏报告转发。
+
 ## Agent 与作用域
 
 用 `--agents codex|claude|both` 选择 Codex、Claude Code 或两者，用 `--scope user|project` 选择用户级或项目级托管规则。项目级模式还应传入 `--project "<project-root>"`。
@@ -111,7 +113,7 @@ python3 "<skill-dir>/scripts/capability_map.py" setup apply \
 
 通常让 setup 自动生成 opaque installation ID。只有延续已有集成时才在 plan 与 apply 中同时传入相同的 `--installation-id "<inst-id>"`；该值必须以 `inst_` 开头并通过安全字符与长度校验。
 
-安装回执会返回地图、库存、配置、回执、私有 resolver、私有 state、指令文件、manifest 和备份的精确位置，并给出 Skill、CLI、MCP、plugin、未分类项与诊断计数。指令文件变化后，新开 Agent 会话再使用路由。
+`setup apply` 的 stdout 会返回地图、库存、配置、持久化回执、私有 resolver、私有 state、指令文件、manifest 和备份的精确操作位置，并给出 Skill、CLI、MCP、plugin、未分类项与诊断计数。持久化的 `setup-receipt.md` 是脱敏 artifact，不等同于这份 stdout。指令文件变化后，新开 Agent 会话再使用路由。
 
 ## 日常自然语言路由
 
@@ -140,7 +142,7 @@ python3 "<skill-dir>/scripts/capability_map.py" route \
 | `capability_map.py setup plan` | 生成确定性安装计划和 hash | 零写入 |
 | `capability_map.py setup apply` | 生成地图并安装托管指令 | 要求 `--confirmed --expected-plan-hash <plan-hash>` |
 | `capability_map.py status` | 返回 `installed`、`healthy`、`lifecycle` 与 `health_errors` | 不写入 |
-| `capability_map.py paths` | 返回当前安装所有精确位置 | 不写入 |
+| `capability_map.py paths` | 返回当前安装的 public/private artifact paths | 不写入 |
 | `capability_map.py refresh` | 重新发现本机能力并更新地图 | 先 `--dry-run`，写入时用 `--confirmed` |
 | `capability_map.py route` | 按 `--query <task-query>` 匹配本机候选；`--json` 输出结构化结果 | 不写入 |
 | `capability_map.py migrate` | 用 `--to <new-storage-root>` 迁移并更新托管指令 | 先 `--dry-run`，写入时用 `--confirmed` |
@@ -163,7 +165,9 @@ python3 "<skill-dir>/scripts/capability_map.py" help-intent --query "能力地�
 
 `--to` 接收目标公开目录。迁移到另一个 Obsidian Vault 时，传入该 Vault 内最终的 `<vault-root>/Agent/本机能力地图` 目录；私有 resolver 和 state 仍留在系统数据目录。
 
-`uninstall` 默认只移除 Agent 中的托管路由，公开地图与私有 state 保留。数据清理是单独的破坏性选择：先预览，再取得一次新的当次明确确认，然后在 uninstall 命令添加 `--purge-data`。被清理的数据会移动到命令回传的 recovery directory，以便恢复。
+`uninstall` 默认只移除 Agent 中的托管路由，公开地图与私有 state 保留，同时写入 `lifecycle=uninstalled、active=false`。此后 `status` 返回 `installed=false、healthy=false 且 health_errors 为空`，`refresh、migrate 与重复 uninstall 会拒绝`。在同一公开目录重新 setup 必须显式提供新的 `inst_` installation ID，使新安装使用新的 private namespace，而旧 state 继续保留为 uninstalled 证据。
+
+数据清理是单独的破坏性选择：先预览，再取得一次新的当次明确确认，然后在 uninstall 命令添加 `--purge-data`。`--purge-data` 可从 active 或 uninstalled lifecycle 执行，它会将托管的 public artifacts 和完整 owned private namespace 可恢复地移入命令回传的 recovery directory，包括 resolver、state、instruction/state backups 与 manifests。它不移动非托管公开文件或其他 private namespace。外部变更冲突时拒绝 purge 并保留外部内容，并在可安全恢复时回滚本次托管变更。
 
 ## Standalone scan
 
@@ -189,14 +193,14 @@ python3 "<skill-dir>/scripts/capability_map.py" scan \
 - 受支持的 MCP 配置会限长解析，但 secret values、command、args、URL、headers、env 不采集、不持久化、不输出
 - 不安装、更新、授权、调用或删除发现到的能力
 - 仅 `--probe-versions explicit` 可以执行受限版本探测
-- 公开输出统一脱敏 Home、外部绝对路径、凭证形态和控制字符
+- 持久化 public artifacts 统一脱敏 Home、外部绝对路径、凭证形态和控制字符；精确路径 stdout 按上述私有运维输出处理
 - 任何使用者的本机能力库存都不会随这个 Skill 发布或上传
 
 ## 状态、故障与平台限制
 
 先运行 `status`。`installed=true` 只说明活动安装和必需文件存在；只有 `healthy=true` 才说明配置、state、库存、resolver 权限与 Agent 托管块通过校验。逐项报告 `health_errors`，不要把存在性当作健康性。
 
-计划过期时重新 plan。托管标记冲突时停止，不自动编辑使用者内容。迁移成功后旧安装显示 `lifecycle=migrated`，旧位置的 refresh、migrate、uninstall 与 purge 会拒绝，后续操作使用新位置。
+计划过期时重新 plan。托管标记冲突时停止，不自动编辑使用者内容。迁移成功后旧安装显示 `lifecycle=migrated`，旧位置的 refresh、migrate、uninstall 与 purge 会拒绝，后续操作使用新位置。普通 uninstall 后保留数据并进入 uninstalled lifecycle，只允许之后执行 purge，或用新 installation ID 重新 setup。
 
 发现层面针对 macOS、Linux 和 Windows 的 Skill roots、PATH 与 PATHEXT 设计。完整 setup 的强事务保证目前以 POSIX 的 secure directory-fd、no-follow、atomic replace 与 `0600` 为基础；Windows 上缺少相应语义时可能 fail closed。此时可以使用只读 scan，但不要在 setup 与 status 未实际通过前宣称持久 Agent 路由已经安全安装。
 

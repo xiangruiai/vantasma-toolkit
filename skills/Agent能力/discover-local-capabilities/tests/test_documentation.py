@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
+import re
+import shlex
 import sys
 import unittest
 from pathlib import Path
@@ -38,6 +42,24 @@ def _subcommands(parser: argparse.ArgumentParser) -> dict[str, argparse.Argument
     return dict(action.choices)
 
 
+def _documented_capability_map_argv(document: str) -> tuple[tuple[str, ...], ...]:
+    invocations: list[tuple[str, ...]] = []
+    for match in re.finditer(r"```bash\s*\n(.*?)\n```", document, re.DOTALL):
+        block = match.group(1).replace("\\\n", " ")
+        for line in block.splitlines():
+            if "capability_map.py" not in line:
+                continue
+            normalized = re.sub(r"<[^>]+>", "fixture", line.strip())
+            tokens = shlex.split(normalized, comments=True)
+            script_index = next(
+                index
+                for index, token in enumerate(tokens)
+                if token.endswith("/scripts/capability_map.py")
+            )
+            invocations.append(tuple(tokens[script_index + 1 :]))
+    return tuple(invocations)
+
+
 class DocumentationContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -70,6 +92,40 @@ class DocumentationContractTests(unittest.TestCase):
         for label, command in documented.items():
             with self.subTest(command=label):
                 self.assertIn(command, self.package_docs)
+
+    def test_every_documented_bash_invocation_parses(self) -> None:
+        parser = capability_map._parser()
+        for document_name, document in (
+            ("SKILL.md", self.skill),
+            ("README.md", self.readme),
+        ):
+            invocations = _documented_capability_map_argv(document)
+            self.assertTrue(invocations, document_name)
+            for argv in invocations:
+                with self.subTest(document=document_name, argv=argv):
+                    errors = io.StringIO()
+                    with contextlib.redirect_stderr(errors):
+                        try:
+                            parser.parse_args(argv)
+                        except SystemExit as error:
+                            self.fail(
+                                f"documented command failed parser ({error.code}): "
+                                f"{argv!r}: {errors.getvalue()}"
+                            )
+
+    def test_parser_rejects_unknown_flags_and_missing_required_arguments(self) -> None:
+        parser = capability_map._parser()
+        invalid = (
+            ("status", "--not-a-real-flag"),
+            ("setup",),
+            ("route",),
+            ("migrate",),
+            ("help-intent",),
+        )
+        for argv in invalid:
+            with self.subTest(argv=argv), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    parser.parse_args(argv)
 
     def test_documentation_covers_artifacts_and_private_boundary(self) -> None:
         for artifact in (
@@ -163,6 +219,39 @@ class DocumentationContractTests(unittest.TestCase):
             "自定义目录或 Obsidian 模式位于所选 public root 外",
             self.package_docs,
         )
+
+    def test_persisted_and_stdout_path_disclosures_are_distinct(self) -> None:
+        for statement in (
+            "持久化 public artifacts 只保存脱敏内容",
+            "持久化 public artifacts 统一脱敏 Home、外部绝对路径、凭证形态和控制字符",
+            "private files 持久化精确路径",
+            "setup 与 paths 的 stdout 按使用者请求返回精确操作位置",
+            "stdout 不属于可分享的 public artifacts",
+            "返回当前安装的 public/private artifact paths",
+        ):
+            with self.subTest(statement=statement):
+                self.assertIn(statement, self.package_docs)
+        self.assertNotIn(
+            "Keep exact local paths only in the private resolver and runtime state",
+            self.skill,
+        )
+        self.assertNotIn("返回当前安装所有精确位置", self.readme)
+        self.assertNotIn("公开输出统一脱敏", self.package_docs)
+
+    def test_uninstall_and_purge_lifecycle_matches_the_workflow(self) -> None:
+        for statement in (
+            "lifecycle=uninstalled、active=false",
+            "installed=false、healthy=false 且 health_errors 为空",
+            "refresh、migrate 与重复 uninstall 会拒绝",
+            "重新 setup 必须显式提供新的 `inst_` installation ID",
+            "`--purge-data` 可从 active 或 uninstalled lifecycle 执行",
+            "public artifacts 和完整 owned private namespace",
+            "resolver、state、instruction/state backups 与 manifests",
+            "不移动非托管公开文件或其他 private namespace",
+            "外部变更冲突时拒绝 purge 并保留外部内容",
+        ):
+            with self.subTest(statement=statement):
+                self.assertIn(statement, self.package_docs)
 
     def test_repository_index_counts_and_v2_description_are_current(self) -> None:
         skill_count = sum(1 for _ in (REPOSITORY_DIR / "skills").rglob("SKILL.md"))
