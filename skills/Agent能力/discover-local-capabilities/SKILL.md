@@ -48,7 +48,7 @@ Use the command entrypoint at `"<skill-dir>/scripts/capability_map.py"`. Prefer 
 
 5. Report every precise location returned under `paths`, the capability counts, changed Agent instruction targets and backup locations. Tell the person to start a new Agent session when its instruction file changed.
 
-The public storage contains `本机能力地图.md`, `capability-inventory.json`, `capability-map.config.json`, and `setup-receipt.md`. The private system data directory contains `capability-resolver.json` and `installation-state.json`; it stays outside the selected public directory and does not enter Obsidian.
+The public storage contains `本机能力地图.md`, `capability-inventory.json`, `capability-map.config.json`, and `setup-receipt.md`. The private namespace contains `capability-resolver.json` and `installation-state.json`; it is always layered separately from public artifacts and never enters Obsidian. In default local mode it is a hidden `.private` subtree under the same application-data root. In custom-directory and Obsidian modes it is outside the selected public root.
 
 ## Route natural-language work
 
@@ -107,7 +107,7 @@ Add `--skill-root "<extra-skill-root>"` for an extra source. Only add `--probe-v
 
 - Scan the installer's computer. Do not inject a packaged capability snapshot, concrete preferred-tool list, or another person's preferences.
 - Default to no network access and no execution of discovered CLIs.
-- Never read `.env`, credentials, command histories, MCP secret values, or arbitrary tool configuration values.
+- Do not read `.env`, credential stores, or command histories. Supported MCP configuration files are parsed with size bounds, but secret values, command, args, URL, headers, and env fields are not collected, persisted, or emitted.
 - Keep exact local paths only in the private resolver and runtime state. Treat public artifacts as reviewable but still potentially sensitive inventory.
 - Do not install, authorize, update, invoke, or delete discovered capabilities as part of discovery.
 

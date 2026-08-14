@@ -140,6 +140,24 @@ class DocumentationContractTests(unittest.TestCase):
         self.assertIn("扫描安装者的电脑", self.readme)
         self.assertIn("不会复制作者的工具、偏好或能力快照", self.readme)
 
+    def test_security_boundaries_match_the_implemented_data_flow(self) -> None:
+        for statement in (
+            "不读取 `.env`、凭证存储或命令历史",
+            "受支持的 MCP 配置会限长解析",
+            "secret values、command、args、URL、headers、env 不采集、不持久化、不输出",
+            "private namespace 始终与公开 artifacts 分层",
+            "默认 local 模式位于同一应用数据根的隐藏 `.private` 子树",
+            "自定义目录或 Obsidian 模式位于所选 public root 外",
+            "不进入 Obsidian",
+        ):
+            with self.subTest(statement=statement):
+                self.assertIn(statement, self.package_docs)
+        self.assertNotIn(
+            "不读取 `.env`、token、密码、命令历史或 MCP secret values",
+            self.package_docs,
+        )
+        self.assertNotIn("stays outside the selected public directory", self.skill)
+
     def test_repository_index_counts_and_v2_description_are_current(self) -> None:
         skill_count = sum(1 for _ in (REPOSITORY_DIR / "skills").rglob("SKILL.md"))
         category_count = sum(

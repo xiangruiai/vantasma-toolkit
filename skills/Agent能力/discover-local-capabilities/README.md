@@ -76,7 +76,7 @@ Agent 会先让你选择存储位置、Agent 和作用域，执行零写入计�
 └── installation-state.json
 ```
 
-`capability-resolver.json` 保存执行候选所需的真实位置，`installation-state.json` 保存可恢复的安装状态。两者不进入 Obsidian，也不放进使用者选择的公开同步目录；Unix 上要求 `0600`。公开库存使用脱敏位置和 opaque ID，但分享前仍应人工检查，因为能力清单本身也是隐私数据。
+`capability-resolver.json` 保存执行候选所需的真实位置，`installation-state.json` 保存可恢复的安装状态。private namespace 始终与公开 artifacts 分层且不进入 Obsidian：默认 local 模式位于同一应用数据根的隐藏 `.private` 子树，自定义目录或 Obsidian 模式位于所选 public root 外。Unix 上要求私有文件使用 `0600`。公开库存使用脱敏位置和 opaque ID，但分享前仍应人工检查，因为能力清单本身也是隐私数据。
 
 ## Agent 与作用域
 
@@ -185,8 +185,8 @@ python3 "<skill-dir>/scripts/capability_map.py" scan \
 ## 隐私与安全边界
 
 - 默认不联网，默认不执行已发现的 CLI
-- 不读取 `.env`、token、密码、命令历史或 MCP secret values
-- 不把 MCP command、args、URL、headers、env 或配置值写入公开库存
+- 不读取 `.env`、凭证存储或命令历史
+- 受支持的 MCP 配置会限长解析，但 secret values、command、args、URL、headers、env 不采集、不持久化、不输出
 - 不安装、更新、授权、调用或删除发现到的能力
 - 仅 `--probe-versions explicit` 可以执行受限版本探测
 - 公开输出统一脱敏 Home、外部绝对路径、凭证形态和控制字符
