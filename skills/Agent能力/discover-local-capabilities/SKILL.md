@@ -1,63 +1,123 @@
 ---
 name: discover-local-capabilities
-description: Scan a computer for installed Agent Skills, command-line tools, MCP servers, and local plugins, then generate a verified scene-to-tool capability map. Use when the user asks what local abilities are available, which installed tool should handle a task, to build or refresh a capability map, to audit Skills or CLI tools, or to avoid repeatedly probing with which and --help.
+description: Discover the installer's local Agent Skills, PATH CLIs, MCP servers, and plugins; generate or refresh a neutral capability map; and route natural-language tasks through verified local evidence. Use when someone asks what this computer can do, which installed capability fits a task, where the capability map is stored, or how to set up, refresh, migrate, audit, or uninstall local capability routing.
 ---
 
 # Discover Local Capabilities
 
-Generate an evidence-backed local capability map before choosing tools. Treat the scan result as an index, not as proof that every discovered capability is authorized or healthy.
+Use the command entrypoint at `"<skill-dir>/scripts/capability_map.py"`. Prefer a natural-language conversation: translate the person's intent into the commands below, show the result, and explain the next safe action.
 
-## Workflow
+## Set up the routing loop
 
-1. Run the scanner from the user's current project:
+1. Ask the person to choose all three dimensions before planning:
+
+   - Storage: local default directory, Obsidian Vault, or custom directory.
+   - Agent: `--agents codex|claude|both`.
+   - Scope: `--scope user|project`.
+
+2. Run `setup plan` with the selected values. This phase is read-only and guarantees zero writes. Use one storage form:
 
    ```bash
-   python3 "<skill-dir>/scripts/scan_capabilities.py" --project "$PWD" --output-dir .capability-map
+   # Local default directory: omit --storage and --vault
+   python3 "<skill-dir>/scripts/capability_map.py" setup plan \
+     --agents both --scope user --project "<project-root>"
+
+   # Obsidian Vault
+   python3 "<skill-dir>/scripts/capability_map.py" setup plan \
+     --vault "<vault-root>" --agents both --scope user \
+     --project "<project-root>"
+
+   # Custom directory
+   python3 "<skill-dir>/scripts/capability_map.py" setup plan \
+     --storage "<storage-root>" --agents codex --scope project \
+     --project "<project-root>"
    ```
 
-2. Read `.capability-map/capability-map.md` first. Use `.capability-map/capability-map.json` when structured routing or further automation is needed.
-3. Route the user's request through the “场景 → 首选能力” table before exploring tools manually.
-4. Verify the selected tool at task time. A discovered executable or Skill may still lack authentication, permissions, dependencies, or network access.
-5. Refresh the map after installing, removing, renaming, or upgrading Skills, CLI tools, MCP servers, or plugins.
+3. Show the plan's absolute paths, file and instruction changes, backups, warnings, counts, and `plan_hash`. Ask for当次明确确认. Planning permission is not apply permission.
 
-## Optional Scans
+4. Only after that confirmation, rerun the identical selection with `setup apply`, `--confirmed`, and the returned `--expected-plan-hash`. Never reuse an old confirmation or hash.
 
-- Add CLI versions only when needed. Version probing executes each discovered command with a safe version flag and a short timeout:
+   ```bash
+   python3 "<skill-dir>/scripts/capability_map.py" setup apply \
+     --storage "<storage-root>" --agents codex --scope project \
+     --project "<project-root>" --confirmed \
+     --expected-plan-hash "<plan-hash>"
+   ```
 
-  ```bash
-  python3 "<skill-dir>/scripts/scan_capabilities.py" --project "$PWD" --output-dir .capability-map --probe-versions
-  ```
+   Normally let setup generate its opaque installation ID. Only preserve an existing integration when explicitly required by passing the same validated `--installation-id "<inst-id>"` to plan and apply; the value must start with `inst_`.
 
-- Add extra Skill roots or CLI names explicitly:
+5. Report every precise location returned under `paths`, the capability counts, changed Agent instruction targets and backup locations. Tell the person to start a new Agent session when its instruction file changed.
 
-  ```bash
-  python3 "<skill-dir>/scripts/scan_capabilities.py" \
-    --skill-root /path/to/shared-skills \
-    --cli custom-cli \
-    --output-dir .capability-map
-  ```
+The public storage contains `本机能力地图.md`, `capability-inventory.json`, `capability-map.config.json`, and `setup-receipt.md`. The private system data directory contains `capability-resolver.json` and `installation-state.json`; it stays outside the selected public directory and does not enter Obsidian.
 
-## Discovery Boundaries
+## Route natural-language work
 
-- Scan only known Skill roots, the current project, `PATH`, and known MCP/plugin metadata locations.
-- Read Skill frontmatter only; do not load every Skill body during inventory.
-- Never read `.env`, tokens, secrets, command histories, or MCP configuration values. Record MCP and plugin names only.
-- Do not install, update, authorize, invoke, or delete discovered tools during scanning.
-- Do not claim a tool is usable merely because a file exists. Report four separate states: discovered, version-probed, authenticated, task-verified. This scanner establishes only the first state and optionally the second.
-- Redact the home directory as `~` in generated reports.
+For a task needing local tools or capabilities:
 
-## Neutral Routing Taxonomy
+1. Read `本机能力地图.md` first.
+2. Match the request against its scenes and candidates. Use `route` for a structured lookup when helpful:
 
-The package uses the generic, bilingual [scene-taxonomy.json](references/scene-taxonomy.json). It contains no preferred concrete tools. The new command entrypoint will dynamically classify and rank only capabilities evidenced on the installer's machine; the legacy scanner now treats retired routing rules as empty.
+   ```bash
+   python3 "<skill-dir>/scripts/capability_map.py" route \
+     --storage "<storage-root>" --query "<task-query>" --json
+   ```
 
-If local evidence is insufficient, place the capability under “待人工归类” instead of inventing a use case.
+3. Read the private resolver only after selecting a candidate. If the candidate is a Skill, complete-read its `SKILL.md` before acting.
+4. Verify authentication, permission, dependencies, and task-level behavior before execution. 已发现不等于已认证或已验证.
+5. If evidence is weak, return no reliable match instead of inventing a preference.
 
-## Acceptance Checks
+Use the generic bilingual taxonomy in [`references/scene-taxonomy.json`](references/scene-taxonomy.json). It defines scene semantics, not concrete preferred tools.
 
-Before handing off a map, confirm:
+## Operate the map
 
-- Both Markdown and JSON reports exist.
-- Every preferred route cites an actually discovered Skill, CLI, MCP server, or plugin.
-- Duplicate symlinked Skills are collapsed to one real source with all visible locations retained.
-- Missing tools are marked as missing rather than silently omitted from the rule evaluation.
-- Reports contain no secret values or `.env` contents.
+Use the same `--storage <storage-root>` or `--vault <vault-root>` selector that identifies the active installation.
+
+```bash
+python3 "<skill-dir>/scripts/capability_map.py" status --storage "<storage-root>"
+python3 "<skill-dir>/scripts/capability_map.py" paths --storage "<storage-root>"
+python3 "<skill-dir>/scripts/capability_map.py" refresh --storage "<storage-root>" --dry-run
+python3 "<skill-dir>/scripts/capability_map.py" refresh --storage "<storage-root>" --confirmed
+python3 "<skill-dir>/scripts/capability_map.py" migrate --storage "<storage-root>" --to "<new-storage-root>" --dry-run
+python3 "<skill-dir>/scripts/capability_map.py" migrate --storage "<storage-root>" --to "<new-storage-root>" --confirmed
+python3 "<skill-dir>/scripts/capability_map.py" uninstall --storage "<storage-root>" --dry-run
+python3 "<skill-dir>/scripts/capability_map.py" uninstall --storage "<storage-root>" --confirmed
+```
+
+`uninstall` removes only managed Agent instructions and preserves map data. Preview and obtain a separate当次明确确认 before adding `--purge-data`; purge moves data to a reported recovery directory.
+
+Interpret a help request without touching an installation:
+
+```bash
+python3 "<skill-dir>/scripts/capability_map.py" help-intent --query "能力地图放在哪里"
+```
+
+## Run a standalone scan
+
+Without `--output-dir`, `scan` returns a sanitized inventory on stdout and writes nothing. Writing a scan bundle requires explicit confirmation:
+
+```bash
+python3 "<skill-dir>/scripts/capability_map.py" scan --project "<project-root>"
+python3 "<skill-dir>/scripts/capability_map.py" scan --project "<project-root>" \
+  --output-dir "<storage-root>" --confirmed
+```
+
+Add `--skill-root "<extra-skill-root>"` for an extra source. Only add `--probe-versions explicit` after explaining that it executes bounded version probes; the default does not execute discovered CLIs.
+
+## Preserve privacy and neutrality
+
+- Scan the installer's computer. Do not inject a packaged capability snapshot, concrete preferred-tool list, or another person's preferences.
+- Default to no network access and no execution of discovered CLIs.
+- Never read `.env`, credentials, command histories, MCP secret values, or arbitrary tool configuration values.
+- Keep exact local paths only in the private resolver and runtime state. Treat public artifacts as reviewable but still potentially sensitive inventory.
+- Do not install, authorize, update, invoke, or delete discovered capabilities as part of discovery.
+
+## Troubleshoot safely
+
+- Run `status` first. Distinguish `installed` from `healthy`; report `lifecycle` and every `health_errors` item.
+- Run `paths` to report exact locations after setup.
+- If the plan hash is stale, discard it, rerun `setup plan`, and request fresh confirmation.
+- If managed instruction markers conflict or are damaged, stop and show the diagnostics. Do not repair user content automatically.
+- After migration, operate only on the new storage; the old lifecycle is `migrated` and its mutating commands must refuse.
+- If routing returns no reliable candidate, inspect the sanitized inventory and keep unknown capabilities unclassified.
+
+Discovery is designed for macOS, Linux, and Windows roots and executable conventions. Transactional setup has its strongest guarantees on POSIX systems because it relies on secure directory-fd, no-follow, atomic replacement, and `0600` semantics. On Windows those primitives can be unavailable, so setup may fail closed; do not claim durable Agent integration until the environment passes its own setup and status checks.

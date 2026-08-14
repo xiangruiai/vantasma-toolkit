@@ -1,4 +1,4 @@
 interface:
   display_name: "本机能力地图"
-  short_description: "扫描本机 Skill、CLI 与连接器，生成可验证能力地图"
-  default_prompt: "Use $discover-local-capabilities to scan this computer and generate a local capability map."
+  short_description: "全量发现本机 Skill、CLI、MCP 与插件并建立自然语言安全路由闭环"
+  default_prompt: "请使用 $discover-local-capabilities 先只读扫描并展示零写入安装计划，等我当次明确确认后再生成本机能力地图并接入 Agent 自然语言路由。"

@@ -39,7 +39,7 @@ vantasma-toolkit/
 │   └── xiangrui-hud/                 ← Claude Code 实时状态栏 HUD（翠影绿主题，fork 自 claude-hud）
 └── skills/                              ← 16 个 Skill，按领域分 7 类
     ├── Agent能力/
-    │   └── discover-local-capabilities/ 本机 Skill / CLI / MCP / Plugin 能力地图
+    │   └── discover-local-capabilities/ 完整扫描本机能力并建立自然语言路由闭环
     ├── 知识管理/
     │   └── three-layer-memory/          三层个人记忆系统
     ├── 文档自动化/
@@ -142,7 +142,7 @@ codex plugin add xiangrui-taskboard@vantasma-codex
 
 | Skill | 用途 | 详情 |
 |---|---|---|
-| `discover-local-capabilities` | **本机能力地图**：只读扫描已安装的 Skill、CLI、MCP 和 Plugin，生成“场景 → 首选能力”路由表 | [README](skills/Agent能力/discover-local-capabilities/README.md) |
+| `discover-local-capabilities` | **本机能力地图**：完整扫描安装者的 Skill、CLI、MCP 和 Plugin，生成中立场景索引并接入可回滚的自然语言路由闭环 | [README](skills/Agent能力/discover-local-capabilities/README.md) |
 
 ### 🧠 知识管理
 
