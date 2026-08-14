@@ -1,7 +1,7 @@
 # discover-local-capabilities v2 设计规格
 
 日期：2026-08-14
-状态：已确认方向，待实现
+状态：已完成
 目标目录：`skills/Agent能力/discover-local-capabilities`
 
 ## 1. 背景
