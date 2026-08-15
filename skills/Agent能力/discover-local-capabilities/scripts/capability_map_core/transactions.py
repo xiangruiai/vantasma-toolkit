@@ -16,7 +16,11 @@ from typing import Any
 from .storage import (
     RootEvidence as DirectoryEvidence,
     _capture_root_evidence,
+    _move_no_replace_portable,
+    _prepare_root_portable,
+    _target_snapshot,
     _validate_root_evidence,
+    _write_file_fsynced_portable,
 )
 
 
@@ -89,6 +93,7 @@ class TransactionReceipt:
     changed_paths: tuple[Path, ...]
     manifest_path: Path | None
     backup_directory: Path | None
+    cleanup_recovery_paths: tuple[Path, ...] = ()
 
 
 class TransactionError(RuntimeError):
@@ -157,6 +162,10 @@ def _secure_backend_available() -> bool:
         _DIR_FD_BACKEND_SUPPORTED
         and callable(getattr(os, "fchmod", None))
     )
+
+
+def _windows_portable_backend_available() -> bool:
+    return os.name == "nt"
 
 
 def _fsync_directory(descriptor: int) -> None:
@@ -514,6 +523,213 @@ def _preserve_claim_in_backup(
     return backup_directory / recovery_name
 
 
+def _portable_matches_expected(snapshot: Any, mutation: FileMutation) -> bool:
+    if snapshot.existed != mutation.expected_exists:
+        return False
+    if not snapshot.existed:
+        return True
+    return bool(
+        snapshot.payload is not None
+        and hashlib.sha256(snapshot.payload).hexdigest()
+        == mutation.expected_original_sha256
+        and (os.name == "nt" or snapshot.mode == mutation.mode)
+    )
+
+
+def _write_backup_manifest_portable(
+    backup_root_evidence: DirectoryEvidence,
+    mutations: tuple[FileMutation, ...],
+    plan_hash: str,
+) -> tuple[Path, Path]:
+    root = _prepare_root_portable(backup_root_evidence)
+    directory = root / f"instruction-{plan_hash[:16]}-{secrets.token_hex(6)}"
+    directory.mkdir(mode=0o700)
+    entries: list[dict[str, Any]] = []
+    for index, mutation in enumerate(mutations):
+        backup_file: str | None = None
+        if mutation.expected_exists:
+            backup_file = f"original-{index:04d}.bin"
+            _write_file_fsynced_portable(
+                directory / backup_file, mutation.original_bytes, 0o600
+            )
+        entries.append(
+            {
+                "path": str(mutation.path),
+                "operation": mutation.operation,
+                "existed": mutation.expected_exists,
+                "sha256": mutation.expected_original_sha256,
+                "mode": mutation.mode if mutation.expected_exists else None,
+                "newline": mutation.newline,
+                "backup_file": backup_file,
+                "target_sha256": hashlib.sha256(
+                    mutation.target_bytes
+                ).hexdigest(),
+            }
+        )
+    payload = (
+        json.dumps(
+            {"schema_version": 1, "plan_hash": plan_hash, "entries": entries},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode("utf-8")
+    manifest = directory / "manifest.json"
+    _write_file_fsynced_portable(manifest, payload, 0o600)
+    return directory, manifest
+
+
+def _apply_file_transaction_portable(
+    values: tuple[FileMutation, ...],
+    *,
+    backup_root_evidence: DirectoryEvidence,
+    plan_hash: str,
+    failure_injector: Callable[[str, Path], None] | None,
+) -> TransactionReceipt:
+    """Best-effort Windows transaction with recoverable originals."""
+
+    for mutation in values:
+        _validate_root_evidence(mutation.parent_evidence)
+        if not mutation.path.parent.exists():
+            raise TransactionError("instruction target parent does not exist")
+        current = _target_snapshot(mutation.path)
+        if not _portable_matches_expected(current, mutation):
+            raise TransactionError("stale transaction target")
+
+    backup_directory, manifest_path = _write_backup_manifest_portable(
+        backup_root_evidence, values, plan_hash
+    )
+    stages: dict[Path, Path] = {}
+    claims: dict[Path, Path] = {}
+    committed: list[tuple[FileMutation, _CommittedEvidence]] = []
+    recovery_paths: list[Path] = []
+    cleanup_recovery_paths: list[Path] = []
+    commit_complete = False
+    try:
+        for mutation in values:
+            stage = mutation.path.parent / (
+                f".vantasma-instruction-stage-{secrets.token_hex(12)}"
+            )
+            _write_file_fsynced_portable(stage, mutation.target_bytes, mutation.mode)
+            staged = _target_snapshot(stage)
+            desired_hash = hashlib.sha256(mutation.target_bytes).hexdigest()
+            if staged.payload is None or hashlib.sha256(staged.payload).hexdigest() != desired_hash:
+                raise OSError("staged transaction hash mismatch")
+            stages[mutation.path] = stage
+
+        for mutation in values:
+            current = _target_snapshot(mutation.path)
+            if not _portable_matches_expected(current, mutation):
+                raise TransactionError("stale transaction target")
+            if mutation.expected_exists:
+                if failure_injector is not None:
+                    failure_injector("before_claim", mutation.path)
+                claim = mutation.path.parent / (
+                    f".vantasma-instruction-claim-{secrets.token_hex(12)}"
+                )
+                _move_no_replace_portable(mutation.path, claim)
+                claims[mutation.path] = claim
+                if not _portable_matches_expected(_target_snapshot(claim), mutation):
+                    raise TransactionError(
+                        "stale transaction target after atomic claim conflict"
+                    )
+            if failure_injector is not None:
+                failure_injector("before_link", mutation.path)
+            try:
+                _move_no_replace_portable(stages.pop(mutation.path), mutation.path)
+            except FileExistsError as error:
+                raise TransactionError(
+                    "stale transaction target: concurrent create conflict",
+                    cause=error,
+                ) from error
+            after = _target_snapshot(mutation.path)
+            evidence = _committed_evidence(
+                after,
+                hashlib.sha256(mutation.target_bytes).hexdigest(),
+            )
+            committed.append((mutation, evidence))
+            if failure_injector is not None:
+                failure_injector("after_replace", mutation.path)
+
+        commit_complete = True
+        for path, claim in tuple(claims.items()):
+            try:
+                os.unlink(claim)
+            except FileNotFoundError:
+                claims.pop(path, None)
+            except OSError:
+                try:
+                    os.lstat(claim)
+                except (FileNotFoundError, OSError):
+                    claims.pop(path, None)
+                else:
+                    cleanup_recovery_paths.append(claim)
+            else:
+                claims.pop(path, None)
+        return TransactionReceipt(
+            plan_hash,
+            tuple(item.path for item in values),
+            manifest_path,
+            backup_directory,
+            tuple(cleanup_recovery_paths),
+        )
+    except BaseException as error:
+        if commit_complete:
+            raise
+        conflicts: list[Path] = []
+        rollback_errors: list[BaseException] = []
+        for mutation, evidence in reversed(committed):
+            try:
+                current = _target_snapshot(mutation.path)
+                if not _still_owned(current, evidence):
+                    conflicts.append(mutation.path)
+                    continue
+                os.unlink(mutation.path)
+                claim = claims.pop(mutation.path, None)
+                if claim is not None:
+                    _move_no_replace_portable(claim, mutation.path)
+            except BaseException as rollback_error:
+                rollback_errors.append(rollback_error)
+        for path, claim in tuple(claims.items()):
+            try:
+                if not path.exists():
+                    _move_no_replace_portable(claim, path)
+                    claims.pop(path, None)
+                    continue
+                recovery = backup_directory / (
+                    f"claim-recovery-{len(recovery_paths):04d}.bin"
+                )
+                claimed = _target_snapshot(claim)
+                if claimed.payload is None:
+                    raise OSError("claimed transaction target disappeared")
+                _write_file_fsynced_portable(recovery, claimed.payload, 0o600)
+                recovery_paths.append(recovery)
+                os.unlink(claim)
+                claims.pop(path, None)
+                conflicts.append(path)
+            except BaseException as rollback_error:
+                rollback_errors.append(rollback_error)
+        message = f"instruction transaction failed: {error}"
+        if conflicts:
+            message += "; rollback_conflict"
+        if rollback_errors:
+            message += "; rollback_incomplete"
+        raise TransactionError(
+            message,
+            manifest_path=manifest_path,
+            rollback_conflicts=conflicts,
+            recovery_paths=recovery_paths,
+            cause=error,
+        ) from error
+    finally:
+        for stage in stages.values():
+            try:
+                os.unlink(stage)
+            except FileNotFoundError:
+                pass
+
+
 def apply_file_transaction(
     mutations: Iterable[FileMutation],
     *,
@@ -529,8 +745,6 @@ def apply_file_transaction(
         return TransactionReceipt(plan_hash, (), None, None)
     for mutation in values:
         _validate_mutation_path(mutation.path, mutation.parent_evidence)
-    if not _secure_backend_available():
-        raise RuntimeError("secure_transaction_backend_unavailable")
     if len({item.path for item in values}) != len(values):
         raise ValueError("transaction paths must be unique")
     private_backup = Path(backup_root)
@@ -540,6 +754,15 @@ def apply_file_transaction(
         raise ValueError("backup_root must not be an instruction directory")
     if not isinstance(backup_root_evidence, DirectoryEvidence):
         raise TypeError("backup_root_evidence must be DirectoryEvidence")
+    if not _secure_backend_available():
+        if not _windows_portable_backend_available():
+            raise RuntimeError("secure_transaction_backend_unavailable")
+        return _apply_file_transaction_portable(
+            values,
+            backup_root_evidence=backup_root_evidence,
+            plan_hash=plan_hash,
+            failure_injector=failure_injector,
+        )
 
     parent_handles: dict[Path, int] = {}
     staged_names: dict[Path, str] = {}

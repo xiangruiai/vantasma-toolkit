@@ -311,6 +311,7 @@ def render_capability_map_markdown(
     )
     diagnostic_counts = _diagnostic_summary(global_diagnostics)
     unclassified = tuple(item for item in ordered if not item.scenes)
+    kind_counts = Counter(item.kind for item in ordered)
 
     lines = [
         "# 本机能力地图",
@@ -325,6 +326,11 @@ def render_capability_map_markdown(
         )
     lines.extend(
         [
+            "## 盘点口径",
+            "",
+            f"共 {len(ordered)} 个可路由条目：Skill {kind_counts.get('skill', 0)}，CLI {kind_counts.get('cli', 0)}，MCP {kind_counts.get('mcp', 0)}，plugin {kind_counts.get('plugin', 0)}。",
+            "CLI 数量按 PATH 中唯一命令入口统计，不等于同等数量的高层功能；日常使用应先按场景路由，不要逐项阅读完整 CLI 清单。",
+            "",
             "## 使用方式",
             "",
             "先用自然语言描述任务，再按下方场景选择有本机证据的候选。执行前通过 `resolver_id` 在私有解析索引中定位真实入口，Skill 候选应先完整读取其 `SKILL.md`。",

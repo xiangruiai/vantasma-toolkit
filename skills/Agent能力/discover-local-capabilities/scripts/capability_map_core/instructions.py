@@ -25,6 +25,15 @@ _READ_CHUNK_BYTES = 64 * 1024
 _VALID_AGENTS = frozenset({"codex", "claude"})
 _VALID_SCOPES = frozenset({"user", "project"})
 _INSTALLATION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_WINDOWS_REPARSE_POINT = 0x400
+
+
+def _is_link_like(metadata: os.stat_result) -> bool:
+    return bool(
+        stat.S_ISLNK(metadata.st_mode)
+        or int(getattr(metadata, "st_file_attributes", 0))
+        & _WINDOWS_REPARSE_POINT
+    )
 _END_MARKER = b"<!-- vantasma:discover-local-capabilities:end -->"
 _BOUNDARY_MARKER = b"<!-- vantasma:discover-local-capabilities:managed -->"
 _START_RE = re.compile(
@@ -223,7 +232,7 @@ def _safe_nonempty_regular_file(path: Path) -> bool:
         return False
     except OSError as error:
         raise ValueError("instruction target could not be inspected") from error
-    if stat.S_ISLNK(before.st_mode):
+    if _is_link_like(before):
         raise ValueError("refusing symbolic-link instruction target")
     if not stat.S_ISREG(before.st_mode):
         raise ValueError("instruction target is not a regular file")
@@ -234,6 +243,7 @@ def _safe_nonempty_regular_file(path: Path) -> bool:
         | getattr(os, "O_CLOEXEC", 0)
         | getattr(os, "O_NONBLOCK", 0)
         | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_BINARY", 0)
     )
     try:
         descriptor = os.open(path, flags)
@@ -271,7 +281,7 @@ def _snapshot_target(path: Path) -> _InstructionSnapshot:
         return _InstructionSnapshot(False, None, None)
     except OSError as error:
         raise ValueError("instruction target could not be inspected") from error
-    if stat.S_ISLNK(before.st_mode):
+    if _is_link_like(before):
         raise ValueError("refusing symbolic-link instruction target")
     if not stat.S_ISREG(before.st_mode):
         raise ValueError("instruction target is not a regular file")
@@ -282,6 +292,7 @@ def _snapshot_target(path: Path) -> _InstructionSnapshot:
         | getattr(os, "O_CLOEXEC", 0)
         | getattr(os, "O_NONBLOCK", 0)
         | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_BINARY", 0)
     )
     try:
         descriptor = os.open(path, flags)
@@ -378,6 +389,7 @@ def render_managed_block(
             f"id={safe_id} schema=1 -->",
             "## 本机能力路由",
             "",
+            "使用者的明确指令、既有业务流程、记忆与项目规则优先；能力地图只负责在已确定的任务流程中选择本机实现能力，不得反向覆盖这些规则。",
             f"处理需要本机工具或本机能力的任务前，先读取 {map_literal}。",
             f"仅在需要解析真实位置时读取 {resolver_literal}。",
             "如果候选是 Skill，完整读取其 SKILL.md。",

@@ -40,6 +40,7 @@ MAX_PLUGIN_DEPTH = 64
 MAX_PLUGIN_ENTRIES = 25_000
 _READ_CHUNK_BYTES = 64 * 1024
 _PLUGIN_MARKERS = frozenset({".codex-plugin", ".claude-plugin"})
+_WINDOWS_REPARSE_POINT = 0x400
 _TRANSPORTS = frozenset({"stdio", "http", "sse", "unknown"})
 _FD_SCANDIR = os.scandir
 _DIRFD_OPEN = os.open
@@ -211,7 +212,7 @@ def _resolve_safe_chain(path: Path, *, max_links: int = 64) -> Path:
             if from_link_target:
                 raise _BrokenSymlink(errno.ENOENT, "broken symbolic link") from error
             raise
-        if not stat.S_ISLNK(entry_stat.st_mode):
+        if not _is_link_like(entry_stat):
             resolved = candidate
             continue
         links += 1
@@ -265,12 +266,25 @@ def _secure_plugin_backend_supported() -> bool:
     )
 
 
+def _is_link_like(metadata: os.stat_result) -> bool:
+    return bool(
+        stat.S_ISLNK(metadata.st_mode)
+        or int(getattr(metadata, "st_file_attributes", 0))
+        & _WINDOWS_REPARSE_POINT
+    )
+
+
+def _windows_path_backend_available() -> bool:
+    return os.name == "nt"
+
+
 def _file_flags() -> int:
     return (
         os.O_RDONLY
         | getattr(os, "O_CLOEXEC", 0)
         | getattr(os, "O_NOFOLLOW", 0)
         | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_BINARY", 0)
     )
 
 
@@ -1301,7 +1315,7 @@ def _scan_plugin_root(
                 location=root.public_prefix,
             ),
         )
-    if stat.S_ISLNK(visible_stat.st_mode):
+    if _is_link_like(visible_stat):
         return (), (
             _diagnostic(
                 "symlink_root_rejected",
@@ -1456,7 +1470,7 @@ def _scan_plugin_root(
                         )
                     )
                     continue
-                if stat.S_ISLNK(entry_stat.st_mode):
+                if _is_link_like(entry_stat):
                     is_manifest = (
                         entry.name == "plugin.json"
                         and parts
@@ -1565,6 +1579,202 @@ def _scan_plugin_root(
         os.close(stack.pop()[0])
     if limit_exceeded:
         occurrences.clear()
+    return tuple(occurrences), tuple(diagnostics)
+
+
+def _scan_plugin_root_path(
+    root: RootSpec,
+) -> tuple[tuple[_ManifestOccurrence, ...], tuple[Diagnostic, ...]]:
+    """Best-effort Windows plugin scan with file-ID and reparse checks."""
+
+    diagnostics: list[Diagnostic] = [
+        _diagnostic(
+            "plugin_path_backend_best_effort",
+            "Directory handles are unavailable; plugin manifests use file-ID and before/open/after checks while reparse points are refused.",
+            location=root.public_prefix,
+            severity="info",
+        )
+    ]
+    try:
+        root_before = os.lstat(root.path)
+    except FileNotFoundError:
+        return (), ()
+    except PermissionError:
+        return (), (
+            _diagnostic(
+                "permission_denied",
+                "A plugin root could not be inspected due to permissions.",
+                location=root.public_prefix,
+            ),
+        )
+    except OSError:
+        return (), (
+            _diagnostic(
+                "plugin_root_stat_error",
+                "A plugin root could not be inspected.",
+                location=root.public_prefix,
+            ),
+        )
+    if _is_link_like(root_before) or not stat.S_ISDIR(root_before.st_mode):
+        return (), (
+            _diagnostic(
+                "symlink_root_rejected"
+                if _is_link_like(root_before)
+                else "plugin_root_not_directory",
+                "A non-physical plugin root was rejected conservatively.",
+                location=root.public_prefix,
+            ),
+        )
+    root_id = _file_id(root_before)
+    if root_id is None:
+        return (), (
+            _diagnostic(
+                "plugin_root_unverifiable",
+                "A plugin root had no stable physical identity and was skipped.",
+                location=root.public_prefix,
+            ),
+        )
+
+    occurrences: list[_ManifestOccurrence] = []
+    seen_manifests: set[tuple[int, int]] = set()
+    stack: list[tuple[Path, tuple[str, ...], int, tuple[int, int]]] = [
+        (root.path, (), 0, root_id)
+    ]
+    entry_count = 0
+    while stack:
+        directory, parts, depth, expected_id = stack.pop()
+        try:
+            before = os.lstat(directory)
+            if (
+                _is_link_like(before)
+                or not stat.S_ISDIR(before.st_mode)
+                or _file_id(before) != expected_id
+            ):
+                raise OSError(errno.ESTALE, "plugin directory changed")
+            with os.scandir(directory) as iterator:
+                names = sorted(
+                    (entry.name for entry in iterator),
+                    key=lambda item: (item.casefold(), item),
+                )
+            after = os.lstat(directory)
+            if _is_link_like(after) or _file_id(after) != expected_id:
+                raise OSError(errno.ESTALE, "plugin directory changed")
+        except PermissionError:
+            diagnostics.append(
+                _diagnostic(
+                    "permission_denied",
+                    "A plugin directory could not be read due to permissions.",
+                    location=root.public_prefix,
+                )
+            )
+            continue
+        except OSError:
+            diagnostics.append(
+                _diagnostic(
+                    "source_changed",
+                    "A plugin directory changed during traversal and was skipped.",
+                    location=root.public_prefix,
+                )
+            )
+            continue
+        entry_count += len(names)
+        if entry_count > MAX_PLUGIN_ENTRIES:
+            return (), tuple(
+                diagnostics
+                + [
+                    _diagnostic(
+                        "plugin_entry_limit",
+                        "A plugin root exceeded the supported entry count.",
+                        location=root.public_prefix,
+                    )
+                ]
+            )
+        for name in reversed(names):
+            if name.casefold() == ".env":
+                diagnostics.append(
+                    _diagnostic(
+                        "env_path_blocked",
+                        "A .env entry inside a plugin root was skipped without reading it.",
+                        location=root.public_prefix,
+                    )
+                )
+                continue
+            child = directory / name
+            try:
+                child_stat = os.lstat(child)
+            except OSError:
+                diagnostics.append(
+                    _diagnostic(
+                        "plugin_entry_stat_error",
+                        "A plugin-root entry could not be inspected.",
+                        location=root.public_prefix,
+                    )
+                )
+                continue
+            if _is_link_like(child_stat):
+                diagnostics.append(
+                    _diagnostic(
+                        "symlink_manifest_rejected"
+                        if name == "plugin.json"
+                        else "symlink_directory_rejected",
+                        "A reparse-point plugin entry was rejected conservatively.",
+                        location=root.public_prefix,
+                    )
+                )
+                continue
+            if stat.S_ISDIR(child_stat.st_mode):
+                if depth >= MAX_PLUGIN_DEPTH:
+                    diagnostics.append(
+                        _diagnostic(
+                            "plugin_depth_limit",
+                            "A plugin root exceeded the supported traversal depth.",
+                            location=root.public_prefix,
+                        )
+                    )
+                    continue
+                child_id = _file_id(child_stat)
+                if child_id is None:
+                    diagnostics.append(
+                        _diagnostic(
+                            "plugin_directory_unverifiable",
+                            "A plugin directory had no stable physical identity and was skipped.",
+                            location=root.public_prefix,
+                        )
+                    )
+                    continue
+                stack.append((child, parts + (name,), depth + 1, child_id))
+                continue
+            is_manifest = (
+                name == "plugin.json" and parts and parts[-1] in _PLUGIN_MARKERS
+            )
+            if not is_manifest or not stat.S_ISREG(child_stat.st_mode):
+                continue
+            manifest_id = _file_id(child_stat)
+            if manifest_id is None or manifest_id in seen_manifests:
+                continue
+            payload, read_diagnostics, _ = _read_verified_regular(
+                child,
+                child_stat,
+                location=root.public_prefix,
+                too_large_code="manifest_too_large",
+                open_error_code="manifest_open_error",
+                read_error_code="manifest_read_error",
+            )
+            diagnostics.extend(read_diagnostics)
+            if payload is None:
+                continue
+            seen_manifests.add(manifest_id)
+            occurrences.append(
+                _ManifestOccurrence(
+                    payload,
+                    child,
+                    child.parent.parent,
+                    parts[-1],
+                    root,
+                    manifest_id,
+                    root.public_prefix,
+                )
+            )
     return tuple(occurrences), tuple(diagnostics)
 
 
@@ -1806,7 +2016,20 @@ def discover_connectors(
     )
     occurrences: list[_ManifestOccurrence] = []
     seen_manifest_ids: set[tuple[int, int]] = set()
-    if not _secure_plugin_backend_supported():
+    if (
+        windows
+        and _windows_path_backend_available()
+        and not _secure_plugin_backend_supported()
+    ):
+        for root in plugin_specs:
+            root_occurrences, root_diagnostics = _scan_plugin_root_path(root)
+            diagnostics.extend(root_diagnostics)
+            for occurrence in root_occurrences:
+                if occurrence.physical_id in seen_manifest_ids:
+                    continue
+                seen_manifest_ids.add(occurrence.physical_id)
+                occurrences.append(occurrence)
+    elif not _secure_plugin_backend_supported():
         diagnostics.append(
             _diagnostic(
                 "secure_plugin_backend_unavailable",

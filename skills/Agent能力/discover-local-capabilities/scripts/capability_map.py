@@ -82,6 +82,19 @@ MAX_WORKFLOW_DOCUMENT_BYTES = 64 * 1024 * 1024
 _ARTIFACT_LABELS = ("map", "inventory", "config", "receipt", "resolver")
 _STATE_FILENAME = "installation-state.json"
 _PRIVATE_INSTALLATIONS = "installations"
+_WINDOWS_REPARSE_POINT = 0x400
+
+
+def _is_link_like(metadata: os.stat_result) -> bool:
+    return bool(
+        stat.S_ISLNK(metadata.st_mode)
+        or int(getattr(metadata, "st_file_attributes", 0))
+        & _WINDOWS_REPARSE_POINT
+    )
+
+
+def _windows_path_backend_available() -> bool:
+    return os.name == "nt"
 
 
 class RefusedError(ValueError):
@@ -194,7 +207,10 @@ class StateWritePlan:
 
     @property
     def changed(self) -> bool:
-        return self.before.payload != self.desired_bytes or self.before.mode != 0o600
+        return bool(
+            self.before.payload != self.desired_bytes
+            or (os.name != "nt" and self.before.mode != 0o600)
+        )
 
 
 @dataclass(frozen=True)
@@ -292,7 +308,18 @@ def _read_regular(path: Path, *, limit: int = MAX_WORKFLOW_DOCUMENT_BYTES) -> by
     candidate = Path(path)
     if any(part.casefold() == ".env" for part in candidate.parts):
         raise ValueError("workflow documents must not traverse .env")
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        visible = os.lstat(candidate)
+    except FileNotFoundError:
+        raise
+    if _is_link_like(visible) or not stat.S_ISREG(visible.st_mode):
+        raise ValueError("workflow document must be a physical regular file")
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_BINARY", 0)
+    )
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     descriptor = os.open(candidate, flags)
@@ -300,6 +327,22 @@ def _read_regular(path: Path, *, limit: int = MAX_WORKFLOW_DOCUMENT_BYTES) -> by
         before = os.fstat(descriptor)
         if not stat.S_ISREG(before.st_mode):
             raise ValueError("workflow document must be a regular file")
+        if (
+            before.st_dev,
+            before.st_ino,
+            before.st_mode,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        ) != (
+            visible.st_dev,
+            visible.st_ino,
+            visible.st_mode,
+            visible.st_size,
+            visible.st_mtime_ns,
+            visible.st_ctime_ns,
+        ):
+            raise ValueError("workflow document changed while opening")
         if before.st_size > limit:
             raise ValueError("workflow document exceeds the read limit")
         chunks: list[bytes] = []
@@ -348,7 +391,7 @@ def _read_json(path: Path) -> dict[str, Any]:
 def _snapshot(path: Path) -> FileSnapshot:
     try:
         before = os.lstat(path)
-        if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+        if _is_link_like(before) or not stat.S_ISREG(before.st_mode):
             raise ValueError("workflow target must be a physical regular file")
         payload = _read_regular(path)
         after = os.lstat(path)
@@ -409,12 +452,16 @@ def _atomic_restore(path: Path, payload: bytes, mode: int) -> None:
         while view:
             written = os.write(descriptor, view)
             view = view[written:]
-        os.fchmod(descriptor, mode)
+        if os.name != "nt" and callable(getattr(os, "fchmod", None)):
+            os.fchmod(descriptor, mode)
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
     try:
-        os.link(temporary, path, follow_symlinks=False)
+        if os.name == "nt":
+            os.rename(temporary, path)
+        else:
+            os.link(temporary, path, follow_symlinks=False)
     finally:
         try:
             os.unlink(temporary)
@@ -604,7 +651,10 @@ def _scan(
     )
     skill_roots: list[RootSpec] = list(roots)
     skill_roots.extend(connectors.skill_roots)
-    skills = discover_skills(tuple(skill_roots))
+    skills = discover_skills(
+        tuple(skill_roots),
+        allow_best_effort_path_backend=_windows_path_backend_available(),
+    )
     clis = discover_clis(environ=environ, cwd=cwd)
 
     cli_capabilities = list(clis.capabilities)
@@ -696,11 +746,79 @@ def _installation_id(
             os.close(descriptor)
 
     def installation_history() -> tuple[frozenset[str], frozenset[str]]:
-        if not _secure_backend_available() or os.scandir not in os.supports_fd:
-            raise RefusedError("secure installation history inspection is unavailable")
         evidence = paths.private_root_evidence
         if evidence is None or evidence.resolved_path != paths.private_root:
             raise RefusedError("installation history root evidence is invalid")
+        if not _secure_backend_available() or os.scandir not in os.supports_fd:
+            if not _windows_path_backend_available():
+                raise RefusedError(
+                    "secure installation history inspection is unavailable"
+                )
+            if (
+                not evidence.existing_ancestors
+                or evidence.existing_ancestors[-1].path != evidence.resolved_path
+            ):
+                try:
+                    os.lstat(paths.private_root)
+                except FileNotFoundError:
+                    return frozenset(), frozenset()
+                except OSError as error:
+                    raise RefusedError(
+                        "installation history root could not be inspected safely"
+                    ) from error
+                raise RefusedError(
+                    "installation history root appeared after path capture"
+                )
+            expected = evidence.existing_ancestors[-1]
+            try:
+                current = os.lstat(paths.private_root)
+            except OSError as error:
+                raise RefusedError(
+                    "installation history root could not be inspected safely"
+                ) from error
+            if (
+                _is_link_like(current)
+                or not stat.S_ISDIR(current.st_mode)
+                or current.st_dev != expected.device
+                or current.st_ino != expected.inode
+            ):
+                raise RefusedError("installation history root changed")
+
+            def path_names(directory: str) -> frozenset[str]:
+                child = paths.private_root / directory
+                try:
+                    metadata = os.lstat(child)
+                except FileNotFoundError:
+                    return frozenset()
+                except OSError as error:
+                    raise RefusedError(
+                        "installation history could not be inspected safely"
+                    ) from error
+                if _is_link_like(metadata) or not stat.S_ISDIR(metadata.st_mode):
+                    raise RefusedError(
+                        "installation history is not a physical directory"
+                    )
+                try:
+                    with os.scandir(child) as entries:
+                        names = [entry.name for entry in entries]
+                except OSError as error:
+                    raise RefusedError(
+                        "installation history could not be inspected safely"
+                    ) from error
+                if len(names) > 4096:
+                    raise RefusedError(
+                        "installation history is too large to inspect"
+                    )
+                after = os.lstat(child)
+                if (
+                    _is_link_like(after)
+                    or after.st_dev != metadata.st_dev
+                    or after.st_ino != metadata.st_ino
+                ):
+                    raise RefusedError("installation history changed during scan")
+                return frozenset(names)
+
+            return path_names(_PRIVATE_INSTALLATIONS), path_names("purge-recovery")
         if (
             not evidence.existing_ancestors
             or evidence.existing_ancestors[-1].path != evidence.resolved_path
@@ -834,6 +952,9 @@ def _receipt_markdown(
         "diagnostics",
     ):
         lines.append(f"- {label}: {counts[label]}")
+    lines.append(
+        "- counting note: CLI is the number of unique PATH command entries, not the number of high-level workflows."
+    )
     lines.extend(["", "## Agent instruction targets", ""])
     for operation in instruction_plan.operations:
         lines.append(
@@ -1103,7 +1224,11 @@ def _build_setup_plan(
         label
         for label in _ARTIFACT_LABELS
         if current[label]["sha256"] != desired[label]
-        or (label == "resolver" and current[label]["mode"] != 0o600)
+        or (
+            os.name != "nt"
+            and label == "resolver"
+            and current[label]["mode"] != 0o600
+        )
     ]
     if state_plan.changed:
         changes.append("state")
@@ -1137,6 +1262,10 @@ def _build_setup_plan(
         "paths": exact_paths,
         "state_id": state_id,
         "counts": counts,
+        "counts_note": (
+            "clis counts unique PATH command entries; capabilities is a routing-entry total, "
+            "not a count of high-level workflows"
+        ),
         "changes": changes,
         "desired_hashes": desired,
         "backups": [str(instruction_plan.backup_root)],
@@ -1215,7 +1344,7 @@ def _apply_storage_then_instructions(plan: SetupWorkflowPlan) -> dict[str, Any]:
             ) from error
         raise
     hashes = dict(sorted(storage_result.hashes.items()))
-    return {
+    payload = {
         "status": "installed",
         "installation_id": plan.installation_id,
         "plan_hash": plan.plan_hash,
@@ -1246,6 +1375,24 @@ def _apply_storage_then_instructions(plan: SetupWorkflowPlan) -> dict[str, Any]:
         },
         "counts": plan.public["counts"],
     }
+    cleanup_recovery_paths = _cleanup_recovery_paths(
+        storage_result, state_result, instruction_result
+    )
+    if cleanup_recovery_paths:
+        payload["cleanup_recovery_paths"] = cleanup_recovery_paths
+    return payload
+
+
+def _cleanup_recovery_paths(*results: object) -> list[str]:
+    """Expose undeleted no-clobber claims without turning success into rollback."""
+
+    paths = {
+        str(path)
+        for result in results
+        if result is not None
+        for path in getattr(result, "cleanup_recovery_paths", ())
+    }
+    return sorted(paths)
 
 
 def _instruction_transition(plan: InstructionPlan) -> tuple[tuple[Any, ...], ...]:
@@ -1341,7 +1488,9 @@ def _runtime_context(
     expected_state_id = _state_id(paths, installation_id)
     state_path = _state_path(paths)
     state = _read_json(state_path)
-    if stat.S_IMODE(os.stat(state_path, follow_symlinks=False).st_mode) != 0o600:
+    if os.name != "nt" and stat.S_IMODE(
+        os.stat(state_path, follow_symlinks=False).st_mode
+    ) != 0o600:
         raise WorkflowError("private installation state must use mode 0600")
     request_raw = state.get("target_request")
     if (
@@ -1726,6 +1875,9 @@ def _handle_scan(
             "generation_id": written.generation_id,
             "paths": {label: str(path) for label, path in _artifact_paths(paths).items()},
         }
+        cleanup_recovery_paths = _cleanup_recovery_paths(written)
+        if cleanup_recovery_paths:
+            inventory["written"]["cleanup_recovery_paths"] = cleanup_recovery_paths
     return inventory
 
 
@@ -1952,6 +2104,9 @@ def _handle_refresh(
         label: str(path) for label, path in _artifact_paths(paths).items()
     }
     payload["paths"]["state"] = str(context.state_path)
+    cleanup_recovery_paths = _cleanup_recovery_paths(result)
+    if cleanup_recovery_paths:
+        payload["cleanup_recovery_paths"] = cleanup_recovery_paths
     return payload
 
 
@@ -2097,7 +2252,7 @@ def _handle_migrate(
             instruction_plan
         ):
             raise WorkflowError("instruction targets changed after migration preparation")
-        apply_instruction_plan(
+        instruction_result = apply_instruction_plan(
             current_instruction_plan,
             confirmed=True,
             expected_plan_hash=current_instruction_plan.plan_hash,
@@ -2158,6 +2313,11 @@ def _handle_migrate(
             ),
         }
     )
+    cleanup_recovery_paths = _cleanup_recovery_paths(
+        storage_result, state_result, instruction_result, migrated_state_result
+    )
+    if cleanup_recovery_paths:
+        payload["cleanup_recovery_paths"] = cleanup_recovery_paths
     return payload
 
 
@@ -2605,6 +2765,23 @@ def _purge_data(
 def _directory_evidence_is_current(evidence: RootEvidence, *, label: str) -> bool:
     """Return whether an existing directory is still the captured physical object."""
 
+    if _windows_path_backend_available() and not _secure_backend_available():
+        try:
+            if (
+                not evidence.existing_ancestors
+                or evidence.existing_ancestors[-1].path != evidence.resolved_path
+            ):
+                return False
+            expected = evidence.existing_ancestors[-1]
+            current = os.lstat(evidence.resolved_path)
+            return bool(
+                not _is_link_like(current)
+                and stat.S_ISDIR(current.st_mode)
+                and current.st_dev == expected.device
+                and current.st_ino == expected.inode
+            )
+        except OSError:
+            return False
     descriptor: int | None = None
     try:
         descriptor = _open_evidence_directory(evidence, create=False, label=label)
@@ -2740,6 +2917,8 @@ def _handle_uninstall(
     if args.dry_run:
         payload["would_purge_data"] = bool(args.purge_data)
         return payload
+    instruction_result: TransactionReceipt | None = None
+    state_result: TransactionReceipt | None = None
     instruction_changed = bool(instruction_plan.changed_operations)
     if purge_private_base_evidence is not None and (
         purge_namespace_evidence is None
@@ -2752,7 +2931,7 @@ def _handle_uninstall(
     ):
         raise WorkflowError("purge private ownership changed before instructions")
     if instruction_changed:
-        apply_instruction_plan(
+        instruction_result = apply_instruction_plan(
             instruction_plan,
             confirmed=True,
             expected_plan_hash=instruction_plan.plan_hash,
@@ -2843,6 +3022,11 @@ def _handle_uninstall(
             state_result.backup_directory
             or context.state_path.parent / "state-backups"
         )
+    cleanup_recovery_paths = _cleanup_recovery_paths(
+        instruction_result, state_result
+    )
+    if cleanup_recovery_paths:
+        payload["cleanup_recovery_paths"] = cleanup_recovery_paths
     return payload
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import errno
 import io
 import json
@@ -175,6 +176,42 @@ class CapabilityMapEntrypointTests(unittest.TestCase):
 
 
 class CapabilityMapWorkflowTests(unittest.TestCase):
+    def test_refresh_reports_cleanup_recovery_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = WorkflowFixture(Path(temporary))
+            fixture.install()
+            _write_skill(
+                fixture.home / ".codex" / "skills" / "cleanup-skill",
+                "cleanup-skill",
+                "Cleanup path reporting fixture.",
+            )
+            recovery = fixture.base / ".vantasma-storage-claim-fixture"
+            recovery.write_bytes(b"preserved original\n")
+            real_write = capability_map.write_storage_bundle
+
+            def write_with_cleanup_path(*args: object, **kwargs: object) -> object:
+                result = real_write(*args, **kwargs)
+                return dataclasses.replace(
+                    result, cleanup_recovery_paths=(recovery, recovery)
+                )
+
+            with mock.patch.object(
+                capability_map,
+                "write_storage_bundle",
+                side_effect=write_with_cleanup_path,
+            ):
+                code, refreshed, error = fixture.run(
+                    "refresh",
+                    "--storage",
+                    str(fixture.storage),
+                    "--confirmed",
+                )
+
+            self.assertEqual((code, error), (0, ""))
+            self.assertEqual(
+                refreshed["cleanup_recovery_paths"], [str(recovery)]
+            )
+
     def test_uninstall_refuses_corrupt_managed_block_without_mutation(self) -> None:
         for purge_data in (False, True):
             with self.subTest(purge_data=purge_data), tempfile.TemporaryDirectory() as temporary:

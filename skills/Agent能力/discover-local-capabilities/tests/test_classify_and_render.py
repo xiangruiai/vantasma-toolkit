@@ -73,16 +73,23 @@ class NeutralTaxonomyTests(unittest.TestCase):
         self.assertEqual(len({scene.id for scene in taxonomy}), len(taxonomy))
         self.assertNotIn("preferred", json.dumps(raw, ensure_ascii=False).casefold())
         for scene in raw["scenes"]:
-            self.assertEqual(
-                set(scene),
-                {
-                    "id",
-                    "label_zh",
-                    "label_en",
-                    "keywords",
-                    "phrases",
-                    "kind_boosts",
-                },
+            required = {
+                "id",
+                "label_zh",
+                "label_en",
+                "keywords",
+                "phrases",
+                "kind_boosts",
+            }
+            self.assertTrue(required <= set(scene))
+            self.assertTrue(
+                set(scene) <= required | {"required_groups", "capability_phrases"}
+            )
+            for group in scene.get("required_groups", []):
+                self.assertTrue(group)
+                self.assertTrue(all(isinstance(item, str) for item in group))
+            self.assertTrue(
+                all(isinstance(item, str) for item in scene.get("capability_phrases", []))
             )
         serialized = json.dumps(raw, ensure_ascii=False).casefold()
         for concrete_name in (
@@ -116,7 +123,7 @@ class NeutralTaxonomyTests(unittest.TestCase):
         by_name = {item.name: item for item in classified}
 
         self.assertIn("search-research", by_name["Literature Finder"].scenes)
-        self.assertIn("media", by_name["Motion Studio"].scenes)
+        self.assertIn("video-editing", by_name["Motion Studio"].scenes)
         self.assertEqual(by_name["opaque-runner"].scenes, ())
         self.assertEqual(by_name["Literature Finder"].id, local[0].id)
         self.assertEqual(by_name["Literature Finder"].resolver_id, local[0].resolver_id)
@@ -159,6 +166,35 @@ class NeutralTaxonomyTests(unittest.TestCase):
 
         self.assertEqual(classified[0].scenes, ())
         self.assertEqual(classified[0].classification_confidence, 0.0)
+
+    def test_specific_media_scenes_require_capability_level_intent(self) -> None:
+        local = (
+            capability(
+                "Markdown Publisher",
+                description="Publish Markdown with native image captions.",
+            ),
+            capability(
+                "Command Composer",
+                description=(
+                    "Generate commands for natural language video editing requests: "
+                    "cut, trim, convert, and compress."
+                ),
+            ),
+            capability(
+                "Illustration Generator",
+                description="Generate images from text prompts.",
+            ),
+        )
+
+        classified = {
+            item.name: item
+            for item in classify_capabilities(local, taxonomy_path=TAXONOMY_PATH)
+        }
+
+        self.assertNotIn("image-generation", classified["Markdown Publisher"].scenes)
+        self.assertIn("video-editing", classified["Command Composer"].scenes)
+        self.assertNotIn("video-generation", classified["Command Composer"].scenes)
+        self.assertIn("image-generation", classified["Illustration Generator"].scenes)
 
     def test_call_time_override_does_not_require_packaged_preferences(self) -> None:
         unknown = capability("private-local-entry", kind="cli")
@@ -203,7 +239,7 @@ class NeutralTaxonomyTests(unittest.TestCase):
             by_description["Research reports with source citations."].scenes,
         )
         self.assertIn(
-            "media", by_description["Edit video and audio media."].scenes
+            "video-editing", by_description["Edit video and audio media."].scenes
         )
 
     def test_scene_collections_reject_scalar_bytes_and_non_strings(self) -> None:
@@ -218,11 +254,34 @@ class NeutralTaxonomyTests(unittest.TestCase):
             {"keywords": ("research",), "phrases": b"reports"},
             {"keywords": ("research", 7), "phrases": ()},
             {"keywords": ("research",), "phrases": ("reports", object())},
+            {
+                "keywords": ("research",),
+                "phrases": (),
+                "required_groups": "research",
+            },
+            {
+                "keywords": ("research",),
+                "phrases": (),
+                "required_groups": (("research", 7),),
+            },
+            {
+                "keywords": ("research",),
+                "phrases": (),
+                "capability_phrases": "research workflow",
+            },
         )
         for fields in invalid_fields:
             with self.subTest(fields=fields):
                 with self.assertRaises(TypeError):
                     SceneDefinition(**valid, **fields)
+
+        with self.assertRaises(ValueError):
+            SceneDefinition(
+                **valid,
+                keywords=("research",),
+                phrases=(),
+                required_groups=((),),
+            )
 
         with self.assertRaises(TypeError):
             SceneDefinition(
@@ -280,6 +339,34 @@ class QueryRoutingTests(unittest.TestCase):
         self.assertIn("search-research", result.matches[0].scenes)
         self.assertEqual(result.matches[0].resolver_id, self.specialized.resolver_id)
         self.assertIn("verified", result.matches[0].state_warning)
+
+    def test_media_intent_requires_matching_asset_and_action_groups(self) -> None:
+        editor = capability(
+            "Video Workshop",
+            description="Edit, trim, compress, and convert video files.",
+        )
+        meeting = capability(
+            "Meeting Assistant",
+            description="Join live video meetings and inspect recording events.",
+        )
+        image_generator = capability(
+            "Image Generator",
+            description="Generate images and illustrations from text.",
+        )
+        classified = classify_capabilities(
+            (meeting, image_generator, editor), taxonomy_path=TAXONOMY_PATH
+        )
+
+        editing = route_query(
+            "剪辑一段视频", classified, taxonomy_path=TAXONOMY_PATH
+        )
+        generating = route_query(
+            "生成一条科普视频", classified, taxonomy_path=TAXONOMY_PATH
+        )
+
+        self.assertEqual(editing.matches[0].name, "Video Workshop")
+        self.assertNotIn("Meeting Assistant", [item.name for item in editing.matches])
+        self.assertNotIn("Image Generator", [item.name for item in generating.matches])
 
     def test_bilingual_queries_are_deterministic_and_explain_evidence(self) -> None:
         chinese = route_query(
@@ -521,6 +608,8 @@ class PublicRenderingTests(unittest.TestCase):
         )
 
         for heading_or_hint in (
+            "## 盘点口径",
+            "CLI 数量按 PATH 中唯一命令入口统计",
             "## 使用方式",
             "## 状态边界",
             "## 场景 → 候选能力",

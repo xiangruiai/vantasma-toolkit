@@ -841,6 +841,43 @@ OPTIONS = [
 
 
 class PluginDiscoveryTests(unittest.TestCase):
+    def test_windows_path_backend_discovers_plugins_and_nested_skills(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            home = base / "home"
+            root = base / "plugins"
+            _write_plugin(
+                root / "sample",
+                ".codex-plugin",
+                {"name": "windows-plugin", "version": "1.0.0"},
+            )
+            with mock.patch.object(
+                connector_module, "_secure_plugin_backend_supported", return_value=False
+            ), mock.patch.object(
+                connector_module, "_windows_path_backend_available", return_value=True
+            ):
+                result = discover_connectors(
+                    home=home,
+                    plugin_roots=(
+                        RootSpec(
+                            root,
+                            "plugin",
+                            "fixture",
+                            "plugin:windows-fixture",
+                            "<windows-plugin-root>",
+                        ),
+                    ),
+                    platform_name="Windows",
+                    environ={},
+                )
+
+            self.assertIn("windows-plugin", [item.name for item in result.capabilities])
+            self.assertTrue(result.skill_roots)
+            self.assertIn(
+                "plugin_path_backend_best_effort",
+                [item.code for item in result.diagnostics],
+            )
+
     def test_only_real_nested_manifests_are_plugins_and_versions_remain_distinct(
         self,
     ) -> None:

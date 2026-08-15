@@ -224,6 +224,22 @@ class DocumentationContractTests(unittest.TestCase):
         self.assertIn("明确确认", self.agent)
         self.assertIn("自然语言", self.agent)
 
+    def test_install_recovery_precedence_and_windows_lifecycle_are_documented(self) -> None:
+        for statement in (
+            "SKILL.md",
+            "scripts/capability_map.py",
+            "全新安装",
+            "既有记忆",
+            "不得反向覆盖",
+            "Windows",
+            "junction",
+            "setup、refresh、migrate 和普通 uninstall",
+            "Windows ACL",
+            "Windows 上会 fail closed",
+        ):
+            with self.subTest(statement=statement):
+                self.assertIn(statement, self.package_docs)
+
     def test_package_docs_are_neutral_and_contain_no_machine_snapshot(self) -> None:
         lowered = self.package_docs.casefold()
         for forbidden in (

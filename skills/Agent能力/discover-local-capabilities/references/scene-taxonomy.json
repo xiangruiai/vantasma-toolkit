@@ -32,11 +32,67 @@
     },
     {
       "id": "media",
-      "label_zh": "媒体与视觉",
-      "label_en": "Media and visual",
-      "keywords": ["media", "image", "photo", "video", "audio", "design", "recording", "transcription", "图片", "图像", "视频", "音频", "设计", "录制", "转录"],
-      "phrases": ["image generation", "video editing", "audio processing", "视觉设计", "图片生成", "视频编辑", "音频处理"],
+      "label_zh": "媒体处理",
+      "label_en": "General media processing",
+      "keywords": ["media", "multimedia", "媒体", "多媒体"],
+      "phrases": ["media processing", "multimedia processing", "媒体处理", "多媒体处理"],
       "kind_boosts": {"skill": 0.35, "plugin": 0.25, "mcp": 0.1, "cli": 0.0}
+    },
+    {
+      "id": "image-generation",
+      "label_zh": "图片生成",
+      "label_en": "Image generation",
+      "keywords": ["image", "photo", "picture", "generate", "generation", "illustration", "图片", "图像", "照片", "生成", "生图", "插画"],
+      "phrases": ["image generation", "generate images", "text to image", "图片生成", "文生图", "AI 生图"],
+      "required_groups": [["image", "photo", "picture", "illustration", "图片", "图像", "照片", "生图", "插画"], ["generate", "generation", "text to image", "生成", "生图", "文生图"]],
+      "capability_phrases": ["image generation", "generate image", "generate images", "text to image", "text-to-image", "图片生成", "生成图片", "生成图像", "文生图"],
+      "kind_boosts": {"skill": 0.4, "plugin": 0.3, "mcp": 0.1, "cli": 0.0}
+    },
+    {
+      "id": "video-generation",
+      "label_zh": "视频生成",
+      "label_en": "Video generation",
+      "keywords": ["video", "generate", "generation", "animation", "render", "视频", "生成", "动画", "渲染"],
+      "phrases": ["video generation", "generate video", "text to video", "视频生成", "文生视频", "AI 视频"],
+      "required_groups": [["video", "animation", "视频", "动画"], ["generate", "generation", "text to video", "生成", "文生视频"]],
+      "capability_phrases": ["video generation", "generate video", "generate videos", "text to video", "text-to-video", "视频生成", "生成视频", "文生视频"],
+      "kind_boosts": {"skill": 0.4, "plugin": 0.3, "mcp": 0.1, "cli": 0.0}
+    },
+    {
+      "id": "video-editing",
+      "label_zh": "视频剪辑",
+      "label_en": "Video editing",
+      "keywords": ["video", "edit", "editing", "trim", "cut", "compress", "convert", "subtitle", "视频", "编辑", "剪辑", "裁剪", "压缩", "转码", "字幕"],
+      "phrases": ["video editing", "edit video", "trim video", "视频编辑", "视频剪辑", "视频压缩"],
+      "required_groups": [["video", "视频"], ["edit", "editing", "trim", "cut", "compress", "convert", "subtitle", "编辑", "剪辑", "裁剪", "压缩", "转码", "字幕"]],
+      "kind_boosts": {"skill": 0.4, "plugin": 0.25, "mcp": 0.05, "cli": 0.1}
+    },
+    {
+      "id": "audio-processing",
+      "label_zh": "音频处理",
+      "label_en": "Audio processing",
+      "keywords": ["audio", "sound", "speech", "voice", "music", "音频", "声音", "语音", "人声", "音乐"],
+      "phrases": ["audio processing", "speech processing", "voice processing", "音频处理", "语音处理"],
+      "required_groups": [["audio", "sound", "speech", "voice", "music", "音频", "声音", "语音", "人声", "音乐"]],
+      "kind_boosts": {"skill": 0.35, "plugin": 0.2, "mcp": 0.1, "cli": 0.05}
+    },
+    {
+      "id": "transcription",
+      "label_zh": "转录与字幕",
+      "label_en": "Transcription and captions",
+      "keywords": ["transcribe", "transcription", "caption", "subtitle", "speech to text", "转录", "字幕", "语音转文字", "听写"],
+      "phrases": ["speech to text", "audio transcription", "video transcription", "语音转文字", "音频转录", "视频转录"],
+      "required_groups": [["transcribe", "transcription", "caption", "subtitle", "speech to text", "转录", "字幕", "语音转文字", "听写"]],
+      "kind_boosts": {"skill": 0.35, "plugin": 0.2, "mcp": 0.1, "cli": 0.05}
+    },
+    {
+      "id": "visual-design",
+      "label_zh": "视觉设计",
+      "label_en": "Visual design",
+      "keywords": ["visual", "design", "layout", "poster", "graphic", "视觉", "设计", "排版", "海报", "平面"],
+      "phrases": ["visual design", "graphic design", "poster design", "视觉设计", "平面设计", "海报设计"],
+      "required_groups": [["visual", "design", "layout", "poster", "graphic", "视觉", "设计", "排版", "海报", "平面"]],
+      "kind_boosts": {"skill": 0.35, "plugin": 0.3, "mcp": 0.05, "cli": 0.0}
     },
     {
       "id": "software-development",

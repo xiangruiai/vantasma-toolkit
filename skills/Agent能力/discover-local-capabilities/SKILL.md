@@ -46,7 +46,9 @@ Use the command entrypoint at `"<skill-dir>/scripts/capability_map.py"`. Prefer 
 
    On a first setup, the command can generate its opaque installation ID. When a new identity is required, the Agent generates a fresh opaque `inst_...` installation ID; do not ask a non-technical person to design it. Pass the exact same validated value as `--installation-id "<inst-id>"` in plan and apply, and never reuse an inactive installation's ID.
 
-5. Report every precise location returned under `paths`, the capability counts, changed Agent instruction targets and backup locations. Tell the person to start a new Agent session when its instruction file changed.
+5. Report every precise location returned under `paths`, the capability counts, changed Agent instruction targets and backup locations. If `cleanup_recovery_paths` is present, report those private recovery copies and do not delete them automatically. Tell the person to start a new Agent session when its instruction file changed.
+
+Before reporting success, verify that the installed Skill directory itself contains `SKILL.md` and `scripts/capability_map.py`, then run `status` and require `installed=true` plus `healthy=true`. If an update was requested but the Skill directory is absent or incomplete, treat it as a clean-install recovery rather than reporting unrelated host diagnostics as an update failure. A missing optional CLI, a disabled optional MCP, or a harmless CLI version warning is not an installation failure unless this Skill actually requires it.
 
 The public storage contains `本机能力地图.md`, `capability-inventory.json`, `capability-map.config.json`, and `setup-receipt.md`. The private namespace contains `capability-resolver.json` and `installation-state.json` in the OS system-data location, logically layered from public artifacts. Obsidian mode guarantees that it remains outside the Vault. Default local mode uses a hidden `.private` subtree under the same application-data root. With a custom public path, its physical relationship to that root depends on path topology; review the exact paths in the zero-write setup plan before confirmation.
 
@@ -55,16 +57,17 @@ The public storage contains `本机能力地图.md`, `capability-inventory.json`
 For a task needing local tools or capabilities:
 
 1. Read `本机能力地图.md` first.
-2. Match the request against its scenes and candidates. Use `route` for a structured lookup when helpful:
+2. Preserve the person's explicit instructions, memory, existing business workflow, and project rules. The map chooses an implementation capability only after that workflow is established; it must not replace the workflow itself.
+3. Match the request against its scenes and candidates. Use `route` for a structured lookup when helpful:
 
    ```bash
    python3 "<skill-dir>/scripts/capability_map.py" route \
      --storage "<storage-root>" --query "<task-query>" --json
    ```
 
-3. Read the private resolver only after selecting a candidate. If the candidate is a Skill, complete-read its `SKILL.md` before acting.
-4. Verify authentication, permission, dependencies, and task-level behavior before execution. 已发现不等于已认证或已验证.
-5. If evidence is weak, return no reliable match instead of inventing a preference.
+4. Read the private resolver only after selecting a candidate. If the candidate is a Skill, complete-read its `SKILL.md` before acting.
+5. Verify authentication, permission, dependencies, and task-level behavior before execution. 已发现不等于已认证或已验证.
+6. If evidence is weak, return no reliable match instead of inventing a preference.
 
 Use the generic bilingual taxonomy in [`references/scene-taxonomy.json`](references/scene-taxonomy.json). It defines scene semantics, not concrete preferred tools.
 
@@ -137,6 +140,7 @@ Add `--skill-root "<extra-skill-root>"` for an extra source. Only add `--probe-v
 - If managed instruction markers conflict or are damaged, stop and show the diagnostics. Do not repair user content automatically.
 - After migration, operate only on the new storage; the old lifecycle is `migrated` and its mutating commands must refuse.
 - After plain uninstall, report `lifecycle=uninstalled`, `installed=false`, `healthy=false`, and an empty healthy-error list; use purge or a new installation ID for the next transition.
+- If a successful mutation returns `cleanup_recovery_paths`, the new target is committed but an old no-clobber claim could not be removed. Preserve and report it for manual review; do not reinterpret the successful commit as a reason to roll back.
 - If routing returns no reliable candidate, inspect the sanitized inventory and keep unknown capabilities unclassified.
 
-Discovery is designed for macOS, Linux, and Windows roots and executable conventions. Transactional setup has its strongest guarantees on POSIX systems because it relies on secure directory-fd, no-follow, atomic replacement, and `0600` semantics. Recoverable purge also requires public storage and private recovery on the same filesystem. On Windows the POSIX primitives can be unavailable, so setup or purge may fail closed; do not claim durable Agent integration until the environment passes its own setup and status checks.
+Discovery and the normal lifecycle are supported on macOS and Linux with the POSIX directory-handle backend. Windows has a functional best-effort path backend: it checks file IDs before and after reads, rejects observed symlinks, junctions, and other reparse points, and commits through same-directory no-clobber renames with rollback copies. These Windows checks are path-based rather than handle-bound, so they cannot exclude every check/use race. A replacement can also inherit the directory ACL instead of preserving a target-specific ACL. Keep the private root inside an ACL-restricted per-user system-data directory, review custom-root permissions, and do not describe `status` as an effective Windows ACL audit; it validates schema and ownership relationships only. Recoverable `--purge-data` still requires the POSIX directory-handle backend and therefore fails closed on Windows; plain uninstall remains supported and preserves all data.

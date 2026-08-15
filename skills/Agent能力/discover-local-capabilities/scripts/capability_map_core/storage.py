@@ -61,6 +61,23 @@ _DIR_FD_BACKEND_SUPPORTED = bool(
     and os.link in os.supports_dir_fd
     and os.listdir in os.supports_fd
 )
+_WINDOWS_REPARSE_POINT = 0x400
+
+
+def _is_link_like(metadata: os.stat_result) -> bool:
+    """Treat Windows junctions and other reparse points like symbolic links."""
+
+    return bool(
+        stat.S_ISLNK(metadata.st_mode)
+        or int(getattr(metadata, "st_file_attributes", 0))
+        & _WINDOWS_REPARSE_POINT
+    )
+
+
+def _windows_portable_backend_available() -> bool:
+    """Return whether the best-effort path backend is available on this host."""
+
+    return os.name == "nt"
 
 
 @dataclass(frozen=True)
@@ -98,7 +115,7 @@ def _capture_root_evidence(path: Path) -> RootEvidence:
             break
         except OSError as error:
             raise ValueError("storage ancestry could not be inspected") from error
-        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        if _is_link_like(metadata) or not stat.S_ISDIR(metadata.st_mode):
             raise ValueError("storage ancestry must contain only physical directories")
         ancestors.append(
             AncestorEvidence(
@@ -127,7 +144,7 @@ def _validate_root_evidence(evidence: RootEvidence) -> Path:
         except OSError as error:
             raise ValueError("storage root ancestry changed") from error
         if (
-            stat.S_ISLNK(current.st_mode)
+            _is_link_like(current)
             or not stat.S_ISDIR(current.st_mode)
             or current.st_dev != ancestor.device
             or current.st_ino != ancestor.inode
@@ -352,6 +369,7 @@ class StorageWriteResult:
     hashes: dict[str, str]
     changed_paths: tuple[Path, ...]
     receipt_info: dict[str, Any]
+    cleanup_recovery_paths: tuple[Path, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -550,7 +568,7 @@ def _resolve_storage_path(path: Path, *, reject_root_symlink: bool) -> Path:
             continue
         except OSError as error:
             raise ValueError("storage path could not be resolved safely") from error
-        if not stat.S_ISLNK(metadata.st_mode):
+        if not _is_link_like(metadata):
             resolved = candidate
             continue
         if reject_root_symlink and not pending:
@@ -744,7 +762,7 @@ def _read_obsidian_config(path: Path) -> tuple[bytes | None, tuple[Diagnostic, .
             ),
         )
 
-    if stat.S_ISLNK(before.st_mode):
+    if _is_link_like(before):
         return None, (
             _diagnostic(
                 "obsidian_config_symlink",
@@ -766,6 +784,7 @@ def _read_obsidian_config(path: Path) -> tuple[bytes | None, tuple[Diagnostic, .
         | getattr(os, "O_CLOEXEC", 0)
         | getattr(os, "O_NONBLOCK", 0)
         | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_BINARY", 0)
     )
     try:
         descriptor = os.open(path, flags)
@@ -1193,7 +1212,7 @@ def _target_snapshot(target: Path) -> _Snapshot:
         return _Snapshot(False, None, None)
     except OSError as error:
         raise ValueError(f"storage target could not be inspected: {target.name}") from error
-    if stat.S_ISLNK(before.st_mode):
+    if _is_link_like(before):
         raise ValueError(f"refusing symbolic-link target: {target.name}")
     if not stat.S_ISREG(before.st_mode):
         raise ValueError(f"storage target is not a regular file: {target.name}")
@@ -1350,7 +1369,7 @@ def _prepare_root(root: Path) -> None:
     except FileNotFoundError:
         root.mkdir(parents=True, mode=0o700)
         metadata = os.lstat(root)
-    if stat.S_ISLNK(metadata.st_mode):
+    if _is_link_like(metadata):
         raise ValueError("refusing symbolic-link storage root")
     if not stat.S_ISDIR(metadata.st_mode):
         raise ValueError("storage root is not a directory")
@@ -1361,6 +1380,286 @@ def _secure_storage_backend_available() -> bool:
         _REPLACE_SUPPORTS_DIR_FD
         and _DIR_FD_BACKEND_SUPPORTED
         and callable(getattr(os, "fchmod", None))
+    )
+
+
+def _prepare_root_portable(evidence: RootEvidence) -> Path:
+    """Create a captured root one component at a time without following links."""
+
+    resolved = _validate_root_evidence(evidence)
+    if not evidence.existing_ancestors:
+        raise ValueError("storage root has no existing physical ancestor")
+    current = evidence.existing_ancestors[-1].path
+    try:
+        relative = resolved.relative_to(current)
+    except ValueError as error:  # pragma: no cover - evidence construction guarantees
+        raise ValueError("storage root escaped its captured ancestor") from error
+    for component in relative.parts:
+        current = current / component
+        try:
+            metadata = os.lstat(current)
+        except FileNotFoundError:
+            current.mkdir(mode=0o700)
+            metadata = os.lstat(current)
+        if _is_link_like(metadata) or not stat.S_ISDIR(metadata.st_mode):
+            raise ValueError("storage ancestry must contain only physical directories")
+    return resolved
+
+
+def _write_file_fsynced_portable(path: Path, payload: bytes, mode: int) -> None:
+    """Create one new regular file, fsync it, and never replace a target."""
+
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_BINARY", 0)
+    )
+    descriptor = os.open(path, flags, mode)
+    try:
+        offset = 0
+        while offset < len(payload):
+            written = os.write(descriptor, payload[offset:])
+            if written <= 0:
+                raise OSError("short portable storage write")
+            offset += written
+        if os.name != "nt" and callable(getattr(os, "fchmod", None)):
+            os.fchmod(descriptor, mode)
+        os.fsync(descriptor)
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise OSError("portable storage stage is not a regular file")
+    finally:
+        os.close(descriptor)
+
+
+def _move_no_replace_portable(source: Path, destination: Path) -> None:
+    """Atomically move a file without clobbering an existing destination."""
+
+    if os.name == "nt":
+        os.rename(source, destination)
+        return
+    os.link(source, destination, follow_symlinks=False)
+    os.unlink(source)
+
+
+def _matches_committed_portable(
+    snapshot: _Snapshot, expected_hash: str, expected_size: int
+) -> bool:
+    return bool(
+        snapshot.existed
+        and snapshot.payload is not None
+        and snapshot.size == expected_size
+        and _sha256(snapshot.payload) == expected_hash
+    )
+
+
+def _same_snapshot_portable(left: _Snapshot, right: _Snapshot) -> bool:
+    if left.existed != right.existed:
+        return False
+    if not left.existed:
+        return True
+    return bool(
+        left.payload == right.payload
+        and left.mode == right.mode
+        and left.device == right.device
+        and left.inode == right.inode
+        and left.size == right.size
+    )
+
+
+def _write_storage_bundle_portable(
+    paths: StoragePaths,
+    raw_targets: tuple[tuple[str, Path, bytes, bool], ...],
+    hashes: Mapping[str, str],
+    generation_id: str,
+    *,
+    expected_targets: Mapping[str, StorageExpectedSnapshot] | None,
+    failure_injector: Callable[[str, Path], None] | None,
+) -> StorageWriteResult:
+    """Best-effort Windows transaction using same-directory atomic renames."""
+
+    public_evidence = paths.public_root_evidence
+    private_evidence = paths.private_root_evidence
+    if public_evidence is None or private_evidence is None:  # pragma: no cover
+        raise ValueError("StoragePaths is missing root evidence")
+    _validate_storage_roots(paths)
+    _prepare_root_portable(public_evidence)
+    _prepare_root_portable(private_evidence)
+    public_operation_evidence = _capture_root_evidence(paths.public_root)
+    private_operation_evidence = _capture_root_evidence(paths.private_root)
+    _validate_storage_roots(
+        paths,
+        public_operation_evidence=public_operation_evidence,
+        private_operation_evidence=private_operation_evidence,
+    )
+
+    snapshots = {target: _target_snapshot(target) for _, target, _, _ in raw_targets}
+    if expected_targets is not None:
+        for label, target, _, _ in raw_targets:
+            if not _matches_expected_snapshot(snapshots[target], expected_targets[label]):
+                raise RuntimeError(f"stale storage plan: {label}")
+
+    prepared: list[_PreparedTarget] = []
+    for label, target, payload, json_document in raw_targets:
+        snapshot = snapshots[target]
+        desired_mode = (
+            0o600
+            if label == "resolver"
+            else snapshot.mode if snapshot.mode is not None else 0o644
+        )
+        needs_mode_change = bool(
+            os.name != "nt"
+            and label == "resolver"
+            and snapshot.mode is not None
+            and snapshot.mode != 0o600
+        )
+        if snapshot.payload == payload and not needs_mode_change:
+            continue
+        prepared.append(
+            _PreparedTarget(
+                label,
+                target,
+                payload,
+                hashes[label],
+                desired_mode,
+                json_document,
+            )
+        )
+
+    if not prepared:
+        receipt_info = {
+            "schema_version": 1,
+            "generation_id": generation_id,
+            "hashes": dict(sorted(hashes.items())),
+        }
+        return StorageWriteResult(generation_id, hashes, (), receipt_info)
+
+    staged: dict[str, Path] = {}
+    claims: dict[str, Path] = {}
+    cleanup_recovery_paths: list[Path] = []
+    committed: list[_PreparedTarget] = []
+    commit_complete = False
+    try:
+        for target in prepared:
+            stage = target.target.parent / (
+                f".vantasma-storage-stage-{secrets.token_hex(12)}"
+            )
+            _write_file_fsynced_portable(stage, target.payload, target.mode)
+            verified = _target_snapshot(stage)
+            if verified.payload != target.payload:
+                raise OSError(f"portable staged hash mismatch for {target.label}")
+            if target.json_document:
+                json.loads(target.payload.decode("utf-8"))
+            staged[target.label] = stage
+
+        for target in prepared:
+            _validate_storage_roots(
+                paths,
+                public_operation_evidence=public_operation_evidence,
+                private_operation_evidence=private_operation_evidence,
+            )
+            current = _target_snapshot(target.target)
+            if expected_targets is not None and not _matches_expected_snapshot(
+                current, expected_targets[target.label]
+            ):
+                raise RuntimeError(f"stale storage plan: {target.label}")
+            if not _same_snapshot_portable(current, snapshots[target.target]):
+                raise RuntimeError(
+                    f"storage target changed concurrently: {target.label}"
+                )
+            if failure_injector is not None:
+                failure_injector(target.label, target.target)
+            if current.existed:
+                claim = target.target.parent / (
+                    f".vantasma-storage-claim-{secrets.token_hex(12)}"
+                )
+                _move_no_replace_portable(target.target, claim)
+                claims[target.label] = claim
+                claimed = _target_snapshot(claim)
+                if not _same_snapshot_portable(claimed, current):
+                    raise RuntimeError(
+                        f"storage target changed concurrently: {target.label}"
+                    )
+            _move_no_replace_portable(staged.pop(target.label), target.target)
+            after = _target_snapshot(target.target)
+            if not _matches_committed_portable(
+                after, target.expected_hash, len(target.payload)
+            ):
+                raise OSError(f"committed hash mismatch for {target.label}")
+            committed.append(target)
+
+        commit_complete = True
+        for label, claim in tuple(claims.items()):
+            try:
+                os.unlink(claim)
+            except FileNotFoundError:
+                claims.pop(label, None)
+            except OSError:
+                try:
+                    os.lstat(claim)
+                except (FileNotFoundError, OSError):
+                    claims.pop(label, None)
+                else:
+                    cleanup_recovery_paths.append(claim)
+            else:
+                claims.pop(label, None)
+    except BaseException as original_error:
+        if commit_complete:
+            raise
+        rollback_conflicts: list[str] = []
+        rollback_errors: list[BaseException] = []
+        for target in reversed(committed):
+            try:
+                current = _target_snapshot(target.target)
+                if not _matches_committed_portable(
+                    current, target.expected_hash, len(target.payload)
+                ):
+                    rollback_conflicts.append(target.label)
+                    continue
+                os.unlink(target.target)
+                claim = claims.pop(target.label, None)
+                if claim is not None:
+                    _move_no_replace_portable(claim, target.target)
+            except BaseException as rollback_error:
+                rollback_errors.append(rollback_error)
+        for label, claim in tuple(claims.items()):
+            target = next(item for item in prepared if item.label == label)
+            try:
+                if not target.target.exists():
+                    _move_no_replace_portable(claim, target.target)
+                    claims.pop(label, None)
+                else:
+                    rollback_conflicts.append(label)
+            except BaseException as rollback_error:
+                rollback_errors.append(rollback_error)
+        details: list[str] = []
+        if rollback_conflicts:
+            details.append("rollback_conflict: " + ", ".join(rollback_conflicts))
+        if rollback_errors:
+            details.append("rollback_incomplete")
+        if details:
+            raise RuntimeError("storage bundle failed; " + "; ".join(details)) from original_error
+        raise
+    finally:
+        for stage in staged.values():
+            try:
+                os.unlink(stage)
+            except FileNotFoundError:
+                pass
+
+    receipt_info = {
+        "schema_version": 1,
+        "generation_id": generation_id,
+        "hashes": dict(sorted(hashes.items())),
+    }
+    return StorageWriteResult(
+        generation_id,
+        hashes,
+        tuple(target.target for target in prepared),
+        receipt_info,
+        tuple(cleanup_recovery_paths),
     )
 
 
@@ -1381,6 +1680,7 @@ def _write_file_fsynced_at(
         | os.O_EXCL
         | getattr(os, "O_CLOEXEC", 0)
         | os.O_NOFOLLOW
+        | getattr(os, "O_BINARY", 0)
     )
     descriptor = os.open(name, flags, mode, dir_fd=parent_fd)
     try:
@@ -1406,7 +1706,7 @@ def _target_snapshot_at(parent_fd: int, name: str) -> _Snapshot:
         return _Snapshot(False, None, None)
     except OSError as error:
         raise ValueError(f"storage target could not be inspected: {name}") from error
-    if stat.S_ISLNK(before.st_mode):
+    if _is_link_like(before):
         raise ValueError(f"refusing symbolic-link target: {name}")
     if not stat.S_ISREG(before.st_mode):
         raise ValueError(f"storage target is not a regular file: {name}")
@@ -1746,7 +2046,7 @@ def _cleanup_stage_at(
     except FileNotFoundError as error:
         raise RuntimeError("storage staging directory changed") from error
     if (
-        stat.S_ISLNK(current.st_mode)
+        _is_link_like(current)
         or not stat.S_ISDIR(current.st_mode)
         or (current.st_dev, current.st_ino) != stage_identity
     ):
@@ -1796,7 +2096,7 @@ def _restore_snapshot_at(
             current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
         except FileNotFoundError:
             return
-        if stat.S_ISLNK(current.st_mode) or not stat.S_ISREG(current.st_mode):
+        if _is_link_like(current) or not stat.S_ISREG(current.st_mode):
             raise RuntimeError(f"unsafe rollback target: {name}")
         os.unlink(name, dir_fd=parent_fd)
         os.fsync(parent_fd)
@@ -1854,8 +2154,6 @@ def write_storage_bundle(
 
     if not isinstance(paths, StoragePaths):
         raise TypeError("paths must be a StoragePaths value")
-    if not _secure_storage_backend_available():
-        raise RuntimeError("secure_storage_backend_unavailable")
     _validate_storage_roots(paths)
     expected_targets = _validated_expected_state(paths, expected_state)
     public_artifacts = _coerce_artifacts(artifacts)
@@ -1893,6 +2191,18 @@ def write_storage_bundle(
         hashes, sort_keys=True, separators=(",", ":")
     ).encode("ascii")
     generation_id = f"gen_{hashlib.sha256(generation_payload).hexdigest()[:24]}"
+
+    if not _secure_storage_backend_available():
+        if not _windows_portable_backend_available():
+            raise RuntimeError("secure_storage_backend_unavailable")
+        return _write_storage_bundle_portable(
+            paths,
+            raw_targets,
+            hashes,
+            generation_id,
+            expected_targets=expected_targets,
+            failure_injector=failure_injector,
+        )
 
     _prepare_root(paths.public_root)
     _prepare_root(paths.private_root)

@@ -16,6 +16,14 @@ cp -R "<repo-root>/skills/Agent能力/discover-local-capabilities" "<agent-skill
 
 这一步只安装发现逻辑，不会生成能力地图或改 Agent 指令。后续 setup 仍须先展示零写入计划，并单独取得当次明确确认。
 
+安装或更新后必须先验收 Skill 包本身：目标目录同时存在 `SKILL.md` 和 `scripts/capability_map.py`。如果原来没有安装或目录不完整，就转为全新安装，不要继续冒充“更新成功”。`uv` 未安装、某个可选 MCP 被关闭、或无影响的 CLI 警告，都不等于这个 Skill 安装失败。
+
+不熟悉命令行时，无论首次安装还是更新，都可以直接把下面这段发给 Agent：
+
+```text
+请从 GitHub 仓库 xiangruiai/vantasma-toolkit 安装或更新路径 skills/Agent能力/discover-local-capabilities。如果本地目录不存在或不完整，就按全新安装恢复。先验证目标目录同时包含 SKILL.md 和 scripts/capability_map.py，再让我选择地图存储位置、Agent 和作用域。先展示零写入 setup plan，得到我的当次明确确认后再 apply。完成后运行 status，只有 installed=true 且 healthy=true 才算成功，并告诉我能力地图的精确位置、Skill/CLI/MCP/plugin 分类数量和任何 health_errors。
+```
+
 ## 一句话使用
 
 安装后可以直接对 Agent 说：
@@ -24,7 +32,7 @@ cp -R "<repo-root>/skills/Agent能力/discover-local-capabilities" "<agent-skill
 扫描我的电脑有哪些 Skill、CLI、MCP 和插件，生成能力地图。
 ```
 
-Agent 会先让你选择存储位置、Agent 和作用域，执行零写入计划，展示将涉及的绝对路径。只有得到当次明确确认后，它才能写入地图和托管指令。完成后 Agent 必须告知本次操作返回的精确位置，并提醒这些 stdout 信息应作为私有运维输出处理。
+Agent 会先让你选择存储位置、Agent 和作用域，执行零写入计划，展示将涉及的绝对路径。只有得到当次明确确认后，它才能写入地图和托管指令。完成后 Agent 必须告知本次操作返回的精确位置，并提醒这些 stdout 信息应作为私有运维输出处理。如果返回 `cleanup_recovery_paths`，说明新内容已提交，但旧的 no-clobber 副本没有清理成功；应保留并报告给使用者人工复核，不自动删除，也不因此回滚已成功的提交。
 
 日常也可以直接说：
 
@@ -119,11 +127,12 @@ python3 "<skill-dir>/scripts/capability_map.py" setup apply \
 
 托管完成后，Agent 对需要本机能力的任务遵循：
 
-1. 先读精简的 `本机能力地图.md`。
-2. 按任务语义匹配场景与本机候选。
-3. 必要时读取 `capability-inventory.json`；选定候选后才从私有 resolver 解析真实位置。
-4. 如果候选是 Skill，完整读取它的 SKILL.md。
-5. 检查认证、权限、依赖与任务级可用性，再执行并返回证据。
+1. 先遵循使用者明确指令、既有记忆、业务流程和项目规则，能力地图不得反向覆盖它们。
+2. 再读精简的 `本机能力地图.md`，只在已确定的流程中选择本机实现能力。
+3. 按任务语义匹配场景与本机候选。
+4. 必要时读取 `capability-inventory.json`；选定候选后才从私有 resolver 解析真实位置。
+5. 如果候选是 Skill，完整读取它的 SKILL.md。
+6. 检查认证、权限、依赖与任务级可用性，再执行并返回证据。
 
 结构化查询：
 
@@ -216,7 +225,7 @@ python3 "<skill-dir>/scripts/capability_map.py" scan \
 
 计划过期时重新 plan。托管标记冲突时停止，不自动编辑使用者内容。迁移成功后旧安装显示 `lifecycle=migrated`，旧位置的 refresh、migrate、uninstall 与 purge 会拒绝，后续操作使用新位置。普通 uninstall 后保留数据并进入 uninstalled lifecycle，只允许之后执行 purge，或让 Agent 生成新 installation ID 重新 setup。
 
-发现层面针对 macOS、Linux 和 Windows 的 Skill roots、PATH 与 PATHEXT 设计。完整 setup 的强事务保证目前以 POSIX 的 secure directory-fd、no-follow、atomic replace 与 `0600` 为基础；可恢复 purge 还要求 public storage 与 private recovery 在同一 filesystem。Windows 上缺少相应 POSIX 语义时，setup 或 purge 可能 fail closed。此时可以使用只读 scan，但不要在 setup 与 status 未实际通过前宣称持久 Agent 路由已经安全安装。
+macOS 和 Linux 通过 POSIX directory-handle backend 支持发现与常规生命周期。Windows 提供可用的 best-effort path backend：Skill 与 plugin 扫描会做 file-ID 前后校验，拒绝已观测到的 symlink、junction 和其他 reparse point；setup、refresh、migrate 和普通 uninstall 使用同目录 no-clobber rename 与回滚副本。这些 Windows 检查是 path-based，不是 handle-bound，无法排除所有 check/use 竞态；替换文件还可能继承目录 ACL，而不是保留原文件的特定 ACL。private root 应放在受限的当前用户系统数据目录中，自定义目录必须人工复核权限。`status` 只校验 schema 和归属关系，不是 Windows ACL 有效权限审计。可恢复的 `--purge-data` 仍需 POSIX directory-handle backend，因此 Windows 上会 fail closed；可用普通 uninstall 保留全部数据。
 
 ## License
 

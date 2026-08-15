@@ -279,6 +279,7 @@ class InstructionPlanTests(unittest.TestCase):
         self.assertIn("已发现", block)
         self.assertIn("已授权", block)
         self.assertIn("刷新", block)
+        self.assertIn("既有业务流程、记忆与项目规则优先", block)
         self.assertNotIn("secret", block.casefold())
 
     def test_existing_matching_block_updates_and_other_user_bytes_are_unchanged(self) -> None:
@@ -619,6 +620,259 @@ class InstructionPlanTests(unittest.TestCase):
 
 
 class InstructionApplyTests(unittest.TestCase):
+    def test_windows_portable_backend_installs_and_uninstalls_managed_block(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            home = base / "home"
+            codex_home = home / ".codex"
+            codex_home.mkdir(parents=True)
+            request = InstructionTargetRequest(
+                home=home,
+                project_root=None,
+                codex_home=codex_home,
+                agents=("codex",),
+                scopes=("user",),
+            )
+            plan = build_instruction_plan(
+                request,
+                installation_id="windows-portable",
+                map_path=base / "map.md",
+                resolver_path=base / "resolver.json",
+                backup_root=base / "backups",
+            )
+            patches = (
+                mock.patch.object(
+                    transactions_module, "_secure_backend_available", return_value=False
+                ),
+                mock.patch.object(
+                    transactions_module,
+                    "_windows_portable_backend_available",
+                    return_value=True,
+                ),
+            )
+            with patches[0], patches[1]:
+                receipt = apply_instruction_plan(
+                    plan,
+                    confirmed=True,
+                    expected_plan_hash=plan.plan_hash,
+                )
+                target = codex_home / "AGENTS.md"
+                self.assertIn("windows-portable", target.read_text(encoding="utf-8"))
+                uninstall = build_uninstall_plan(
+                    request,
+                    installation_id="windows-portable",
+                    backup_root=base / "backups",
+                )
+                apply_instruction_plan(
+                    uninstall,
+                    confirmed=True,
+                    expected_plan_hash=uninstall.plan_hash,
+                )
+
+            self.assertTrue(receipt.changed_paths)
+            self.assertEqual(target.read_bytes(), b"")
+
+    def test_windows_claim_verification_failure_restores_registered_original(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "project"
+            project.mkdir()
+            target = project / "AGENTS.md"
+            original = b"original instructions\n"
+            target.write_bytes(original)
+            plan = self._plan(self._request(project), base)
+            original_match = transactions_module._portable_matches_expected
+            comparisons = 0
+
+            def fail_claim_validation(snapshot: object, mutation: object) -> bool:
+                nonlocal comparisons
+                comparisons += 1
+                if comparisons == 3:
+                    return False
+                return original_match(snapshot, mutation)
+
+            with (
+                mock.patch.object(
+                    transactions_module, "_secure_backend_available", return_value=False
+                ),
+                mock.patch.object(
+                    transactions_module,
+                    "_windows_portable_backend_available",
+                    return_value=True,
+                ),
+                mock.patch.object(
+                    transactions_module,
+                    "_move_no_replace_portable",
+                    side_effect=os.rename,
+                ),
+                mock.patch.object(
+                    transactions_module,
+                    "_portable_matches_expected",
+                    side_effect=fail_claim_validation,
+                ),
+            ):
+                with self.assertRaisesRegex(TransactionError, "claim conflict"):
+                    apply_instruction_plan(
+                        plan,
+                        confirmed=True,
+                        expected_plan_hash=plan.plan_hash,
+                    )
+
+            self.assertEqual(target.read_bytes(), original)
+            self.assertFalse(tuple(base.rglob(".vantasma-instruction-claim-*")))
+
+    def test_windows_claim_cleanup_failure_keeps_committed_instructions(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "project"
+            project.mkdir()
+            first = project / "AGENTS.md"
+            second = project / "CLAUDE.md"
+            first.write_bytes(b"first original\n")
+            second.write_bytes(b"second original\n")
+            plan = self._plan(
+                self._request(project, agents=("codex", "claude")), base
+            )
+            real_unlink = os.unlink
+            cleanup_calls = 0
+
+            def fail_second_claim_cleanup(path: object, *args: object, **kwargs: object) -> None:
+                nonlocal cleanup_calls
+                if ".vantasma-instruction-claim-" in str(path):
+                    cleanup_calls += 1
+                    if cleanup_calls == 2:
+                        raise PermissionError("injected claim cleanup failure")
+                real_unlink(path, *args, **kwargs)
+
+            with (
+                mock.patch.object(
+                    transactions_module, "_secure_backend_available", return_value=False
+                ),
+                mock.patch.object(
+                    transactions_module,
+                    "_windows_portable_backend_available",
+                    return_value=True,
+                ),
+                mock.patch.object(
+                    transactions_module,
+                    "_move_no_replace_portable",
+                    side_effect=os.rename,
+                ),
+                mock.patch.object(
+                    transactions_module.os,
+                    "unlink",
+                    side_effect=fail_second_claim_cleanup,
+                ),
+            ):
+                receipt = apply_instruction_plan(
+                    plan,
+                    confirmed=True,
+                    expected_plan_hash=plan.plan_hash,
+                )
+
+            self.assertIn(b"vantasma:discover-local-capabilities", first.read_bytes())
+            self.assertIn(b"vantasma:discover-local-capabilities", second.read_bytes())
+            self.assertEqual(len(receipt.cleanup_recovery_paths), 1)
+            self.assertTrue(receipt.cleanup_recovery_paths[0].is_file())
+            real_unlink(receipt.cleanup_recovery_paths[0])
+
+    def test_windows_missing_instruction_claim_is_not_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "project"
+            project.mkdir()
+            target = project / "AGENTS.md"
+            target.write_bytes(b"original\n")
+            plan = self._plan(self._request(project), base)
+            real_unlink = os.unlink
+            injected = False
+
+            def remove_then_report_missing(
+                path: object, *args: object, **kwargs: object
+            ) -> None:
+                nonlocal injected
+                if not injected and ".vantasma-instruction-claim-" in str(path):
+                    injected = True
+                    real_unlink(path, *args, **kwargs)
+                    raise FileNotFoundError("claim was concurrently removed")
+                real_unlink(path, *args, **kwargs)
+
+            with (
+                mock.patch.object(
+                    transactions_module, "_secure_backend_available", return_value=False
+                ),
+                mock.patch.object(
+                    transactions_module,
+                    "_windows_portable_backend_available",
+                    return_value=True,
+                ),
+                mock.patch.object(
+                    transactions_module,
+                    "_move_no_replace_portable",
+                    side_effect=os.rename,
+                ),
+                mock.patch.object(
+                    transactions_module.os,
+                    "unlink",
+                    side_effect=remove_then_report_missing,
+                ),
+            ):
+                receipt = apply_instruction_plan(
+                    plan,
+                    confirmed=True,
+                    expected_plan_hash=plan.plan_hash,
+                )
+
+            self.assertTrue(injected)
+            self.assertEqual(receipt.cleanup_recovery_paths, ())
+            self.assertIn(b"vantasma:discover-local-capabilities", target.read_bytes())
+
+    def test_windows_instruction_cleanup_interrupt_does_not_rollback_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "project"
+            project.mkdir()
+            target = project / "AGENTS.md"
+            target.write_bytes(b"original\n")
+            plan = self._plan(self._request(project), base)
+            real_unlink = os.unlink
+
+            def interrupt_claim_cleanup(
+                path: object, *args: object, **kwargs: object
+            ) -> None:
+                if ".vantasma-instruction-claim-" in str(path):
+                    raise KeyboardInterrupt("injected cleanup interruption")
+                real_unlink(path, *args, **kwargs)
+
+            with (
+                mock.patch.object(
+                    transactions_module, "_secure_backend_available", return_value=False
+                ),
+                mock.patch.object(
+                    transactions_module,
+                    "_windows_portable_backend_available",
+                    return_value=True,
+                ),
+                mock.patch.object(
+                    transactions_module,
+                    "_move_no_replace_portable",
+                    side_effect=os.rename,
+                ),
+                mock.patch.object(
+                    transactions_module.os,
+                    "unlink",
+                    side_effect=interrupt_claim_cleanup,
+                ),
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    apply_instruction_plan(
+                        plan,
+                        confirmed=True,
+                        expected_plan_hash=plan.plan_hash,
+                    )
+
+            self.assertIn(b"vantasma:discover-local-capabilities", target.read_bytes())
+
     def _request(
         self, project_root: Path, *, agents: tuple[str, ...] = ("codex",)
     ) -> InstructionTargetRequest:

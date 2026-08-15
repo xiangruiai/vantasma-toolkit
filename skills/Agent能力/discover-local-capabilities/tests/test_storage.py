@@ -585,6 +585,230 @@ class ResolverDocumentTests(unittest.TestCase):
 
 
 class AtomicStorageWriterTests(unittest.TestCase):
+    def test_windows_portable_backend_writes_and_rolls_back_complete_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            paths = default_storage_paths(
+                home=base / "home",
+                local_root=base / "public",
+                private_root=base / "private",
+            )
+            expected = capture_storage_expected_state(paths)
+            patches = (
+                mock.patch.object(
+                    storage_module, "_secure_storage_backend_available", return_value=False
+                ),
+                mock.patch.object(
+                    storage_module, "_windows_portable_backend_available", return_value=True
+                ),
+            )
+            with patches[0], patches[1]:
+                first = write_storage_bundle(
+                    paths,
+                    _artifacts("windows-one"),
+                    (),
+                    expected_state=expected,
+                )
+                before = _bundle_bytes(paths)
+
+                def fail_on_inventory(label: str, _path: Path) -> None:
+                    if label == "inventory":
+                        raise OSError("portable injected failure")
+
+                with self.assertRaises(OSError):
+                    write_storage_bundle(
+                        paths,
+                        _artifacts("windows-two"),
+                        (),
+                        failure_injector=fail_on_inventory,
+                    )
+
+            self.assertTrue(first.changed_paths)
+            self.assertEqual(_bundle_bytes(paths), before)
+            self.assertFalse(
+                tuple(base.rglob(".vantasma-storage-stage-*"))
+            )
+            self.assertFalse(
+                tuple(base.rglob(".vantasma-storage-claim-*"))
+            )
+
+    def test_windows_claim_verification_failure_restores_registered_original(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            paths = default_storage_paths(
+                home=base / "home",
+                local_root=base / "public",
+                private_root=base / "private",
+            )
+            write_storage_bundle(paths, _artifacts("before-claim"), ())
+            before = _bundle_bytes(paths)
+            original_compare = storage_module._same_snapshot_portable
+            comparisons = 0
+
+            def fail_claim_validation(left: object, right: object) -> bool:
+                nonlocal comparisons
+                comparisons += 1
+                if comparisons == 2:
+                    return False
+                return original_compare(left, right)
+
+            with (
+                mock.patch.object(
+                    storage_module, "_secure_storage_backend_available", return_value=False
+                ),
+                mock.patch.object(
+                    storage_module, "_windows_portable_backend_available", return_value=True
+                ),
+                mock.patch.object(
+                    storage_module, "_move_no_replace_portable", side_effect=os.rename
+                ),
+                mock.patch.object(
+                    storage_module,
+                    "_same_snapshot_portable",
+                    side_effect=fail_claim_validation,
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "changed concurrently"):
+                    write_storage_bundle(paths, _artifacts("after-claim"), ())
+
+            self.assertEqual(_bundle_bytes(paths), before)
+            self.assertFalse(tuple(base.rglob(".vantasma-storage-claim-*")))
+
+    def test_windows_claim_cleanup_failure_does_not_rollback_committed_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            paths = default_storage_paths(
+                home=base / "home",
+                local_root=base / "public",
+                private_root=base / "private",
+            )
+            write_storage_bundle(paths, _artifacts("cleanup-before"), ())
+            real_unlink = os.unlink
+            cleanup_calls = 0
+
+            def fail_second_claim_cleanup(path: object, *args: object, **kwargs: object) -> None:
+                nonlocal cleanup_calls
+                if ".vantasma-storage-claim-" in str(path):
+                    cleanup_calls += 1
+                    if cleanup_calls == 2:
+                        raise PermissionError("injected claim cleanup failure")
+                real_unlink(path, *args, **kwargs)
+
+            with (
+                mock.patch.object(
+                    storage_module, "_secure_storage_backend_available", return_value=False
+                ),
+                mock.patch.object(
+                    storage_module, "_windows_portable_backend_available", return_value=True
+                ),
+                mock.patch.object(
+                    storage_module, "_move_no_replace_portable", side_effect=os.rename
+                ),
+                mock.patch.object(
+                    storage_module.os,
+                    "unlink",
+                    side_effect=fail_second_claim_cleanup,
+                ),
+            ):
+                result = write_storage_bundle(
+                    paths, _artifacts("cleanup-after"), ()
+                )
+
+            self.assertEqual(
+                json.loads(paths.inventory_path.read_text(encoding="utf-8"))["marker"],
+                "cleanup-after",
+            )
+            self.assertEqual(len(result.cleanup_recovery_paths), 1)
+            self.assertTrue(result.cleanup_recovery_paths[0].is_file())
+            real_unlink(result.cleanup_recovery_paths[0])
+
+    def test_windows_missing_claim_during_cleanup_is_not_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            paths = default_storage_paths(
+                home=base / "home",
+                local_root=base / "public",
+                private_root=base / "private",
+            )
+            write_storage_bundle(paths, _artifacts("missing-before"), ())
+            real_unlink = os.unlink
+            injected = False
+
+            def remove_then_report_missing(
+                path: object, *args: object, **kwargs: object
+            ) -> None:
+                nonlocal injected
+                if not injected and ".vantasma-storage-claim-" in str(path):
+                    injected = True
+                    real_unlink(path, *args, **kwargs)
+                    raise FileNotFoundError("claim was concurrently removed")
+                real_unlink(path, *args, **kwargs)
+
+            with (
+                mock.patch.object(
+                    storage_module, "_secure_storage_backend_available", return_value=False
+                ),
+                mock.patch.object(
+                    storage_module, "_windows_portable_backend_available", return_value=True
+                ),
+                mock.patch.object(
+                    storage_module, "_move_no_replace_portable", side_effect=os.rename
+                ),
+                mock.patch.object(
+                    storage_module.os,
+                    "unlink",
+                    side_effect=remove_then_report_missing,
+                ),
+            ):
+                result = write_storage_bundle(paths, _artifacts("missing-after"), ())
+
+            self.assertTrue(injected)
+            self.assertEqual(result.cleanup_recovery_paths, ())
+            self.assertEqual(
+                json.loads(paths.inventory_path.read_text(encoding="utf-8"))["marker"],
+                "missing-after",
+            )
+
+    def test_windows_cleanup_interrupt_does_not_rollback_committed_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            paths = default_storage_paths(
+                home=base / "home",
+                local_root=base / "public",
+                private_root=base / "private",
+            )
+            write_storage_bundle(paths, _artifacts("interrupt-before"), ())
+            real_unlink = os.unlink
+
+            def interrupt_claim_cleanup(path: object, *args: object, **kwargs: object) -> None:
+                if ".vantasma-storage-claim-" in str(path):
+                    raise KeyboardInterrupt("injected cleanup interruption")
+                real_unlink(path, *args, **kwargs)
+
+            with (
+                mock.patch.object(
+                    storage_module, "_secure_storage_backend_available", return_value=False
+                ),
+                mock.patch.object(
+                    storage_module, "_windows_portable_backend_available", return_value=True
+                ),
+                mock.patch.object(
+                    storage_module, "_move_no_replace_portable", side_effect=os.rename
+                ),
+                mock.patch.object(
+                    storage_module.os,
+                    "unlink",
+                    side_effect=interrupt_claim_cleanup,
+                ),
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    write_storage_bundle(paths, _artifacts("interrupt-after"), ())
+
+            self.assertEqual(
+                json.loads(paths.inventory_path.read_text(encoding="utf-8"))["marker"],
+                "interrupt-after",
+            )
+
     def test_plan_expected_state_refuses_later_create_and_modify(self) -> None:
         cases = ("create", "modify")
         if os.name != "nt":

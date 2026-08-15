@@ -28,6 +28,15 @@ _FD_WALK_SUPPORTED = (
     and os.open in os.supports_dir_fd
     and os.scandir in os.supports_fd
 )
+_WINDOWS_REPARSE_POINT = 0x400
+
+
+def _is_link_like(metadata: os.stat_result) -> bool:
+    return bool(
+        stat.S_ISLNK(metadata.st_mode)
+        or int(getattr(metadata, "st_file_attributes", 0))
+        & _WINDOWS_REPARSE_POINT
+    )
 
 
 @dataclass(frozen=True)
@@ -182,7 +191,7 @@ def _resolve_symlink_chain(path: Path, *, max_links: int = 64) -> Path:
             raise _EnvPathBlocked
         candidate = resolved / part
         entry_stat = os.lstat(candidate)
-        if not stat.S_ISLNK(entry_stat.st_mode):
+        if not _is_link_like(entry_stat):
             resolved = candidate
             continue
         link_count += 1
@@ -231,6 +240,7 @@ def _directory_open_flags() -> int:
 def _file_open_flags() -> int:
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_BINARY", 0)
     return flags
 
 
@@ -391,7 +401,7 @@ def _open_symlink_target(
                 entry_stat = os.stat(
                     name, dir_fd=current_fd, follow_symlinks=False
                 )
-                if stat.S_ISLNK(entry_stat.st_mode):
+                if _is_link_like(entry_stat):
                     link_id = _file_id(entry_stat)
                     if link_id is not None and link_id in seen_links:
                         raise OSError(errno.ELOOP, "symbolic link loop")
@@ -611,7 +621,7 @@ def _walk_root(
                     entry_stat = os.stat(
                         name, dir_fd=directory_fd, follow_symlinks=False
                     )
-                    is_link = stat.S_ISLNK(entry_stat.st_mode)
+                    is_link = _is_link_like(entry_stat)
                     if is_link:
                         try:
                             anchored_target = Path(
@@ -856,7 +866,7 @@ def _walk_root_path(
         if expected_id is None:
             raise _SafeOpenUnavailable
         before = os.lstat(path)
-        if stat.S_ISLNK(before.st_mode) or _file_id(before) != expected_id:
+        if _is_link_like(before) or _file_id(before) != expected_id:
             raise _SourceChanged
         fd = os.open(path, _file_open_flags())
         try:
@@ -878,7 +888,7 @@ def _walk_root_path(
                     ),
                 )
             after = os.lstat(path)
-            if stat.S_ISLNK(after.st_mode) or _file_id(after) != expected_id:
+            if _is_link_like(after) or _file_id(after) != expected_id:
                 raise _SourceChanged
             return opened, payload, truncated, ()
         finally:
@@ -895,7 +905,7 @@ def _walk_root_path(
             before = os.lstat(directory)
             directory_id = _file_id(before)
             if (
-                stat.S_ISLNK(before.st_mode)
+                _is_link_like(before)
                 or not stat.S_ISDIR(before.st_mode)
                 or directory_id != expected_id
             ):
@@ -917,7 +927,7 @@ def _walk_root_path(
                 if iterator is not None:
                     iterator.close()
             after = os.lstat(directory)
-            if stat.S_ISLNK(after.st_mode) or _file_id(after) != directory_id:
+            if _is_link_like(after) or _file_id(after) != directory_id:
                 raise _SourceChanged
         except _SourceChanged:
             diagnostics.append(
@@ -954,7 +964,7 @@ def _walk_root_path(
             child = directory / name
             try:
                 child_stat = os.lstat(child)
-                if stat.S_ISLNK(child_stat.st_mode):
+                if _is_link_like(child_stat):
                     diagnostics.append(
                         _diagnostic(
                             "symlink_unverifiable",
@@ -1434,7 +1444,7 @@ def discover_skills(
                 )
             )
             continue
-        root_is_link = stat.S_ISLNK(source_stat.st_mode)
+        root_is_link = _is_link_like(source_stat)
         try:
             real_root = _resolve_symlink_chain(root.path)
         except _EnvPathBlocked:

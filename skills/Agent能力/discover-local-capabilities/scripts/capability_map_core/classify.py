@@ -151,6 +151,10 @@ class SceneDefinition:
     label_en: str
     keywords: tuple[str, ...] | list[str] = field(default_factory=tuple)
     phrases: tuple[str, ...] | list[str] = field(default_factory=tuple)
+    required_groups: tuple[tuple[str, ...], ...] | list[list[str]] = field(
+        default_factory=tuple
+    )
+    capability_phrases: tuple[str, ...] | list[str] = field(default_factory=tuple)
     kind_boosts: Mapping[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -176,6 +180,16 @@ class SceneDefinition:
             boosts[normalized_kind] = boost
         keywords = _stable_strings(self.keywords, "keywords")
         phrases = _stable_strings(self.phrases, "phrases")
+        if isinstance(self.required_groups, (str, bytes, bytearray, Mapping)):
+            raise TypeError("required_groups must be a collection of term groups")
+        required_groups = tuple(
+            _stable_strings(group, "required group") for group in self.required_groups
+        )
+        if any(not group for group in required_groups):
+            raise ValueError("required_groups must not contain an empty group")
+        capability_phrases = _stable_strings(
+            self.capability_phrases, "capability_phrases"
+        )
         if not keywords and not phrases:
             raise ValueError("A scene must contain generic semantic evidence")
         object.__setattr__(self, "id", scene_id)
@@ -183,6 +197,8 @@ class SceneDefinition:
         object.__setattr__(self, "label_en", label_en)
         object.__setattr__(self, "keywords", keywords)
         object.__setattr__(self, "phrases", phrases)
+        object.__setattr__(self, "required_groups", required_groups)
+        object.__setattr__(self, "capability_phrases", capability_phrases)
         object.__setattr__(
             self,
             "kind_boosts",
@@ -303,7 +319,7 @@ def _require_collection(values: Iterable[Any], field_name: str) -> tuple[Any, ..
 def _scene_from_mapping(raw: Any) -> SceneDefinition:
     if not isinstance(raw, Mapping):
         raise TypeError("taxonomy scenes must be mappings")
-    expected = {
+    required = {
         "id",
         "label_zh",
         "label_en",
@@ -311,7 +327,11 @@ def _scene_from_mapping(raw: Any) -> SceneDefinition:
         "phrases",
         "kind_boosts",
     }
-    if set(raw) != expected:
+    fields = set(raw)
+    if not required <= fields or not fields <= required | {
+        "required_groups",
+        "capability_phrases",
+    }:
         raise ValueError("taxonomy scene fields do not match the public schema")
     return SceneDefinition(
         id=raw["id"],
@@ -319,6 +339,8 @@ def _scene_from_mapping(raw: Any) -> SceneDefinition:
         label_en=raw["label_en"],
         keywords=raw["keywords"],
         phrases=raw["phrases"],
+        required_groups=raw.get("required_groups", ()),
+        capability_phrases=raw.get("capability_phrases", ()),
         kind_boosts=raw["kind_boosts"],
     )
 
@@ -441,6 +463,27 @@ def _contains_cjk(value: str) -> bool:
     return any("\u3400" <= character <= "\ufaff" for character in normalized)
 
 
+def _matches_required_groups(
+    value: str, scene: SceneDefinition, *, query: bool
+) -> bool:
+    """Require one semantic term from every configured evidence group."""
+
+    if not scene.required_groups:
+        return True
+    text_tokens = _tokens(value)
+    for group in scene.required_groups:
+        if not any(
+            (
+                _cjk_query_phrase_matches(term, value)
+                if query and _contains_cjk(term)
+                else _phrase_matches(term, value, text_tokens)
+            )
+            for term in group
+        ):
+            return False
+    return True
+
+
 def _field_match(
     value: str,
     scene: SceneDefinition,
@@ -508,6 +551,22 @@ def _field_weights(capability: Capability) -> tuple[tuple[str, tuple[str, ...], 
 def _score_capability_scene(
     capability: Capability, scene: SceneDefinition
 ) -> tuple[float, tuple[str, ...]]:
+    aggregate = " ".join(
+        (
+            capability.name,
+            *capability.aliases,
+            *capability.tags,
+            capability.description,
+        )
+    )
+    aggregate_tokens = _tokens(aggregate)
+    if scene.capability_phrases and not any(
+        _phrase_matches(phrase, aggregate, aggregate_tokens)
+        for phrase in scene.capability_phrases
+    ):
+        return 0.0, ()
+    if not _matches_required_groups(aggregate, scene, query=False):
+        return 0.0, ()
     score = 0.0
     evidence: list[str] = []
     for field_name, values, weight in _field_weights(capability):
@@ -637,6 +696,8 @@ def classify_capabilities(
 def _score_query_scene(
     query: str, scene: SceneDefinition
 ) -> tuple[float, tuple[str, ...]]:
+    if not _matches_required_groups(query, scene, query=True):
+        return 0.0, ()
     return _field_match(
         query,
         scene,
@@ -757,7 +818,11 @@ def route_query(
         relevant_scenes = tuple(
             sorted(set(capability.scenes).intersection(query_scene_matches))
         )
-        if not relevant_scenes and direct_score < 2.0:
+        strong_direct_identity = any(
+            item.startswith(("query:name:", "query:alias:", "query:tag:"))
+            for item in direct_evidence
+        )
+        if not relevant_scenes and not strong_direct_identity:
             continue
         score = direct_score
         evidence = list(direct_evidence)
