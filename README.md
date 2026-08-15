@@ -34,7 +34,7 @@
 vantasma-toolkit/
 ├── apps/
 │   ├── whiteboard-recorder/          ← 祥瑞白板录制工具（白板 + 录制 + 摄像头 + 素材库 + 提词器）
-│   └── deepseek-harness-desktop/     ← DeepSeek Harness 桌面安装包（仅 DMG，无源码）
+│   └── deepseek-harness-desktop/     ← DeepSeek Harness 桌面安装说明（完整包在 Release）
 ├── plugins/
 │   ├── xiangrui-taskboard/           ← 祥瑞任务面板 Codex 插件（看板 + Skill + taskctl）
 │   └── xiangrui-hud/                 ← Claude Code 实时状态栏 HUD（翠影绿主题，fork 自 claude-hud）
@@ -104,11 +104,11 @@ npm run preview  # 本地预览构建产物
 
 非官方 macOS 桌面壳，把 DeepSeek Harness 的 Web UI 包成原生窗口，图标使用 DeepSeek 鲸鱼。本目录只放安装包，不放源码。
 
-- 安装包：[`apps/deepseek-harness-desktop/DeepSeek-Harness-Desktop-1.0.0-macOS-Apple-Silicon.dmg`](apps/deepseek-harness-desktop/DeepSeek-Harness-Desktop-1.0.0-macOS-Apple-Silicon.dmg)
+- 安装包：[DeepSeek-Harness-Desktop-1.1.0-macOS-Apple-Silicon.dmg](https://github.com/xiangruiai/deepseek-harness-desktop/releases/download/v1.1.0/DeepSeek-Harness-Desktop-1.1.0-macOS-Apple-Silicon.dmg)
 - 说明：[`apps/deepseek-harness-desktop/README.md`](apps/deepseek-harness-desktop/README.md)
 - 发布页：[xiangruiai/deepseek-harness-desktop](https://github.com/xiangruiai/deepseek-harness-desktop/releases)
 
-需要本机已装 Node.js 22+（Apple Silicon）。打开 DMG，把应用拖进应用程序即可。不是 DeepSeek 官方客户端。
+打开就能用。Node.js 和 Harness 已打进安装包。完整 DMG 在 GitHub Release，本仓库只留下载入口。不是 DeepSeek 官方客户端。
 
 ## 3. xiangrui-hud（Claude Code 状态栏插件）
 
