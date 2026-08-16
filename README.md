@@ -104,7 +104,7 @@ npm run preview  # 本地预览构建产物
 
 非官方 macOS 桌面壳，把 DeepSeek Harness 的 Web UI 包成原生窗口，图标使用 DeepSeek 鲸鱼。本目录只放安装包，不放源码。
 
-- 安装包：[DeepSeek-Harness-Desktop-1.1.0-macOS-Apple-Silicon.dmg](https://github.com/xiangruiai/deepseek-harness-desktop/releases/download/v1.1.0/DeepSeek-Harness-Desktop-1.1.0-macOS-Apple-Silicon.dmg)
+- 安装包：[DeepSeek-Harness-Desktop-1.2.0-macOS-Apple-Silicon.dmg](https://github.com/xiangruiai/deepseek-harness-desktop/releases/download/v1.2.0/DeepSeek-Harness-Desktop-1.2.0-macOS-Apple-Silicon.dmg)
 - 说明：[`apps/deepseek-harness-desktop/README.md`](apps/deepseek-harness-desktop/README.md)
 - 发布页：[xiangruiai/deepseek-harness-desktop](https://github.com/xiangruiai/deepseek-harness-desktop/releases)
 

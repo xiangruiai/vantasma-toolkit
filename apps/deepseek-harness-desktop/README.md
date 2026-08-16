@@ -6,8 +6,8 @@
 
 ## 下载
 
-- 安装包：https://github.com/xiangruiai/deepseek-harness-desktop/releases/download/v1.1.0/DeepSeek-Harness-Desktop-1.1.0-macOS-Apple-Silicon.dmg
-- 发布页：https://github.com/xiangruiai/deepseek-harness-desktop/releases/tag/v1.1.0
+- 安装包：https://github.com/xiangruiai/deepseek-harness-desktop/releases/download/v1.2.0/DeepSeek-Harness-Desktop-1.2.0-macOS-Apple-Silicon.dmg
+- 发布页：https://github.com/xiangruiai/deepseek-harness-desktop/releases/tag/v1.2.0
 
 ## 安装
 
@@ -16,3 +16,5 @@
 3. 打开应用，在界面里填 API Key。
 
 不需要单独安装 Node.js，也不需要先跑命令行。目前只提供 Apple Silicon。
+
+1.2.0 起支持输入框粘贴、窗口拖动，启动也不会再误开 Finder。
