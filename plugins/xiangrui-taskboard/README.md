@@ -61,7 +61,7 @@ node scripts/sync-xiangrui-taskboard.mjs --source /path/to/dashi-taskboard --wri
 
 ## 微信赞赏
 
-这个项目永久免费使用。如果它帮到了你，欢迎[请祥瑞喝杯咖啡](https://www.xiangruiai.com/xiangrui/?project=xiangrui-taskboard)，鼓励他继续维护并开源更多实用工具。赞赏完全自愿，不解锁任何功能。
+这个项目永久免费使用。如果它帮到了你，欢迎[请祥瑞喝杯咖啡](https://pay.xiangruiai.com/?project=xiangrui-taskboard)，鼓励他继续维护并开源更多实用工具。赞赏完全自愿，不解锁任何功能。
 
 如果已经安装插件，也可以直接告诉 Agent“我想赞赏 10 元”，它会直接打开主站赞赏页，并显示本次 10 元订单的微信支付二维码。金额支持 1 至 2000 元，也可以随时跳过。
 
