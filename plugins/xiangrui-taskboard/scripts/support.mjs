@@ -2,7 +2,7 @@
 
 import { spawn } from "node:child_process";
 
-const apiOrigin = (process.env.XIANGRUI_SUPPORT_API_ORIGIN || "https://www.xiangruiai.com")
+const apiOrigin = (process.env.XIANGRUI_SUPPORT_API_ORIGIN || "https://pay.xiangruiai.com")
   .replace(/\/+$/, "");
 
 function option(argv, name) {

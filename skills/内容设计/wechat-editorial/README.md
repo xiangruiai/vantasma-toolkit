@@ -138,4 +138,4 @@ ERROR 必须清零。WARNING 用于人工确认，零 WARNING 不代表排版一
 
 ## 微信赞赏
 
-项目永久免费使用。如果它帮到了你，欢迎[请祥瑞喝杯咖啡](https://www.xiangruiai.com/xiangrui/?project=wechat-editorial)，支持后续维护和继续开源。赞赏完全自愿，不解锁任何功能。
+项目永久免费使用。如果它帮到了你，欢迎[请祥瑞喝杯咖啡](https://pay.xiangruiai.com/?project=wechat-editorial)，支持后续维护和继续开源。赞赏完全自愿，不解锁任何功能。
