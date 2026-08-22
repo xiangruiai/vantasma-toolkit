@@ -1,0 +1,25 @@
+name: group-daily archive CI
+
+on:
+  push:
+    paths:
+      - "archives/group-daily/xiangrui-community/**"
+      - ".github/workflows/group-daily-archive-ci.yml"
+  pull_request:
+    paths:
+      - "archives/group-daily/xiangrui-community/**"
+      - ".github/workflows/group-daily-archive-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Verify public archive
+        run: python3 archives/group-daily/xiangrui-community/scripts/verify_archive.py archives/group-daily/xiangrui-community

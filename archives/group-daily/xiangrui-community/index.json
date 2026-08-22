@@ -1,0 +1,1422 @@
+{
+  "archive": "祥瑞和Ta的朋友们 · 群日报公开归档",
+  "group_name": "祥瑞和Ta的朋友们",
+  "generated_at": "2026-08-22T05:06:23+00:00",
+  "source": "已公开网站日报的脱敏归档，不包含原始群聊",
+  "coverage": {
+    "first_report": "2026-04-23",
+    "latest_report": "2026-08-21",
+    "requested_through": "2026-08-22",
+    "report_count": 115,
+    "historical_missing_dates": [
+      "2026-04-24",
+      "2026-04-25",
+      "2026-04-26",
+      "2026-04-27",
+      "2026-04-28",
+      "2026-05-03"
+    ],
+    "not_yet_generated_dates": [
+      "2026-08-22"
+    ]
+  },
+  "privacy": {
+    "names": "除李祥瑞、祥瑞、万涂幻象外，多字符昵称保留首个有效字符并用星号隐藏",
+    "removed_fields": [
+      "avatar",
+      "avatar_path",
+      "member_id",
+      "open_id",
+      "room_id",
+      "union_id",
+      "user_id",
+      "username",
+      "wxid"
+    ],
+    "redacted_patterns": [
+      "中国大陆手机号",
+      "电子邮箱",
+      "wxid",
+      "chatroom id"
+    ],
+    "excluded_assets": [
+      "头像",
+      "原始聊天记录",
+      "成员名单",
+      "播客凭据",
+      "内部部署配置"
+    ]
+  },
+  "reports": [
+    {
+      "date": "2026-04-23",
+      "file": "daily/2026-04-23.json",
+      "lead_title": "政务表格一问，2050约面基",
+      "stats": {
+        "total_messages": 184,
+        "unique_senders": 6,
+        "total_chars": 359,
+        "new_members": 0
+      },
+      "sha256": "376ad4243ea5316844be3cdebe1c92ca547b3704aa30ffc13cfe1e815ddc77ec"
+    },
+    {
+      "date": "2026-04-29",
+      "file": "daily/2026-04-29.json",
+      "lead_title": "深夜，一群人为AI失眠",
+      "stats": {
+        "total_messages": 91,
+        "unique_senders": 53,
+        "total_chars": 983,
+        "new_members": 0
+      },
+      "sha256": "07fa3142234be1224e6f39040a3aa80afe305a765c480cb9130c2f8b4b50cebd"
+    },
+    {
+      "date": "2026-04-30",
+      "file": "daily/2026-04-30.json",
+      "lead_title": "从飞书边界吵到「得不到」的诞生",
+      "stats": {
+        "total_messages": 468,
+        "unique_senders": 58,
+        "total_chars": 10787,
+        "new_members": 0
+      },
+      "sha256": "3186644b3e3ccae772c86ccea279944069d98067eb11b72ea851b457a5c94871"
+    },
+    {
+      "date": "2026-05-01",
+      "file": "daily/2026-05-01.json",
+      "lead_title": "文科生上瘾日，群里聊把书喂给AI",
+      "stats": {
+        "total_messages": 36,
+        "unique_senders": 13,
+        "total_chars": 911,
+        "new_members": 0
+      },
+      "sha256": "93f62d0441b572cfd44498fa6475776c08ab21b915dc3e83cd73005950d5a1fa"
+    },
+    {
+      "date": "2026-05-02",
+      "file": "daily/2026-05-02.json",
+      "lead_title": "扣子还是飞书，群主开源抓数据",
+      "stats": {
+        "total_messages": 89,
+        "unique_senders": 23,
+        "total_chars": 2512,
+        "new_members": 0
+      },
+      "sha256": "315c3d2ee2ccd4322a3646d441df4634d5ec606d727ec0812c5eb5d140a26408"
+    },
+    {
+      "date": "2026-05-04",
+      "file": "daily/2026-05-04.json",
+      "lead_title": "随机出题与妙搭的一场轻辩",
+      "stats": {
+        "total_messages": 46,
+        "unique_senders": 14,
+        "total_chars": 1014,
+        "new_members": 0
+      },
+      "sha256": "9eb0270645b8b2d6ac9f730ffab7a86528fb95edf03cfc3b04384eeaf4495098"
+    },
+    {
+      "date": "2026-05-05",
+      "file": "daily/2026-05-05.json",
+      "lead_title": "抓抖音数据，是本事还是踩线",
+      "stats": {
+        "total_messages": 84,
+        "unique_senders": 22,
+        "total_chars": 1969,
+        "new_members": 0
+      },
+      "sha256": "fdbcc0dd44cbec7ba47252ade30b9a960e7693ada599abac2b1d62eb946b67c7"
+    },
+    {
+      "date": "2026-05-06",
+      "file": "daily/2026-05-06.json",
+      "lead_title": "用AI打败AI，群里那天没人聊充值",
+      "stats": {
+        "total_messages": 220,
+        "unique_senders": 38,
+        "total_chars": 3152,
+        "new_members": 0
+      },
+      "sha256": "dc7cc5e48ba6991efab6c327129c068280c6bc3775a9ee341c906bac936c1ea8"
+    },
+    {
+      "date": "2026-05-07",
+      "file": "daily/2026-05-07.json",
+      "lead_title": "五万行撞墙夜，AI接管微信梦",
+      "stats": {
+        "total_messages": 114,
+        "unique_senders": 29,
+        "total_chars": 2433,
+        "new_members": 0
+      },
+      "sha256": "1736b7daff854cc671d0c3d1ba401ef7b6fa2591aa2f4394360cc5e0884058e0"
+    },
+    {
+      "date": "2026-05-08",
+      "file": "daily/2026-05-08.json",
+      "lead_title": "信息差消失那天，护城河变成了关系",
+      "stats": {
+        "total_messages": 456,
+        "unique_senders": 40,
+        "total_chars": 8799,
+        "new_members": 0
+      },
+      "sha256": "e7e2f289a193deb0eb9b7d2f40581118fe13fa3d978096ebf114a1431c3d584f"
+    },
+    {
+      "date": "2026-05-09",
+      "file": "daily/2026-05-09.json",
+      "lead_title": "那天，AI对群主说了不",
+      "stats": {
+        "total_messages": 681,
+        "unique_senders": 64,
+        "total_chars": 13746,
+        "new_members": 0
+      },
+      "sha256": "63fbbc82c43ea9b05a38aa906e41cf2ec7d85e220d4914a630cdc13bdf2c14e4"
+    },
+    {
+      "date": "2026-05-10",
+      "file": "daily/2026-05-10.json",
+      "lead_title": "公司成立那天，群里聊起AI的知识库",
+      "stats": {
+        "total_messages": 66,
+        "unique_senders": 12,
+        "total_chars": 1221,
+        "new_members": 0
+      },
+      "sha256": "909026ecc9d782d6838ace316182972a1394cb20526b3c1611accfb16d284cae"
+    },
+    {
+      "date": "2026-05-11",
+      "file": "daily/2026-05-11.json",
+      "lead_title": "深夜，他把整个微信群蒸馏成了小说",
+      "stats": {
+        "total_messages": 738,
+        "unique_senders": 60,
+        "total_chars": 13750,
+        "new_members": 0
+      },
+      "sha256": "e76cceececbbf8d127337203f7c7f8ee913a562133d623bdb29d58d26e78d2ed"
+    },
+    {
+      "date": "2026-05-12",
+      "file": "daily/2026-05-12.json",
+      "lead_title": "微信本地数据 CLI 开源夜",
+      "stats": {
+        "total_messages": 307,
+        "unique_senders": 46,
+        "total_chars": 5486,
+        "new_members": 0
+      },
+      "sha256": "d4d7ef67d322bacdc4032ad84b4d72cdcebd58c81bbee7f2f95f00abdda1bc12"
+    },
+    {
+      "date": "2026-05-13",
+      "file": "daily/2026-05-13.json",
+      "lead_title": "人物画像与隐私的拉锯",
+      "stats": {
+        "total_messages": 362,
+        "unique_senders": 40,
+        "total_chars": 8327,
+        "new_members": 0
+      },
+      "sha256": "cf4ecf823410feb97446873f18af0a4dfe23f30c6964222823e95f5a6c794c13"
+    },
+    {
+      "date": "2026-05-14",
+      "file": "daily/2026-05-14.json",
+      "lead_title": "第一场直播之夜，与一次三天装机的胜利",
+      "stats": {
+        "total_messages": 351,
+        "unique_senders": 38,
+        "total_chars": 7131,
+        "new_members": 2
+      },
+      "sha256": "1db3a1640bd7ad0ac29322f69c92c7184db02bc0130de200f04feb92f41c47bb"
+    },
+    {
+      "date": "2026-05-15",
+      "file": "daily/2026-05-15.json",
+      "lead_title": "像不像AI，是个伪命题",
+      "stats": {
+        "total_messages": 505,
+        "unique_senders": 50,
+        "total_chars": 10628,
+        "new_members": 0
+      },
+      "sha256": "6c87e508c3101fe585fe4e9e5f635de270c8cf31c2c2639fce4757430332a5b9"
+    },
+    {
+      "date": "2026-05-16",
+      "file": "daily/2026-05-16.json",
+      "lead_title": "中转站、静态IP与一份群报纸",
+      "stats": {
+        "total_messages": 127,
+        "unique_senders": 25,
+        "total_chars": 2354,
+        "new_members": 0
+      },
+      "sha256": "2ad580d0d1a0091091c3cd355922ca6d9c97c3828f373ac6298c07a6da84a667"
+    },
+    {
+      "date": "2026-05-17",
+      "file": "daily/2026-05-17.json",
+      "lead_title": "群健康分析，把数据用活了",
+      "stats": {
+        "total_messages": 185,
+        "unique_senders": 39,
+        "total_chars": 3744,
+        "new_members": 0
+      },
+      "sha256": "b90097f023d5b8b6356b7ea414c84ea36d6605374caf60ae1e371a23c2e07e16"
+    },
+    {
+      "date": "2026-05-18",
+      "file": "daily/2026-05-18.json",
+      "lead_title": "每天别的群不看，只看这个群",
+      "stats": {
+        "total_messages": 455,
+        "unique_senders": 54,
+        "total_chars": 9319,
+        "new_members": 0
+      },
+      "sha256": "d56f697c5281972e90137e4c24dc354c9befa862a490fd303cc0a5a2aaeb7860"
+    },
+    {
+      "date": "2026-05-19",
+      "file": "daily/2026-05-19.json",
+      "lead_title": "AI 写日记的那一天",
+      "stats": {
+        "total_messages": 247,
+        "unique_senders": 43,
+        "total_chars": 3763,
+        "new_members": 0
+      },
+      "sha256": "ef9728f1cb2036f25f94f6bd1b5f7eae332f1177209d685e9c7826ec68e0c148"
+    },
+    {
+      "date": "2026-05-20",
+      "file": "daily/2026-05-20.json",
+      "lead_title": "先进团队用飞书，后进团队呢",
+      "stats": {
+        "total_messages": 309,
+        "unique_senders": 43,
+        "total_chars": 5314,
+        "new_members": 0
+      },
+      "sha256": "e65050c6932aaa2ce5b6d1102a7d84de58020670ece78c3a2a453a00856af265"
+    },
+    {
+      "date": "2026-05-21",
+      "file": "daily/2026-05-21.json",
+      "lead_title": "AI翻遍微信那一夜，群里聊到了脊背发凉",
+      "stats": {
+        "total_messages": 219,
+        "unique_senders": 32,
+        "total_chars": 3977,
+        "new_members": 0
+      },
+      "sha256": "63ea731e8aa3602a793ae11bda4a9d11a8fac5ae48f7748b31f77d174dabdda4"
+    },
+    {
+      "date": "2026-05-22",
+      "file": "daily/2026-05-22.json",
+      "lead_title": "庄*直播刷屏夜，飞书CLI半夜进化",
+      "stats": {
+        "total_messages": 153,
+        "unique_senders": 23,
+        "total_chars": 3014,
+        "new_members": 2
+      },
+      "sha256": "63be8513bdde8712ecbc567859f4445c28245e863c473c4037813dc778275581"
+    },
+    {
+      "date": "2026-05-23",
+      "file": "daily/2026-05-23.json",
+      "lead_title": "周末群里的算力账本",
+      "stats": {
+        "total_messages": 50,
+        "unique_senders": 10,
+        "total_chars": 708,
+        "new_members": 0
+      },
+      "sha256": "81e8008c2d1ce6150791aeccf7474bbb261c5bc7973b9c5d2854b1fd2c39b987"
+    },
+    {
+      "date": "2026-05-24",
+      "file": "daily/2026-05-24.json",
+      "lead_title": "被催更的群主，和一篇写给家乡的随笔",
+      "stats": {
+        "total_messages": 46,
+        "unique_senders": 16,
+        "total_chars": 773,
+        "new_members": 0
+      },
+      "sha256": "1a3a9e88845594fe6b809af24e1535a3632a486defaa3a44e13f2398e5e76dbe"
+    },
+    {
+      "date": "2026-05-25",
+      "file": "daily/2026-05-25.json",
+      "lead_title": "蒸馏不了的，恰恰最值钱",
+      "stats": {
+        "total_messages": 260,
+        "unique_senders": 39,
+        "total_chars": 6472,
+        "new_members": 0
+      },
+      "sha256": "1a67100fc89732a63be2105f1091727abb1e2e8d3ffb0b3f5e9148165d89a13c"
+    },
+    {
+      "date": "2026-05-26",
+      "file": "daily/2026-05-26.json",
+      "lead_title": "老板、中层与一盏 AI 指示灯",
+      "stats": {
+        "total_messages": 1630,
+        "unique_senders": 79,
+        "total_chars": 31000,
+        "new_members": 0
+      },
+      "sha256": "2e5929b3f04b98b4cbcca8f9b5943a2cabf92622919fdfa00b2237f3d57b9dff"
+    },
+    {
+      "date": "2026-05-27",
+      "file": "daily/2026-05-27.json",
+      "lead_title": "从义务教育吵到公众号太干",
+      "stats": {
+        "total_messages": 760,
+        "unique_senders": 56,
+        "total_chars": 14905,
+        "new_members": 0
+      },
+      "sha256": "71e42f32cd26b2047c44fc847869eba49808c9eeda7f4ae27456677168ac8278"
+    },
+    {
+      "date": "2026-05-28",
+      "file": "daily/2026-05-28.json",
+      "lead_title": "改名首秀那天，群里炸出一堆金蝶坑",
+      "stats": {
+        "total_messages": 382,
+        "unique_senders": 52,
+        "total_chars": 7069,
+        "new_members": 1
+      },
+      "sha256": "6b1b14a2e9df2e25d18c2daffe4ef33cc72941dcbb7e16f87d6535fcbf3d4834"
+    },
+    {
+      "date": "2026-05-29",
+      "file": "daily/2026-05-29.json",
+      "lead_title": "从一个雷达，到一座社区的自转",
+      "stats": {
+        "total_messages": 690,
+        "unique_senders": 64,
+        "total_chars": 12127,
+        "new_members": 0
+      },
+      "sha256": "aec74e5c0905308e138eca33acc70c1b39b0b0ee4e9c4d39fa1d31862b130ea5"
+    },
+    {
+      "date": "2026-05-30",
+      "file": "daily/2026-05-30.json",
+      "lead_title": "一个人的工作台，摆上了社区的会诊台",
+      "stats": {
+        "total_messages": 206,
+        "unique_senders": 29,
+        "total_chars": 3537,
+        "new_members": 0
+      },
+      "sha256": "8f2359f707e2c46d4afaf10f54e85b5a44f2f383c5c30c4ef63ff50d349ea149"
+    },
+    {
+      "date": "2026-05-31",
+      "file": "daily/2026-05-31.json",
+      "lead_title": "白天晒AI装备，晚上吵多维表格的身价",
+      "stats": {
+        "total_messages": 612,
+        "unique_senders": 43,
+        "total_chars": 9650,
+        "new_members": 0
+      },
+      "sha256": "18f803d6f19c04b681c27761d32ea7f29b96ccda694901102490dd414c250e87"
+    },
+    {
+      "date": "2026-06-01",
+      "file": "daily/2026-06-01.json",
+      "lead_title": "六一这天，一群「高龄儿童」在群里办了场AI舞台剧",
+      "stats": {
+        "total_messages": 1097,
+        "unique_senders": 69,
+        "total_chars": 19425,
+        "new_members": 0
+      },
+      "sha256": "367a9036478bb997147e413ae1b58dae1f5fd414f50fe68e62173d41981da8b4"
+    },
+    {
+      "date": "2026-06-02",
+      "file": "daily/2026-06-02.json",
+      "lead_title": "群日报长出了声音，群友们的早餐都有了 BGM",
+      "stats": {
+        "total_messages": 704,
+        "unique_senders": 50,
+        "total_chars": 7315,
+        "new_members": 0
+      },
+      "sha256": "a6c06849c29a076e3c99f79cb84dd56190528bf06ae5289dcfe84cb76be5b4dd"
+    },
+    {
+      "date": "2026-06-03",
+      "file": "daily/2026-06-03.json",
+      "lead_title": "从录音卡吵到三十岁退休，群日报还顺手长出了播客",
+      "stats": {
+        "total_messages": 448,
+        "unique_senders": 47,
+        "total_chars": 8295,
+        "new_members": 0
+      },
+      "sha256": "697b2d00cc581174e679861a876d1073047269047e18716da49fe7fab3acc675"
+    },
+    {
+      "date": "2026-06-04",
+      "file": "daily/2026-06-04.json",
+      "lead_title": "记忆又炸裂的一天：从脑科学迭代到 token 经济学",
+      "stats": {
+        "total_messages": 282,
+        "unique_senders": 37,
+        "total_chars": 4534,
+        "new_members": 0
+      },
+      "sha256": "41f0e93e50b90d53bfe40a0b934ab848c0309ce3ff143d2da5a18703425e5169"
+    },
+    {
+      "date": "2026-06-05",
+      "file": "daily/2026-06-05.json",
+      "lead_title": "封号潮里的定海神针：从教 AI 学会遗忘，到北京日报上门",
+      "stats": {
+        "total_messages": 229,
+        "unique_senders": 48,
+        "total_chars": 3509,
+        "new_members": 0
+      },
+      "sha256": "6a858d9c3443a1907ccdd6232654a902fa67f68d410e875fcc1995ce29bac559"
+    },
+    {
+      "date": "2026-06-06",
+      "file": "daily/2026-06-06.json",
+      "lead_title": "周六茶话会前的大辩论：国产 AI 谁来扛旗，与一场抖音直播的预告",
+      "stats": {
+        "total_messages": 176,
+        "unique_senders": 27,
+        "total_chars": 3849,
+        "new_members": 0
+      },
+      "sha256": "e9115703bba2c6d24b16c11c5ab1f6534ae7e46cdc7ac338fe701cb80437314a"
+    },
+    {
+      "date": "2026-06-07",
+      "file": "daily/2026-06-07.json",
+      "lead_title": "高考这天，大家把 AI 送进了考场",
+      "stats": {
+        "total_messages": 666,
+        "unique_senders": 46,
+        "total_chars": 13120,
+        "new_members": 0
+      },
+      "sha256": "3777e59e6658cdfe63646cc60f7b58729669b6b8c57a1a1271b1bd00cfa36a78"
+    },
+    {
+      "date": "2026-06-08",
+      "file": "daily/2026-06-08.json",
+      "lead_title": "兜兜转转还是这帮人：从白嫖维权炸群，到深夜翻出三年 AIGC 老底",
+      "stats": {
+        "total_messages": 843,
+        "unique_senders": 52,
+        "total_chars": 16274,
+        "new_members": 0
+      },
+      "sha256": "969c3c98f9492d11ffb54b74ba10fad10f776a125b24a9e0cbef1330bdba87d4"
+    },
+    {
+      "date": "2026-06-09",
+      "file": "daily/2026-06-09.json",
+      "lead_title": "从训练营广告到深夜哲思，一整天泡在飞书与AI的烟火里",
+      "stats": {
+        "total_messages": 807,
+        "unique_senders": 47,
+        "total_chars": 16237,
+        "new_members": 0
+      },
+      "sha256": "aacbe821dc358e2aea012a98e40c300a8d6603b7318135dc5a796c1da53f1985"
+    },
+    {
+      "date": "2026-06-10",
+      "file": "daily/2026-06-10.json",
+      "lead_title": "群主从早磨到天亮的视频 Skill\n顺手一句话还搞出了剪映 CLI",
+      "stats": {
+        "total_messages": 662,
+        "unique_senders": 47,
+        "total_chars": 13330,
+        "new_members": 0
+      },
+      "sha256": "ed5a6dd6b9daf24a02809a68f9e6a0525bcb42e305ce9a30a6d7c8f7aa2e6b51"
+    },
+    {
+      "date": "2026-06-11",
+      "file": "daily/2026-06-11.json",
+      "lead_title": "课还没开，方法论先被人拿去卖了",
+      "stats": {
+        "total_messages": 287,
+        "unique_senders": 41,
+        "total_chars": 4662,
+        "new_members": 0
+      },
+      "sha256": "42b32b1439936b4247842f03bcc238dfdb3c31e84675b2d1ad6fe703f18135fc"
+    },
+    {
+      "date": "2026-06-12",
+      "file": "daily/2026-06-12.json",
+      "lead_title": "一个视频 Skill 磨了一整天，磨到清晨终于开源",
+      "stats": {
+        "total_messages": 570,
+        "unique_senders": 46,
+        "total_chars": 10278,
+        "new_members": 0
+      },
+      "sha256": "8f5890c7212d69e68483592da1b684357b234f3970128b08ce620bd90f37f7a6"
+    },
+    {
+      "date": "2026-06-13",
+      "file": "daily/2026-06-13.json",
+      "lead_title": "视频 Skill 开源第一天，全群下场实测，半夜揪出致命 bug",
+      "stats": {
+        "total_messages": 508,
+        "unique_senders": 44,
+        "total_chars": 9908,
+        "new_members": 0
+      },
+      "sha256": "49e5469dd472e9c2e10cb1d579630d344258984a5aef3bf7428b400953b144ad"
+    },
+    {
+      "date": "2026-06-14",
+      "file": "daily/2026-06-14.json",
+      "lead_title": "深夜全群涌进 AI 版支付宝，祥瑞顺手把「Loop Engineering」讲透",
+      "stats": {
+        "total_messages": 344,
+        "unique_senders": 32,
+        "total_chars": 5776,
+        "new_members": 0
+      },
+      "sha256": "7ec757436151ec2fc147d2a526f5baa3810545bcf8f482cd8a644ae7bade5459"
+    },
+    {
+      "date": "2026-06-15",
+      "file": "daily/2026-06-15.json",
+      "lead_title": "安静周一遇上 Claude 集体抽风，祥瑞清华做完访谈、亮出手搓的「Echo」",
+      "stats": {
+        "total_messages": 163,
+        "unique_senders": 30,
+        "total_chars": 3235,
+        "new_members": 0
+      },
+      "sha256": "e7b9dc054709afaf51bcea2095cfc8d1009da6505ed9debae12f2c731f919115"
+    },
+    {
+      "date": "2026-06-16",
+      "file": "daily/2026-06-16.json",
+      "lead_title": "祥瑞清华访谈后写下万字复盘，深夜群里办起华为吐槽大会",
+      "stats": {
+        "total_messages": 351,
+        "unique_senders": 28,
+        "total_chars": 5731,
+        "new_members": 0
+      },
+      "sha256": "205a86742deb9be1b0f06db9b4c1430f183e730c3aa97b5e688a06bb415dd511"
+    },
+    {
+      "date": "2026-06-17",
+      "file": "daily/2026-06-17.json",
+      "lead_title": "一篇万字复盘点燃全群，把「企业 AI 落地到底卖什么」吵了个底朝天",
+      "stats": {
+        "total_messages": 565,
+        "unique_senders": 45,
+        "total_chars": 12848,
+        "new_members": 0
+      },
+      "sha256": "04f23b4b3ab772d91047f5e75694e751b84ddf9f210ea101a1e61b351dfd0e74"
+    },
+    {
+      "date": "2026-06-18",
+      "file": "daily/2026-06-18.json",
+      "lead_title": "Codex 额度又重置、占有率反超 CC，祥瑞拉起读书会、清早一句端午安康",
+      "stats": {
+        "total_messages": 297,
+        "unique_senders": 51,
+        "total_chars": 4142,
+        "new_members": 0
+      },
+      "sha256": "738d9ef0f1f164afbd86031a0df6a3c42551e2d96f59233556f1105a662f6058"
+    },
+    {
+      "date": "2026-06-19",
+      "file": "daily/2026-06-19.json",
+      "lead_title": "端午这天聊起 RPA 的末路，超**开源了一个「一句话剪视频」的 Skill",
+      "stats": {
+        "total_messages": 84,
+        "unique_senders": 23,
+        "total_chars": 1629,
+        "new_members": 0
+      },
+      "sha256": "056298d4e7067def2821d7eba1c39c52dc470686c5b52ce9a3ca6f9e7948771c"
+    },
+    {
+      "date": "2026-06-20",
+      "file": "daily/2026-06-20.json",
+      "lead_title": "周六在多维表格里折腾机器人，小*给 Claude 和 Codex 各配了一盏工作灯",
+      "stats": {
+        "total_messages": 91,
+        "unique_senders": 20,
+        "total_chars": 1880,
+        "new_members": 0
+      },
+      "sha256": "5bd4c32ecfd47f4d17e236e74e4ff743f9bffc40d94da80f0aee2e765828097b"
+    },
+    {
+      "date": "2026-06-21",
+      "file": "daily/2026-06-21.json",
+      "lead_title": "周日慢悠悠：祥瑞甩出昨天的群日报，群里围着「云部署还是本地」聊了一下午",
+      "stats": {
+        "total_messages": 44,
+        "unique_senders": 15,
+        "total_chars": 748
+      },
+      "sha256": "bfa1bddf73779563d3a61f2f5500c09a30fb54458f7b1f44dc6bcb5296b09e11"
+    },
+    {
+      "date": "2026-06-22",
+      "file": "daily/2026-06-22.json",
+      "lead_title": "祥瑞上了别人的镜头被全国传播，群里一边围观一边给 ClawHunt 黑客松报名",
+      "stats": {
+        "total_messages": 145,
+        "unique_senders": 25,
+        "total_chars": 2079
+      },
+      "sha256": "3f7ab2f65136dde362cb605659e77e52212195b7e0a2862a9a35fedab1de9945"
+    },
+    {
+      "date": "2026-06-23",
+      "file": "daily/2026-06-23.json",
+      "lead_title": "白天群友抱团解 Codex 手机验证码，夜里祥瑞甩出自己做的原生知识管理 ap* 求内测",
+      "stats": {
+        "total_messages": 110,
+        "unique_senders": 27,
+        "total_chars": 1812
+      },
+      "sha256": "b77f7692487346be8f5bc08a7ab6b3f563ad4b1eb79f54bb48b8b5958a030d23"
+    },
+    {
+      "date": "2026-06-24",
+      "file": "daily/2026-06-24.json",
+      "lead_title": "Codex 权限放不放开吵了一轮，R*** 哀嚎「天才要陨落」周度只剩 6%",
+      "stats": {
+        "total_messages": 88,
+        "unique_senders": 26,
+        "total_chars": 1455
+      },
+      "sha256": "189bd24aad2e6b43e83c1d2bbea509cd8474fb437c3fa03cf17c2bcde5eabeb1"
+    },
+    {
+      "date": "2026-06-25",
+      "file": "daily/2026-06-25.json",
+      "lead_title": "安静的一天：从 Mac 转 Windows 的小工具，到祥瑞一句「AI 还是得回到真实的人」",
+      "stats": {
+        "total_messages": 19,
+        "unique_senders": 12,
+        "total_chars": 361
+      },
+      "sha256": "aa06771a6bdb656d0b0b56a18f183d711f9a438140eb5ac6222a28f7f0be959a"
+    },
+    {
+      "date": "2026-06-26",
+      "file": "daily/2026-06-26.json",
+      "lead_title": "Codex 烧到 0% 回 WorkBuddy 撸积分，群里才发现常掰扯 bug 的「大哥」原来是字节副总裁",
+      "stats": {
+        "total_messages": 136,
+        "unique_senders": 21,
+        "total_chars": 2290
+      },
+      "sha256": "784e9d989c0578774ddd4acfec0af82fea792d19efc0bd5537b5ef44edf5e08e"
+    },
+    {
+      "date": "2026-06-27",
+      "file": "daily/2026-06-27.json",
+      "lead_title": "豆包钻进飞书，群里把 AI 工具从账号、权限、CLI 一直聊到 token 隐形降薪",
+      "stats": {
+        "total_messages": 225,
+        "unique_senders": 31,
+        "total_chars": 3589
+      },
+      "sha256": "a26baa48036d834e14f535b8648496c320d6a2f0917aa4e1103fecc827bf259e"
+    },
+    {
+      "date": "2026-06-28",
+      "file": "daily/2026-06-28.json",
+      "lead_title": "谁给一线员工出 token 钱，深夜豆包又能加飞书好友",
+      "stats": {
+        "total_messages": 143,
+        "unique_senders": 22,
+        "total_chars": 3080
+      },
+      "sha256": "36c54dc14b5fad46a2e2e991f0e85bf2b5ebca89fa3a52d26aef5a0fca7948db"
+    },
+    {
+      "date": "2026-06-29",
+      "file": "daily/2026-06-29.json",
+      "lead_title": "祥瑞的豆包社交内测通过，Mac 涨价、Codex 磁盘 bug、FDE 是不是 opc 的另一个名字",
+      "stats": {
+        "total_messages": 645,
+        "unique_senders": 46,
+        "total_chars": 11341
+      },
+      "sha256": "f901b4c9a4b0bfde9f64ba8c9cc2e27cc0e86cf829d9e9d3d197ecc8e9e4b81e"
+    },
+    {
+      "date": "2026-06-30",
+      "file": "daily/2026-06-30.json",
+      "lead_title": "白板录制工具上线，GEO 大讨论定调，飞书豆包扣子内部三家赛马",
+      "stats": {
+        "total_messages": 585,
+        "unique_senders": 42,
+        "total_chars": 11479
+      },
+      "sha256": "9c51e60e936c1f2cd04c101f970036aa2b02a3f31217fbf3f71f9f8a84e7cf31"
+    },
+    {
+      "date": "2026-07-01",
+      "file": "daily/2026-07-01.json",
+      "lead_title": "多维表格智能体上线，群里搓下属搓主管搓客户，制造业落地被拆到「责任大于效率」",
+      "stats": {
+        "total_messages": 299,
+        "unique_senders": 38,
+        "total_chars": 5682,
+        "new_members": 0
+      },
+      "sha256": "83b5ac26097cda192e469a9ce78d0ee6755b72c0125594871f56c0cd097f5999"
+    },
+    {
+      "date": "2026-07-02",
+      "file": "daily/2026-07-02.json",
+      "lead_title": "保密一个月的多维表格智能体解禁，Agent 在飞书会议里开口说话了",
+      "stats": {
+        "total_messages": 442,
+        "unique_senders": 41,
+        "total_chars": 8650,
+        "new_members": 0
+      },
+      "sha256": "8f1f41e67941656eda88a27d14d233c6348f9f388b840ae72e4b5d7c23ca51c5"
+    },
+    {
+      "date": "2026-07-03",
+      "file": "daily/2026-07-03.json",
+      "lead_title": "炮的Palantir式AI SaaS架构还没聊完，晚上一个drop database就把测试服炸了",
+      "stats": {
+        "total_messages": 367,
+        "unique_senders": 34,
+        "total_chars": 7922,
+        "new_members": 0
+      },
+      "sha256": "aea15cce5c6ac7619585d1ba5de3e25c5458675d14cdffb7d4243ecbe013cfd1"
+    },
+    {
+      "date": "2026-07-04",
+      "file": "daily/2026-07-04.json",
+      "lead_title": "AI伙伴内测招募刷屏，祥瑞反问：给孩子最好的托举一定是codex吗？",
+      "stats": {
+        "total_messages": 288,
+        "unique_senders": 27,
+        "total_chars": 5793,
+        "new_members": 0
+      },
+      "sha256": "3daac6c027d780a18f2c2861e0325a4c124321b2f143937aa9279374c9b5b596"
+    },
+    {
+      "date": "2026-07-05",
+      "file": "daily/2026-07-05.json",
+      "lead_title": "凌晨工位的开发者们，周末约了一场南巡",
+      "stats": {
+        "total_messages": 231,
+        "unique_senders": 29,
+        "total_chars": 5921,
+        "new_members": 0
+      },
+      "sha256": "a614396e5a1150a1499f9dd41f042e8dbc9d7947b757f7c5989df653e72716ab"
+    },
+    {
+      "date": "2026-07-06",
+      "file": "daily/2026-07-06.json",
+      "lead_title": "九百条消息的周日，从教育论文吵到跨物种哲学再到飞书单品之死",
+      "stats": {
+        "total_messages": 956,
+        "unique_senders": 51,
+        "total_chars": 26633,
+        "new_members": 0
+      },
+      "sha256": "281793fbbb4f9e7f32cb14dc51a3556d593bdc22b7797ceaefdcb1ac21047dc1"
+    },
+    {
+      "date": "2026-07-07",
+      "file": "daily/2026-07-07.json",
+      "lead_title": "飞书个人版复活日，明天的分享会还没开就满了",
+      "stats": {
+        "total_messages": 393,
+        "unique_senders": 41,
+        "total_chars": 6365,
+        "new_members": 0
+      },
+      "sha256": "bbba70ae356ac7f02582475aa853eadd046d5f193c745d043ba9f9642ff9c866"
+    },
+    {
+      "date": "2026-07-08",
+      "file": "daily/2026-07-08.json",
+      "lead_title": "智能体进会议室了，分享会还没开就挤爆了",
+      "stats": {
+        "total_messages": 327,
+        "unique_senders": 55,
+        "total_chars": 4943,
+        "new_members": 0
+      },
+      "sha256": "bf2bfd2fb7bbad55acd174d5e609553cc4a1d9ebbdc4d6d0884170ad79d034d7"
+    },
+    {
+      "date": "2026-07-09",
+      "file": "daily/2026-07-09.json",
+      "lead_title": "P图大赛骗翻半个群，多维表格教科书级答疑",
+      "stats": {
+        "total_messages": 434,
+        "unique_senders": 46,
+        "total_chars": 8716,
+        "new_members": 0
+      },
+      "sha256": "1d53482e454bd78dc326c4152b1cbe34222a965af98e8dd5c41fcc46311d7f67"
+    },
+    {
+      "date": "2026-07-10",
+      "file": "daily/2026-07-10.json",
+      "lead_title": "5.6终于来了，661个知识节点被公开，台风逼近杭州吃不上饭",
+      "stats": {
+        "total_messages": 467,
+        "unique_senders": 41,
+        "total_chars": 7142,
+        "new_members": 0
+      },
+      "sha256": "d78971c62ea23cb931ae1ec44fdb7cba1bae0ced54113ce4db40fa1d89f3bfa3"
+    },
+    {
+      "date": "2026-07-11",
+      "file": "daily/2026-07-11.json",
+      "lead_title": "生产表交给 Codex，企业 AI 的第一关还是那张业务流程图",
+      "stats": {
+        "total_messages": 345,
+        "unique_senders": 27,
+        "total_chars": 6226,
+        "new_members": 0
+      },
+      "sha256": "1daca969fb926d69b2d429f9ce5b0a3199f559b091cd528ecb895258121c3282"
+    },
+    {
+      "date": "2026-07-12",
+      "file": "daily/2026-07-12.json",
+      "lead_title": "台风没拦住飞书现场，19 组拿下首届 AI 绝活冠军",
+      "stats": {
+        "total_messages": 112,
+        "unique_senders": 33,
+        "total_chars": 1233,
+        "new_members": 0
+      },
+      "sha256": "12275c6be4357d82a641168de3019d9b1fd6cf23557135eb88345e7f1bcb1b4c"
+    },
+    {
+      "date": "2026-07-13",
+      "file": "daily/2026-07-13.json",
+      "lead_title": "从长*老乡到仓库扫码，群里把 AI 落地聊回一线",
+      "stats": {
+        "total_messages": 280,
+        "unique_senders": 38,
+        "total_chars": 5876,
+        "new_members": 0
+      },
+      "sha256": "84e673769c56b954ff68d72a5d3009446ee59c76c6633e9b46547864716cdee4"
+    },
+    {
+      "date": "2026-07-14",
+      "file": "daily/2026-07-14.json",
+      "lead_title": "FDE不是交付系统，是陪客户把烂账重新走一遍",
+      "stats": {
+        "total_messages": 505,
+        "unique_senders": 47,
+        "total_chars": 9557,
+        "new_members": 0
+      },
+      "sha256": "32fe37009b1234c535da9753dd32b31aedf9453ccaf60e08ae0ed2d531a4b292"
+    },
+    {
+      "date": "2026-07-15",
+      "file": "daily/2026-07-15.json",
+      "lead_title": "从重置卡蹬到企业软件，社区把 AI 落地又往实处推了一层",
+      "stats": {
+        "total_messages": 391,
+        "unique_senders": 45,
+        "total_chars": 6477,
+        "new_members": 0
+      },
+      "sha256": "07d7f363b3484b61368ca2b4890ab194671100b5c075420627cb2b4cc6e3852e"
+    },
+    {
+      "date": "2026-07-16",
+      "file": "daily/2026-07-16.json",
+      "lead_title": "从 AI 硬件到 WAIC 地推，社区把想法一路推到交付现场",
+      "stats": {
+        "total_messages": 478,
+        "unique_senders": 47,
+        "total_chars": 7848,
+        "new_members": 0
+      },
+      "sha256": "639b1b877d56b5fc3c3afa4dfd7f0fd93e7c965b37b1fdc3c38881757c6218c8"
+    },
+    {
+      "date": "2026-07-17",
+      "file": "daily/2026-07-17.json",
+      "lead_title": "一边开源排版 Skill，一边在 WAIC 现场摸真实边界",
+      "stats": {
+        "total_messages": 651,
+        "unique_senders": 58,
+        "total_chars": 8757,
+        "new_members": 0
+      },
+      "sha256": "293ac7cf2bd48f508a3142595ef433dd2971a9941b40c33ae06a50675490a92d"
+    },
+    {
+      "date": "2026-07-18",
+      "file": "daily/2026-07-18.json",
+      "lead_title": "直播被网速逼停，但 WAIC 的真问题还在往群里跑",
+      "stats": {
+        "total_messages": 194,
+        "unique_senders": 37,
+        "total_chars": 2879,
+        "new_members": 0
+      },
+      "sha256": "f159c46bcacd377c467ac82cecbda707aa0b928dcc0e491e52687163aa8adfb4"
+    },
+    {
+      "date": "2026-07-19",
+      "file": "daily/2026-07-19.json",
+      "lead_title": "地下一层的 OPC 展位，和一场对“AI 终点”的降温",
+      "stats": {
+        "total_messages": 143,
+        "unique_senders": 28,
+        "total_chars": 2480,
+        "new_members": 0
+      },
+      "sha256": "12dd36dc9b30fe47d062997ff456c06ff7d24ab0943869e0030e19ae794d17b2"
+    },
+    {
+      "date": "2026-07-20",
+      "file": "daily/2026-07-20.json",
+      "lead_title": "从央财跟拍到脑控假肢，最后还是回到业务真相",
+      "stats": {
+        "total_messages": 653,
+        "unique_senders": 57,
+        "total_chars": 12044,
+        "new_members": 0
+      },
+      "sha256": "0578a68b0479f2936e3711592ecda1852eec2fe61e0ddcc180f05aa252f15207"
+    },
+    {
+      "date": "2026-07-21",
+      "file": "daily/2026-07-21.json",
+      "lead_title": "一个“AI 解决方案架构师”的愿望，把群聊拉回交付现场",
+      "stats": {
+        "total_messages": 410,
+        "unique_senders": 44,
+        "total_chars": 7289,
+        "new_members": 0
+      },
+      "sha256": "d6c3ec14d425c968159b280ed526c829ea5c399645aed30755582d8572bd7c68"
+    },
+    {
+      "date": "2026-07-22",
+      "file": "daily/2026-07-22.json",
+      "lead_title": "把 AI 拉进微信群，960 条消息做了一天压力测试",
+      "stats": {
+        "total_messages": 960,
+        "unique_senders": 67,
+        "total_chars": 23150,
+        "new_members": 0
+      },
+      "sha256": "0319194342a66863eb39e4bf09fa4cabacbd14a73726255635e2a4ac8b94bc8b"
+    },
+    {
+      "date": "2026-07-23",
+      "file": "daily/2026-07-23.json",
+      "lead_title": "一个 AI 进群两天，乡土中国、北京新政和每位群友都成了上下文",
+      "stats": {
+        "total_messages": 1017,
+        "unique_senders": 58,
+        "total_chars": 30881,
+        "new_members": 0
+      },
+      "sha256": "61fac0d7c3ae8ac9b61b16f77ffb00c4915e2e4b3c769a51f7f71e4f8a6262d9"
+    },
+    {
+      "date": "2026-07-24",
+      "file": "daily/2026-07-24.json",
+      "lead_title": "牛皮纸报纸出炉那天，AI管家开口喊了下班",
+      "stats": {
+        "total_messages": 636,
+        "unique_senders": 59,
+        "total_chars": 9991,
+        "new_members": 0
+      },
+      "sha256": "aff83591925bb76bdda729afaab068cdd1d64c9edf253d3641cce6bbd79d87fa"
+    },
+    {
+      "date": "2026-07-25",
+      "file": "daily/2026-07-25.json",
+      "lead_title": "贴纸抢空、codex宕机，和一整天没批下来的AIhot权限",
+      "stats": {
+        "total_messages": 625,
+        "unique_senders": 51,
+        "total_chars": 12788,
+        "new_members": 0
+      },
+      "sha256": "2acef2e3c1b28e6e43055745084042c65fab5356ec3b0342e6004ab4b163b666"
+    },
+    {
+      "date": "2026-07-26",
+      "file": "daily/2026-07-26.json",
+      "lead_title": "阿瑞被按头统计地区，祥瑞肝到凌晨捋出社区规划",
+      "stats": {
+        "total_messages": 1039,
+        "unique_senders": 48,
+        "total_chars": 23534,
+        "new_members": 0
+      },
+      "sha256": "f2de15111a0df9c4e089ebe8a5dc62c0b2f5a7a4b3b5d03a05d9d3ee65900f68"
+    },
+    {
+      "date": "2026-07-27",
+      "file": "daily/2026-07-27.json",
+      "lead_title": "从切口要小钩子要大，聊到凌晨六点半的提问力",
+      "stats": {
+        "total_messages": 513,
+        "unique_senders": 59,
+        "total_chars": 10955,
+        "new_members": 0
+      },
+      "sha256": "db4ecc881e5b864dea0ec5efa9465f7519cd53f5aee8599e04809645c64ede36"
+    },
+    {
+      "date": "2026-07-28",
+      "file": "daily/2026-07-28.json",
+      "lead_title": "白天盘社区晚上骂飞书，13 人接龙要一起接项目",
+      "stats": {
+        "total_messages": 873,
+        "unique_senders": 61,
+        "total_chars": 21320,
+        "new_members": 0
+      },
+      "sha256": "1d6a474514a941f43609239582f061268ea7e045539a490bdc6be85c583ae9cd"
+    },
+    {
+      "date": "2026-07-29",
+      "file": "daily/2026-07-29.json",
+      "lead_title": "知识库升级小程序开箱，老板只想要贾维斯",
+      "stats": {
+        "total_messages": 936,
+        "unique_senders": 54,
+        "total_chars": 17026,
+        "new_members": 0
+      },
+      "sha256": "0e06d0fd7ff4a8059cb363e3f40a6fbdb2758496b1e120dd0b117394309a7cab"
+    },
+    {
+      "date": "2026-07-30",
+      "file": "daily/2026-07-30.json",
+      "lead_title": "飞书被拆进豆包，群里连夜给它改名叫书包",
+      "stats": {
+        "total_messages": 1229,
+        "unique_senders": 61,
+        "total_chars": 20798,
+        "new_members": 0
+      },
+      "sha256": "6fa62ea4eb56e63886ad567801909c92b0120cd5a546caf6d62a059d9248015c"
+    },
+    {
+      "date": "2026-07-31",
+      "file": "daily/2026-07-31.json",
+      "lead_title": "全群等一次额度重置，等出了一场跨境邮件方案交换会",
+      "stats": {
+        "total_messages": 723,
+        "unique_senders": 46,
+        "total_chars": 11158,
+        "new_members": 0
+      },
+      "sha256": "894bf7d4477fa688d5c53475ac32fd303b59a64a9afa446c69c6ed2f3d61c182"
+    },
+    {
+      "date": "2026-08-01",
+      "file": "daily/2026-08-01.json",
+      "lead_title": "八月第一天，有人在群里认真想了一遍怎么才算永生",
+      "stats": {
+        "total_messages": 108,
+        "unique_senders": 25,
+        "total_chars": 2248,
+        "new_members": 0
+      },
+      "sha256": "67b4b133a99dc41b7f9571301eead2e3127fb3a421c938a2ad77c0f34686421b"
+    },
+    {
+      "date": "2026-08-02",
+      "file": "daily/2026-08-02.json",
+      "lead_title": "一个没想通的问题：AI 规模化之后，先没的到底是中层还是员工",
+      "stats": {
+        "total_messages": 176,
+        "unique_senders": 23,
+        "total_chars": 3680,
+        "new_members": 0
+      },
+      "sha256": "7c877f692606b6c9998b203e5a499b9ef65cdd7f27f71dd9754ef0ea6835573f"
+    },
+    {
+      "date": "2026-08-03",
+      "file": "daily/2026-08-03.json",
+      "lead_title": "knowhow 才是小团队最大的壁垒，不是技术，也不是工程能力",
+      "stats": {
+        "total_messages": 575,
+        "unique_senders": 34,
+        "total_chars": 13687,
+        "new_members": 0
+      },
+      "sha256": "f7f183a6e243e32f2bb5e1f75fbc38bee6258859a47e08b464071af84c132b36"
+    },
+    {
+      "date": "2026-08-04",
+      "file": "daily/2026-08-04.json",
+      "lead_title": "FDE 根本不是一个岗位，是一种能力，所以它没法被培训",
+      "stats": {
+        "total_messages": 798,
+        "unique_senders": 51,
+        "total_chars": 18253,
+        "new_members": 0
+      },
+      "sha256": "9653dcb2d3110b41ed8d79d1f8360f00fabefde23ccd8c4c4a57222b83ed2c8d"
+    },
+    {
+      "date": "2026-08-05",
+      "file": "daily/2026-08-05.json",
+      "lead_title": "token 不是不够用，是被内置提示词吃掉的",
+      "stats": {
+        "total_messages": 680,
+        "unique_senders": 47,
+        "total_chars": 10906,
+        "new_members": 0
+      },
+      "sha256": "89ac26f05fe280e1793e95dfe5f35c5a888614b5ada17fb39946a95af8e6b61c"
+    },
+    {
+      "date": "2026-08-06",
+      "file": "daily/2026-08-06.json",
+      "lead_title": "央视镜头里的三分钟，群里从倒计时刷到了新号第一篇文章",
+      "stats": {
+        "total_messages": 917,
+        "unique_senders": 58,
+        "total_chars": 18561,
+        "new_members": 0
+      },
+      "sha256": "311f9627815a4dd564c2113a117779af7b9c06d5509ff7b9669b01cc849830f5"
+    },
+    {
+      "date": "2026-08-07",
+      "file": "daily/2026-08-07.json",
+      "lead_title": "Agent 去画城市规划，群里先算清一人公司怎么扛住尾款",
+      "stats": {
+        "total_messages": 450,
+        "unique_senders": 44,
+        "total_chars": 6838,
+        "new_members": 0
+      },
+      "sha256": "920333ef7fb5d8b87a23c5bf8250784d43a81b631a770a10e8b5e13eda6bad1c"
+    },
+    {
+      "date": "2026-08-08",
+      "file": "daily/2026-08-08.json",
+      "lead_title": "用了 AI 就该裁员吗，一场吵到半夜的账没算完",
+      "stats": {
+        "total_messages": 541,
+        "unique_senders": 34,
+        "total_chars": 12619,
+        "new_members": 0
+      },
+      "sha256": "a2f799268b151665cba95dc0e8e94ae1d6905ff576e7833c32e8608a7fac8c3c"
+    },
+    {
+      "date": "2026-08-09",
+      "file": "daily/2026-08-09.json",
+      "lead_title": "把昨晚吵的架写成了文章，晚上又划了一条群规",
+      "stats": {
+        "total_messages": 419,
+        "unique_senders": 36,
+        "total_chars": 8009,
+        "new_members": 0
+      },
+      "sha256": "ef41507bbc3c42333bba3668cdc96c0d08f5fddc789b36a502f4a2d86db07804"
+    },
+    {
+      "date": "2026-08-10",
+      "file": "daily/2026-08-10.json",
+      "lead_title": "我的知识库凭什么交给公司，一场关于上下文归属的争论",
+      "stats": {
+        "total_messages": 595,
+        "unique_senders": 42,
+        "total_chars": 12013,
+        "new_members": 0
+      },
+      "sha256": "fe6ba971776e4da06bc7342bb9990a8ad3434331c425593ae372f8a1b0f098cd"
+    },
+    {
+      "date": "2026-08-11",
+      "file": "daily/2026-08-11.json",
+      "lead_title": "六种计费口径摆在一起，天下苦飞书久矣被写成了文章",
+      "stats": {
+        "total_messages": 429,
+        "unique_senders": 38,
+        "total_chars": 7079,
+        "new_members": 0
+      },
+      "sha256": "872b8f6a7d1b2b613af1955f2ccac3bc6db88759fd3bd26fe63f3528192f246a"
+    },
+    {
+      "date": "2026-08-12",
+      "file": "daily/2026-08-12.json",
+      "lead_title": "重构这两个字现在敢随便说了，深夜等来一个新模型",
+      "stats": {
+        "total_messages": 324,
+        "unique_senders": 38,
+        "total_chars": 4975,
+        "new_members": 0
+      },
+      "sha256": "10e7e94f54e687692fb3e911d44d80128c634d1db50f569e35932ad88dca1e0e"
+    },
+    {
+      "date": "2026-08-13",
+      "file": "daily/2026-08-13.json",
+      "lead_title": "教人做 FDE 是不是耍流氓，吵完一整个中午",
+      "stats": {
+        "total_messages": 720,
+        "unique_senders": 57,
+        "total_chars": 11727,
+        "new_members": 0
+      },
+      "sha256": "b3d0453526d44adb6fb87217bc7b3d8bd9919dd43d985f5665f3addf9b4b1f91"
+    },
+    {
+      "date": "2026-08-14",
+      "file": "daily/2026-08-14.json",
+      "lead_title": "先进团队变成了后进团队，八百多条消息陪一个产品改名",
+      "stats": {
+        "total_messages": 852,
+        "unique_senders": 61,
+        "total_chars": 13371,
+        "new_members": 0
+      },
+      "sha256": "76ba256c1f02c2c1b31d43cf9c8a4fbc5e83a9823e8d627d7cc0934606f55d52"
+    },
+    {
+      "date": "2026-08-15",
+      "file": "daily/2026-08-15.json",
+      "lead_title": "小程序正式访问的一晚，群里从“已注册”刷到群日报又被改了一遍",
+      "stats": {
+        "total_messages": 207,
+        "unique_senders": 27,
+        "total_chars": 3153,
+        "new_members": 0
+      },
+      "sha256": "0ff27aea002de11c341173042eef1f46841111c77137e5a788fbf6976c38adad"
+    },
+    {
+      "date": "2026-08-16",
+      "file": "daily/2026-08-16.json",
+      "lead_title": "白天拆岗位级 AI，晚上《牛来》又长成了十二生肖宇宙",
+      "stats": {
+        "total_messages": 299,
+        "unique_senders": 29,
+        "total_chars": 4254,
+        "new_members": 0
+      },
+      "sha256": "c4fff111217dfb02f950945ac94169598e6a4fb71c4f1300f0cb6da6e4a7f78b"
+    },
+    {
+      "date": "2026-08-17",
+      "file": "daily/2026-08-17.json",
+      "lead_title": "从乙方兜底到微信 Harness，OPC 的一天要把责任和能力都做实",
+      "stats": {
+        "total_messages": 522,
+        "unique_senders": 44,
+        "total_chars": 7893,
+        "new_members": 0
+      },
+      "sha256": "e2e8d817ae60905711bf505a7a398543a347d91b8d12dc98d1c004fb053f0b7b"
+    },
+    {
+      "date": "2026-08-18",
+      "file": "daily/2026-08-18.json",
+      "lead_title": "算力见底以后，\n人为什么还要自己动手？",
+      "stats": {
+        "total_messages": 701,
+        "unique_senders": 49,
+        "total_chars": 12133,
+        "new_members": 0
+      },
+      "sha256": "db91a55769bd95a4c627aad197fb368cf777ee2fd811b1dfdd3d349b0c1a4db3"
+    },
+    {
+      "date": "2026-08-19",
+      "file": "daily/2026-08-19.json",
+      "lead_title": "当所有 AI 都开始像彼此，\n新的机会还会在哪里？",
+      "stats": {
+        "total_messages": 519,
+        "unique_senders": 47,
+        "total_chars": 7300,
+        "new_members": 0
+      },
+      "sha256": "1c16b8ac92d936e0eb08aa571403eab1086817f36e0d4d00cb25533edf958cd5"
+    },
+    {
+      "date": "2026-08-20",
+      "file": "daily/2026-08-20.json",
+      "lead_title": "一句「傻逼飞书」接龙之后，大家还是回去认真写项目文档了",
+      "stats": {
+        "total_messages": 508,
+        "unique_senders": 50,
+        "total_chars": 7147,
+        "new_members": 0
+      },
+      "sha256": "cee5ae0fea9fc9cd2a0433639d3120e7efc91c59a57c3ffb3fc3ae360e2f98d8"
+    },
+    {
+      "date": "2026-08-21",
+      "file": "daily/2026-08-21.json",
+      "lead_title": "Codex 把全群的梗做成了表情包，然后大家开始算 credit 这本糊涂账",
+      "stats": {
+        "total_messages": 295,
+        "unique_senders": 50,
+        "total_chars": 4604,
+        "new_members": 0
+      },
+      "sha256": "247710b9b0d907e5bafe1790e925508667d1414f86f57062e06df1fa61ec11c7"
+    }
+  ]
+}

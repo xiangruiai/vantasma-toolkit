@@ -2,7 +2,7 @@
 
 > 万涂幻象开源工具箱。
 >
-> 含 1 个 Web 应用（祥瑞白板录制工具）+ 1 个 macOS 安装包（DeepSeek Harness 桌面壳）+ 1 个 Codex 插件（祥瑞任务面板）+ 1 个 Claude Code 插件（xiangrui-hud 状态栏）+ 16 个 Skill（按领域分 7 类）。
+> 含 1 个 Web 应用（祥瑞白板录制工具）+ 1 个 macOS 安装包（DeepSeek Harness 桌面壳）+ 1 个 Codex 插件（祥瑞任务面板）+ 1 个 Claude Code 插件（xiangrui-hud 状态栏）+ 16 个 Skill（按领域分 7 类）+ 公开内容归档。
 
 ---
 
@@ -38,6 +38,8 @@ vantasma-toolkit/
 ├── plugins/
 │   ├── xiangrui-taskboard/           ← 祥瑞任务面板 Codex 插件（看板 + Skill + taskctl）
 │   └── xiangrui-hud/                 ← Claude Code 实时状态栏 HUD（翠影绿主题，fork 自 claude-hud）
+├── archives/
+│   └── group-daily/xiangrui-community/ ← 社区群日报脱敏公开归档
 └── skills/                              ← 16 个 Skill，按领域分 7 类
     ├── Agent能力/
     │   └── discover-local-capabilities/ 完整扫描本机能力并建立自然语言路由闭环
@@ -209,6 +211,16 @@ codex plugin add xiangrui-taskboard@vantasma-codex
 cp -r skills/飞书办公/feishu-proposal ~/.claude/skills/
 # 然后重启 Claude Code，跟它说话即可触发
 ```
+
+---
+
+## 6. 公开归档
+
+| 归档 | 覆盖范围 | 详情 |
+|---|---|---|
+| 祥瑞和 Ta 的朋友们 · 群日报 | 2026-04-23 起的已生成日报，按日保存脱敏 JSON，并记录缺失日期与哈希 | [查看归档](archives/group-daily/xiangrui-community/README.md) |
+
+群日报归档不包含原始群聊、头像、成员名单、wxid、播客凭据或内部部署配置。群友昵称按线上公开站口径脱敏。
 
 ---
 
