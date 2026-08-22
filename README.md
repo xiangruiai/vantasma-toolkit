@@ -22,9 +22,9 @@
 3. 微信、WeChat、飞书、Lark、滴滴、SQLCipher 等名称归其各自持有人所有。
    本项目与上述公司或开源项目**无任何关联，亦未获授权或背书**。
 
-4. 一旦下载或使用本仓库内容，即视为接受上述声明。若不接受，请立即停止使用并删除。
+4. 一旦下载或使用本仓库内容，即视为接受适用于对应组件的许可证和上述安全边界。
 
-详见 [LICENSE](LICENSE) 文件的"附加条款"。
+各组件如有独立 `LICENSE` 或 `NOTICE`，以组件目录中的许可证为准；其余内容适用根目录 [LICENSE](LICENSE)。
 
 ---
 
@@ -54,7 +54,7 @@ vantasma-toolkit/
     │   └── group-activity-base/         微信群活跃度 → 飞书多维表格 + 仪表盘
     ├── 内容设计/
     │   ├── xiangrui-video/               知识科普视频全自动产线（主题/链接 → 成片）
-    │   ├── gongzhonghao-typeset/        公众号排版 · md 一键转公众号 HTML
+    │   ├── wechat-editorial/             公众号排版 v3 · md 一键转可粘贴 HTML
     │   ├── group-daily/                 微信群杂志风日报
     │   ├── group-daily-newspaper/       微信群 A3 报纸版日报（可印刷彩打）
     │   └── ming-li/                     八字 / 紫微 / 六爻 命理分析
@@ -183,7 +183,7 @@ codex plugin add xiangrui-taskboard@vantasma-codex
 | Skill | 用途 | 详情 |
 |---|---|---|
 | `xiangrui-video` | **知识视频产线**：丢一个主题或公众号链接 → 60-90s 竖屏知识科普成片（配音/字幕/CSS动画逐帧录制/封面全自动），品牌框架可换皮 | [README](skills/内容设计/xiangrui-video/README.md) |
-| `gongzhonghao-typeset` | **公众号排版**：写完 md 一键排成可粘贴的公众号 HTML，带实时控制面板（品牌/配色/排版/图片）+ 三种吸色 | [README](skills/内容设计/gongzhonghao-typeset/README.md) |
+| `wechat-editorial` | **公众号排版 v3**：Markdown / Obsidian 一键转可粘贴的公众号 HTML，支持 base64 图片、翠绿卡片风、品牌动态尾卡和自动合规校验 | [README](skills/内容设计/wechat-editorial/README.md) |
 | `group-daily` | **群日报**：微信群一天聊天 → 杂志风 HTML + PNG（依赖自备 vchat CLI 或兼容的微信数据来源） | [README](skills/内容设计/group-daily/README.md) |
 | `group-daily-newspaper` | **群报**：微信群一天聊天 → 人民日报式 A3 报纸版，AI 自适应 2/4/6 版、每版精确等高、可印刷彩打（依赖自备 vchat CLI 或兼容的微信数据来源） | [README](skills/内容设计/group-daily-newspaper/README.md) |
 | `ming-li` | **祥瑞命理**：八字四家合一 + 紫微 + 六爻 → 新中式古典风 HTML 卷轴 + PNG 长图 | [README](skills/内容设计/ming-li/README.md) |
@@ -231,7 +231,7 @@ cp -r skills/飞书办公/feishu-proposal ~/.claude/skills/
 
 ## License
 
-[MIT](LICENSE) + 个人学习用途附加条款。
+仓库根目录内容采用 [MIT + 个人学习用途附加条款](LICENSE)。存在独立许可证的组件以组件目录为准，例如 `wechat-editorial` 依据上游要求采用 [AGPL-3.0-or-later](skills/内容设计/wechat-editorial/LICENSE)。
 
 Copyright © 2026 xiangruiai (李祥瑞 / 万涂幻象)
 

@@ -1,0 +1,36 @@
+name: wechat-editorial CI
+
+on:
+  push:
+    paths:
+      - "skills/内容设计/wechat-editorial/**"
+      - ".github/workflows/wechat-editorial-ci.yml"
+  pull_request:
+    paths:
+      - "skills/内容设计/wechat-editorial/**"
+      - ".github/workflows/wechat-editorial-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: skills/内容设计/wechat-editorial
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile Python files
+        run: python3 -m py_compile md_to_editorial.py validate_wx_html.py gen_branded_footer.py
+      - name: Render branded demo
+        run: python3 md_to_editorial.py examples/demo.md --out /tmp/wechat-editorial-demo.html
+      - name: Render plain demo
+        run: python3 md_to_editorial.py examples/demo.md --plain --out /tmp/wechat-editorial-demo-plain.html
+      - name: Validate rendered HTML
+        run: |
+          python3 validate_wx_html.py /tmp/wechat-editorial-demo.html
+          python3 validate_wx_html.py /tmp/wechat-editorial-demo-plain.html

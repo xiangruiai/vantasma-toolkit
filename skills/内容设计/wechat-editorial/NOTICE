@@ -1,0 +1,23 @@
+wechat-editorial
+Copyright (C) 2026 北京万涂幻象科技有限公司
+
+This project contains a modified implementation derived from:
+
+  gzh-design-skill — 微信公众号排版技能
+  Copyright (C) 2026 甲木 (Jiamu) × 摸鱼小李 (Moyu Xiaoli)
+  https://github.com/isjiamu/gzh-design-skill
+
+The upstream project and this modified work are licensed under the GNU Affero
+General Public License, version 3 or any later version.
+
+Prominent modification notice:
+
+- Modified by 北京万涂幻象科技有限公司.
+- Public release prepared on 2026-08-22.
+- Added a deterministic Python rendering pipeline, WeChat compatibility
+  validator, Obsidian image resolution, configurable branding, cover-card
+  enforcement, long-image handling, and PNG + GIF brand footer support.
+- Adapted the upstream theme-moyu-green component language into the current
+  emerald card design used by 万涂幻象.
+
+No endorsement by the upstream authors is implied.
