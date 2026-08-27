@@ -1,0 +1,26 @@
+interface:
+  display_name: "知识系统维护员"
+  short_description: "只读审计知识系统，并受控改进一个可复现问题"
+  default_prompt: "使用 $knowledge-system-maintainer 对当前知识系统做一次只读健康审计，未检查项保持灰色，先展示证据再给建议。"
+compatibility:
+  canonical_format: "agent-skills"
+  adapter_targets:
+    - "openai"
+    - "claude"
+    - "generic"
+    - "agent-skills-compatible"
+  activation:
+    mode: "manual"
+    paths: []
+  execution:
+    context: "inline"
+    shell: "bash"
+  trust:
+    source_tier: "local"
+    remote_inline_execution: "forbid"
+    remote_metadata_policy: "allow-metadata-only"
+  degradation:
+    openai: "metadata-adapter"
+    claude: "neutral-source-plus-adapter"
+    generic: "neutral-source"
+    agent-skills-compatible: "neutral-source"

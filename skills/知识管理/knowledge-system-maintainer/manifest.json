@@ -1,0 +1,25 @@
+{
+  "name": "knowledge-system-maintainer",
+  "version": "1.0.0",
+  "owner": "北京万涂幻象科技有限公司",
+  "maintainer": "李祥瑞",
+  "updated_at": "2026-08-27",
+  "status": "active",
+  "maturity_tier": "governed",
+  "lifecycle_stage": "governed",
+  "context_budget_tier": "governed",
+  "review_cadence": "quarterly",
+  "target_platforms": [
+    "openai",
+    "claude",
+    "generic",
+    "agent-skills-compatible"
+  ],
+  "factory_components": [
+    "references",
+    "scripts",
+    "assets",
+    "evals",
+    "tests"
+  ]
+}

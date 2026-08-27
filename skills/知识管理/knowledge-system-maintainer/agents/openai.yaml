@@ -1,0 +1,4 @@
+interface:
+  display_name: "知识系统维护员"
+  short_description: "只读审计知识系统健康度，并受控改进一个可复现问题"
+  default_prompt: "Use $knowledge-system-maintainer to run a read-only audit of this knowledge system, keep unchecked items gray, and show evidence before recommendations."

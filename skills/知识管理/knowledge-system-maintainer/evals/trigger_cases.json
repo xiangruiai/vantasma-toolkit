@@ -1,0 +1,23 @@
+{
+  "should_trigger": [
+    {"text": "给我的 Obsidian 知识库做一次只读健康审计", "family": "cn_audit"},
+    {"text": "检查这个 Markdown 知识系统为什么总是找不到东西", "family": "cn_retrieval_audit"},
+    {"text": "验证我的知识库能不能被新对话接着做", "family": "cn_continuation_audit"},
+    {"text": "检查同步之外有没有真正可恢复的备份证据", "family": "cn_recovery_audit"},
+    {"text": "Audit this local knowledge system for decay and recovery risk", "family": "en_audit"},
+    {"text": "从健康报告里挑一个可复现问题，先预览最小改进和回滚", "family": "cn_improve"}
+  ],
+  "should_not_trigger": [
+    {"text": "帮我整理今天新建的三篇笔记", "family": "routine_cleanup"},
+    {"text": "把这些文件批量移动到归档目录", "family": "bulk_file_operation"},
+    {"text": "总结这篇文章", "family": "summary"},
+    {"text": "帮我设计一个全新的知识库目录", "family": "greenfield_design"},
+    {"text": "检查这段 Python 代码有没有安全漏洞", "family": "code_security_audit"},
+    {"text": "给电脑做一次磁盘健康检查", "family": "device_health"}
+  ],
+  "near_neighbors": [
+    {"text": "给 Vault 自动清理孤岛和旧标签", "expected": "拒绝自动修复，若用户要健康判断则进入只读 Audit"},
+    {"text": "初始化三层记忆系统", "expected": "使用记忆系统初始化能力，而不是本 Skill"},
+    {"text": "修复一个 Markdown 坏链", "expected": "普通单文件修复，不必触发全系统审计"}
+  ]
+}

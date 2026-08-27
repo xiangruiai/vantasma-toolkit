@@ -2,7 +2,7 @@
 
 > 万涂幻象开源工具箱。
 >
-> 含 1 个 Web 应用（祥瑞白板录制工具）+ 1 个 macOS 安装包（DeepSeek Harness 桌面壳）+ 1 个 Codex 插件（祥瑞任务面板）+ 1 个 Claude Code 插件（xiangrui-hud 状态栏）+ 16 个 Skill（按领域分 7 类）+ 公开内容归档。
+> 含 1 个 Web 应用（祥瑞白板录制工具）+ 1 个 macOS 安装包（DeepSeek Harness 桌面壳）+ 1 个 Codex 插件（祥瑞任务面板）+ 1 个 Claude Code 插件（xiangrui-hud 状态栏）+ 17 个 Skill（按领域分 7 类）+ 公开内容归档。
 
 ---
 
@@ -40,11 +40,12 @@ vantasma-toolkit/
 │   └── xiangrui-hud/                 ← Claude Code 实时状态栏 HUD（翠影绿主题，fork 自 claude-hud）
 ├── archives/
 │   └── group-daily/xiangrui-community/ ← 社区群日报脱敏公开归档
-└── skills/                              ← 16 个 Skill，按领域分 7 类
+└── skills/                              ← 17 个 Skill，按领域分 7 类
     ├── Agent能力/
     │   └── discover-local-capabilities/ 完整扫描本机能力并建立自然语言路由闭环
     ├── 知识管理/
-    │   └── three-layer-memory/          三层个人记忆系统
+    │   ├── three-layer-memory/          三层个人记忆系统
+    │   └── knowledge-system-maintainer/ 只读审计与受控改进知识系统
     ├── 文档自动化/
     │   └── template-fidelity-renderer/  高保真 DOCX 模板填充与验收
     ├── 飞书办公/
@@ -149,7 +150,7 @@ codex plugin add xiangrui-taskboard@vantasma-codex
 
 ## 5. Skills
 
-16 个 Skill 按领域分 7 类，分别归在 `skills/<领域>/` 下，可单独取用。
+17 个 Skill 按领域分 7 类，分别归在 `skills/<领域>/` 下，可单独取用。
 
 ### 🤖 Agent 能力
 
@@ -162,6 +163,7 @@ codex plugin add xiangrui-taskboard@vantasma-codex
 | Skill | 用途 | 详情 |
 |---|---|---|
 | `three-layer-memory` | **三层个人记忆系统**：把画像、可复用程序和带日期历史安全写入 Markdown / Obsidian Vault，支持确认写入、来源回读、召回和体检 | [README](skills/知识管理/three-layer-memory/README.md) |
+| `knowledge-system-maintainer` | **知识系统维护员**：按找得到、读得懂、用得上、接得住、救得回、管得动六维做只读健康审计，并在确认后受控改进一个可复现问题 | [README](skills/知识管理/knowledge-system-maintainer/README.md) |
 
 ### 📄 文档自动化
 

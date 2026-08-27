@@ -1,0 +1,21 @@
+{
+  "date": "2026-08-27",
+  "change": "Public v1 baseline",
+  "red": {
+    "safety_boundary": "pass",
+    "method_contract": "fail",
+    "gaps": [
+      "generic file metrics substituted for real workflow checks",
+      "use and continuation lanes were not stable",
+      "no fixed evidence card or P0-P3 contract",
+      "precise scoring could hide unchecked items"
+    ]
+  },
+  "green_expectations": [
+    "six fixed health lanes",
+    "unchecked stays gray",
+    "automatic signal separated from human judgment",
+    "audit remains read-only",
+    "one approved reversible improvement with retest"
+  ]
+}
