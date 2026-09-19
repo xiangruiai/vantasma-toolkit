@@ -1,0 +1,132 @@
+.\" vchat man page
+.\" 装：sudo cp docs/vchat.1 /usr/local/share/man/man1/
+.\" 看：man vchat
+.TH WXCHAT 1 "2026-05-12" "vchat 2.0.0" "User Commands"
+
+.SH NAME
+vchat \- 微信本地数据查询、解密、导出 CLI
+
+.SH SYNOPSIS
+.B vchat
+[\fB\-\-version\fR]
+[\fB\-\-json\fR]
+[\fB\-\-no\-color\fR]
+[\fB\-q\fR | \fB\-\-quiet\fR]
+[\fB\-v\fR | \fB\-\-verbose\fR]
+.I subcommand
+[\fIoptions\fR]
+
+.SH DESCRIPTION
+vchat 是一个微信本地数据的命令行工具：
+.PP
+1. 自带 SQLCipher v4 解密引擎，从 WeChat 进程内存提 key，
+.br
+\ \ 解密 ~17 个本地 db 到数据目录；
+.br
+2. 提供 60+ 个子命令查询/分析/导出聊天记录、联系人、群成员、
+.br
+\ \ 朋友圈、收藏、转账、表情包、企微会话等所有微信本地数据。
+
+.SH SETUP
+首次使用：
+.PP
+.RS
+sudo vchat setup
+.RE
+.PP
+此命令自动 ad-hoc codesign WeChat.app、编译 native 内存扫描器、
+扫 WeChat 内存提 key、解密所有 db 到
+.IR $VCHAT_DATA_DIR/decrypted/
+（默认 ~/.vchat/data/decrypted/）。
+
+.SH OPTIONS
+.TP
+.BR \-\-version
+打印版本号
+.TP
+.BR \-\-json
+所有子命令输出 JSON（适合管道给 AI Agent / 脚本消费）
+.TP
+.BR \-\-no\-color
+禁用颜色输出（也尊重环境变量 NO_COLOR=1）
+.TP
+.BR \-q ", " \-\-quiet
+静默模式，只输出关键结果
+.TP
+.BR \-v ", " \-\-verbose
+输出额外调试信息
+
+.SH ENVIRONMENT
+.TP
+.B VCHAT_DATA_DIR
+数据目录（必须包含 decrypted/ 子目录）。默认 ~/.vchat/data。
+.TP
+.B WECHAT_DECRYPT_PATH
+旧名兼容，作用同 VCHAT_DATA_DIR。
+.TP
+.B NO_COLOR
+设非空值时禁用所有颜色输出。
+
+.SH FILES
+.TP
+.I $VCHAT_DATA_DIR/decrypted/
+已解密的 sqlite 数据库目录
+.TP
+.I $VCHAT_DATA_DIR/keys.json
+SQLCipher key 缓存（下次 decrypt 复用，跳过内存扫描）
+.TP
+.I $VCHAT_DATA_DIR/decoded_voices/
+voice-transcribe 解码出的 wav 缓存
+.TP
+.I $VCHAT_DATA_DIR/voice_transcriptions.json
+voice-transcribe 转写结果缓存
+
+.SH EXIT STATUS
+遵循 BSD sysexits.h：
+.PP
+.TP
+.B 0
+成功
+.TP
+.B 64
+用法错误
+.TP
+.B 66
+输入不存在（数据目录未解密）
+.TP
+.B 70
+软件内部错误
+.TP
+.B 77
+权限不够（如未 sudo）
+
+.SH EXAMPLES
+.TP
+看最近 20 个会话：
+.B vchat ls 20
+.TP
+拉某群所有历史落盘：
+.B vchat history "祥瑞群" -n 10000 --asc > /tmp/log.txt
+.TP
+搜全库关键词（FTS 快速版）：
+.B vchat search 知识库 --fast
+.TP
+看群详情：
+.B vchat group-info "祥瑞群"
+.TP
+JSON 输出供 AI Agent 消费：
+.B vchat --json ls 50
+.TP
+导出某群成员 + 真实头像：
+.B vchat group-members "祥瑞群" --avatars -o ./avatars/
+.TP
+转录单条语音：
+.B vchat voice-transcribe "灯下白群" --local-id 11239
+
+.SH SEE ALSO
+.IR sqlcipher (1),
+.UR https://github.com/xiangruiai/vantasma-toolkit/tree/main/cli/vchat
+.UE
+
+.SH AUTHOR
+李祥瑞 · 万涂幻象 (xiangruiai on GitHub)

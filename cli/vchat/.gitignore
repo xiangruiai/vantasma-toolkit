@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# OS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+
+# 运行时产物（如果有人把 vchat 放在解密目录里跑）
+decrypted/
+decoded_voices/
+decoded_images/
+*.db
+*.db-shm
+*.db-wal
+all_keys.json
+config.json
+voice_transcriptions.json
+*_export*.json
+*_transcribed*.json
+
+# 测试用临时输出
+out/
+tmp/

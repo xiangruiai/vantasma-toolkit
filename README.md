@@ -2,7 +2,7 @@
 
 > 万涂幻象开源工具箱。
 >
-> 含 1 个 Web 应用（祥瑞白板录制工具）+ 1 个 macOS 安装包（DeepSeek Harness 桌面壳）+ 1 个 Codex 插件（祥瑞任务面板）+ 1 个 Claude Code 插件（xiangrui-hud 状态栏）+ 17 个 Skill（按领域分 7 类）+ 公开内容归档。
+> 含 1 个 Web 应用（祥瑞白板录制工具）+ 1 个 macOS 安装包（DeepSeek Harness 桌面壳）+ 1 个 CLI（vchat 微信本地数据工具）+ 1 个 Codex 插件（祥瑞任务面板）+ 1 个 Claude Code 插件（xiangrui-hud 状态栏）+ 18 个 Skill（按领域分 7 类）+ 公开内容归档。
 
 ---
 
@@ -35,12 +35,14 @@ vantasma-toolkit/
 ├── apps/
 │   ├── whiteboard-recorder/          ← 祥瑞白板录制工具（白板 + 录制 + 摄像头 + 素材库 + 提词器）
 │   └── deepseek-harness-desktop/     ← DeepSeek Harness 桌面安装说明（完整包在 Release）
+├── cli/
+│   └── vchat/                        ← 微信本地数据查询 / 解密 / 导出 CLI（群日报等技能的数据底座）
 ├── plugins/
 │   ├── xiangrui-taskboard/           ← 祥瑞任务面板 Codex 插件（看板 + Skill + taskctl）
 │   └── xiangrui-hud/                 ← Claude Code 实时状态栏 HUD（翠影绿主题，fork 自 claude-hud）
 ├── archives/
 │   └── group-daily/xiangrui-community/ ← 社区群日报脱敏公开归档
-└── skills/                              ← 17 个 Skill，按领域分 7 类
+└── skills/                              ← 18 个 Skill，按领域分 7 类
     ├── Agent能力/
     │   └── discover-local-capabilities/ 完整扫描本机能力并建立自然语言路由闭环
     ├── 知识管理/
@@ -62,7 +64,8 @@ vantasma-toolkit/
     │   ├── group-daily-newspaper/       微信群 A3 报纸版日报（可印刷彩打）
     │   └── ming-li/                     八字 / 紫微 / 六爻 命理分析
     ├── 数据抓取/
-    │   └── mp-data/                     公众号数据抓取
+    │   ├── mp-data/                     公众号全量文章数据抓取 + 可视化
+    │   └── mp-data-doubao/              豆包工作一句话抓公众号数据 → 飞书多维表格 + 看板
     └── 生活/
         └── didi-ride-skill/             飞书叫滴滴
 ```
@@ -148,9 +151,24 @@ codex plugin add xiangrui-taskboard@vantasma-codex
 
 ---
 
-## 5. Skills
+## 5. vchat CLI（微信本地数据工具）
 
-17 个 Skill 按领域分 7 类，分别归在 `skills/<领域>/` 下，可单独取用。
+把本机已登录微信的本地数据库一键解密成明文 sqlite，再查询 / 搜索 / 导出：聊天记录、联系人、群成员、朋友圈、收藏、公众号、视频号、企业微信，60+ 子命令全部支持 `--json` 给 Agent 消费。支持全量语料断点续传导出（`vchat corpus`）与可选的隔离快照模式（原子发布 + 读取前完整性校验），语音可本地 Whisper 转文字。是工具箱里 `group-daily`、`group-daily-newspaper`、`group-activity-base` 等技能的微信数据底座。
+
+- 源码目录：[`cli/vchat`](cli/vchat)
+- 安装使用：[`cli/vchat/README.md`](cli/vchat/README.md)
+
+安装只需要把一句话贴给 Claude Code / Codex 等 AI Agent（自动 clone → install.sh → `sudo vchat setup`，过程中需要输一次 sudo 密码、保持微信桌面版开着并已登录）：
+
+> 帮我安装 https://github.com/xiangruiai/vantasma-toolkit 里的 vchat CLI（微信本地数据查询 / 解密工具），路径是 cli/vchat。按它 README 走完整安装，装完跑 vchat doctor 和 vchat ls 20 给我看结果，再告诉我常用命令怎么用。
+
+只处理自己本机、自己账号的本地数据，全程不上传；仅供个人学习研究，详见组件目录的免责声明与 LICENSE。
+
+---
+
+## 6. Skills
+
+18 个 Skill 按领域分 7 类，分别归在 `skills/<领域>/` 下，可单独取用。
 
 ### 🤖 Agent 能力
 
@@ -180,7 +198,7 @@ codex plugin add xiangrui-taskboard@vantasma-codex
 | `feishu-multi` | **macOS 原生飞书双开**：两个客户端、两套登录态，支持版本检测、安全重建和独立数据目录，不使用 Lark 或网页版 | [README](skills/飞书办公/feishu-multi/README.md) |
 | `feishu-proposal` | 飞书会议纪要 → 客户方案文档 | [README](skills/飞书办公/feishu-proposal/README.md) |
 | `daily-log` | **收工日志**：一句“收工”→ 飞书全链路足迹自动聚合成带链接、能 @ 人的日报文档（依赖 lark-cli） | [README](skills/飞书办公/daily-log/README.md) |
-| `group-activity-base` | **群活跃度多维表格**：微信群完整历史（谁活跃/谁潜水/进群退群时间/全量发言）→ 飞书三表 + 9 组件仪表盘，支持水位式增量更新（依赖自备 vchat 或兼容的本地微信数据访问工具 + lark-cli；vchat 不在本仓库开源） | [README](skills/飞书办公/group-activity-base/README.md) |
+| `group-activity-base` | **群活跃度多维表格**：微信群完整历史（谁活跃/谁潜水/进群退群时间/全量发言）→ 飞书三表 + 9 组件仪表盘，支持水位式增量更新（依赖 [vchat CLI](cli/vchat) + lark-cli） | [README](skills/飞书办公/group-activity-base/README.md) |
 
 ### 🎨 内容设计
 
@@ -188,15 +206,16 @@ codex plugin add xiangrui-taskboard@vantasma-codex
 |---|---|---|
 | `xiangrui-video` | **知识视频产线**：丢一个主题或公众号链接 → 60-90s 竖屏知识科普成片（配音/字幕/CSS动画逐帧录制/封面全自动），品牌框架可换皮 | [README](skills/内容设计/xiangrui-video/README.md) |
 | `wechat-editorial` | **公众号排版 v3**：Markdown / Obsidian 一键转可粘贴的公众号 HTML，支持 base64 图片、翠绿卡片风、品牌动态尾卡和自动合规校验 | [README](skills/内容设计/wechat-editorial/README.md) |
-| `group-daily` | **群日报**：微信群一天聊天 → 杂志风 HTML + PNG（依赖自备 vchat CLI 或兼容的微信数据来源） | [README](skills/内容设计/group-daily/README.md) |
-| `group-daily-newspaper` | **群报**：微信群一天聊天 → 人民日报式 A3 报纸版，AI 自适应 2/4/6 版、每版精确等高、可印刷彩打（依赖自备 vchat CLI 或兼容的微信数据来源） | [README](skills/内容设计/group-daily-newspaper/README.md) |
+| `group-daily` | **群日报**：微信群一天聊天 → 杂志风 HTML + PNG（依赖 [vchat CLI](cli/vchat)） | [README](skills/内容设计/group-daily/README.md) |
+| `group-daily-newspaper` | **群报**：微信群一天聊天 → 人民日报式 A3 报纸版，AI 自适应 2/4/6 版、每版精确等高、可印刷彩打（依赖 [vchat CLI](cli/vchat)） | [README](skills/内容设计/group-daily-newspaper/README.md) |
 | `ming-li` | **祥瑞命理**：八字四家合一 + 紫微 + 六爻 → 新中式古典风 HTML 卷轴 + PNG 长图 | [README](skills/内容设计/ming-li/README.md) |
 
 ### 📊 数据抓取
 
 | Skill | 用途 | 详情 |
 |---|---|---|
-| `mp-data` | 公众号全量文章数据抓取 + 可视化 | [README](skills/数据抓取/mp-data/README.md) |
+| `mp-data` | **公众号全量文章数据抓取 + 可视化**：发表记录页全量抓取，互动率 / 阅读分布 / 内容 ROI 分析报告 | [README](skills/数据抓取/mp-data/README.md) |
+| `mp-data-doubao` | **豆包工作版公众号数据**：在豆包工作里一句话抓公众号阅读数据 → 飞书多维表格 + 趋势图 / TOP10 / 数据看板，不用装 Python | [README](skills/数据抓取/mp-data-doubao/README.md) |
 
 ### 🚕 生活
 
@@ -216,7 +235,7 @@ cp -r skills/飞书办公/feishu-proposal ~/.claude/skills/
 
 ---
 
-## 6. 公开归档
+## 7. 公开归档
 
 | 归档 | 覆盖范围 | 详情 |
 |---|---|---|
@@ -253,4 +272,4 @@ Copyright © 2026 xiangruiai (李祥瑞 / 万涂幻象)
 
 ## 微信赞赏
 
-祥瑞工具箱里的 Skill、插件和应用均可免费使用。如果这些工具帮到了你，欢迎[微信赞赏祥瑞工具箱](https://pay.xiangruiai.com/)，支持域名、服务器和持续维护。赞赏完全自愿，不解锁任何功能。
+祥瑞工具箱里的 CLI、Skill、插件和应用均可免费使用。如果这些工具帮到了你，欢迎[微信赞赏祥瑞工具箱](https://pay.xiangruiai.com/)，支持域名、服务器和持续维护。赞赏完全自愿，不解锁任何功能。

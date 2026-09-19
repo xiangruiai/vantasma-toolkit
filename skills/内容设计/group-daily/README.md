@@ -94,9 +94,9 @@ iOS / Android 不在范围内，本 skill 仅支持 macOS。
 | [WeChatMsg / 留痕](https://github.com/LC044/WeChatMsg) | Windows 主 | 开源 | 桌面客户端 + 导出 |
 | [wxhelper](https://github.com/ttttupup/wxhelper) | Windows | 开源 | DLL 注入路线 |
 | [wechat-dump-rs](https://github.com/0xlane/wechat-dump-rs) | macOS / Windows | 开源 | Rust 重写版 |
-| `wechat-decrypt` 本作者私有项目| macOS | **未公开** | 集成了 `vchat` CLI + `mcp_server` |
+| [`vchat` CLI](../../../cli/vchat)（本仓库） | macOS / Windows | 开源 | 一站式微信本地数据访问：解密 + 查询 + 语音转写，本 skill 默认依赖 |
 
-本 skill 默认依赖最后一个 `wechat-decrypt`，因为开发它的作者就是 skill 的作者。**如果你没有这个项目，按下面"无 wechat-decrypt 怎么办"的指引走 PyWxDump 等替代方案，效果一致**。
+本 skill 默认依赖 [`vchat` CLI](../../../cli/vchat)（就在本仓库 `cli/vchat`，开源）。**如果不想装 vchat，按下面"用其他解密工具代替 vchat"的指引走 PyWxDump 等替代方案，效果一致**。
 
 ### 3. 三条数据访问路径
 
@@ -112,7 +112,7 @@ skill 实际跑的时候，按以下优先级使用：
 
 **A. `vchat` CLI 推荐路径，最稳**
 
-`vchat` 是 `wechat-decrypt` 项目里附带的命令行工具，封装了一站式微信本地数据访问能力。skill 主要用它的这几个命令：
+`vchat` 是本仓库 [`cli/vchat`](../../../cli/vchat) 的命令行工具，封装了一站式微信本地数据访问能力。skill 主要用它的这几个命令：
 
 ```bash
 vchat history "<群名>" -n 5000 --asc > log.txt   # 拉聊天记录
@@ -155,9 +155,9 @@ $VCHAT_DATA_DIR/
 
 如果你用 PyWxDump 之类的替代方案，把解密产物 link 到这个路径即可。
 
-### 4. 无 wechat-decrypt 怎么办
+### 4. 用其他解密工具代替 vchat
 
-如果你没有作者的 `wechat-decrypt` 项目 目前未公开，仍然可以让 skill 跑起来，按以下步骤：
+如果你不想装 `vchat`，仍然可以让 skill 跑起来，按以下步骤：
 
 ```bash
 # 1. 装一个开源解密工具（推荐 PyWxDump，覆盖 macOS）
@@ -214,7 +214,7 @@ bash ~/.claude/skills/group-daily/install.sh
 脚本会：
 
 - 装 Python 依赖 Pillow、openai-whisper、silk-python
-- 跑 6 项环境自检 macOS、Python 包、vchat、wechat-decrypt 路径、Chrome、环境变量
+- 跑 6 项环境自检 macOS、Python 包、vchat、数据目录、Chrome、环境变量
 - 给每个缺失项打印修复建议
 
 ### 3. 配环境变量 可选
@@ -224,8 +224,8 @@ bash ~/.claude/skills/group-daily/install.sh
 # 默认: ~/Documents/GroupDaily
 export GROUP_DAILY_VAULT=~/Documents/GroupDaily
 
-# wechat-decrypt（或其他解密工具）的根目录
-# 默认: ~/Projects/wechat-decrypt
+# vchat 数据目录（或其他解密工具产物）的根目录
+# vchat 默认: ~/.vchat/data
 export VCHAT_DATA_DIR=~/Projects/wechat-decrypt
 ```
 
@@ -315,7 +315,7 @@ group-daily/
 - [ ] v3：模板可换肤 杂志风之外的极简风/科技风
 - [ ] v3：跨群群史专辑一键生成
 - [ ] v3：群风格指纹的演化追踪 每次更新生成 diff
-- [ ] 等待 `wechat-decrypt` 开源后补充安装指引
+- [x] `vchat` CLI 已开源（本仓库 `cli/vchat`），安装见其 README
 
 ---
 

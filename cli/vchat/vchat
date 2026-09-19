@@ -1,0 +1,2857 @@
+#!/usr/bin/env python3
+"""vchat — 微信本地数据查询、解密、导出 CLI
+
+⚠️ 仅供个人学习与研究目的。详见 README.md / LICENSE。
+
+子命令完整列表：vchat --help
+"""
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+
+from vchat_core import get_data_dir, get_decrypted_dir
+from vchat_core.snapshot_sqlite import connect_snapshot
+
+DATA_DIR = get_data_dir()
+DECRYPTED = None  # Resolved after argument parsing; invalid snapshots can be refreshed.
+# 兼容旧变量名（v1 时期的 cmd_* 函数有用到 PROJECT_DIR）
+PROJECT_DIR = DATA_DIR
+STALE_HOURS = 24 * 7  # 7 天
+
+
+def _newest_db_mtime() -> float:
+    if not DECRYPTED.exists():
+        return 0.0
+    mtimes = [p.stat().st_mtime for p in DECRYPTED.rglob("*.db")]
+    return max(mtimes) if mtimes else 0.0
+
+
+def check_freshness(quiet=False):
+    if not DECRYPTED.exists():
+        print(
+            f"❌ 数据目录不存在: {DECRYPTED}\n"
+            f"   先跑 `sudo vchat setup` 一键解密。",
+            file=sys.stderr,
+        )
+        sys.exit(66)
+    mt = _newest_db_mtime()
+    if mt == 0:
+        return None
+    hours = (time.time() - mt) / 3600
+    if not quiet and hours > STALE_HOURS:
+        print(f"⚠ 最新 db 已经 {hours/24:.1f} 天没更新。",
+              file=sys.stderr)
+    return hours
+
+
+def cmd_info(args):
+    from vchat_core import __version__
+    mt = _newest_db_mtime()
+    db_count = len(list(DECRYPTED.rglob("*.db"))) if DECRYPTED.exists() else 0
+    info_dict = {
+        "version": __version__,
+        "data_dir": str(DATA_DIR),
+        "decrypted_dir": str(DECRYPTED),
+        "decrypted_dir_exists": DECRYPTED.exists(),
+        "newest_db_mtime": mt,
+        "newest_db_iso": datetime.fromtimestamp(mt).isoformat() if mt else None,
+        "db_count": db_count,
+    }
+    from vchat_core.snapshot import active, source_status
+    snapshot = active(DATA_DIR)
+    if snapshot is not None:
+        if DECRYPTED != Path(snapshot['snapshot_root']) / snapshot['output_relative']:
+            raise RuntimeError('active snapshot changed during info; retry')
+        from vchat_core.decrypt_pipeline import find_db_storage
+        info_dict.update(source_identity=snapshot['source_identity'], snapshot_coverage=snapshot['coverage'],
+                         snapshot_created_at=snapshot['created_at'],
+                         **source_status(snapshot, find_db_storage()))
+    if getattr(args, "json_out", False):
+        from vchat_core.output import emit
+        emit(info_dict, json_mode=True); return
+    print(f"数据目录: {DATA_DIR}")
+    print(f"解密目录: {DECRYPTED} ({'存在' if DECRYPTED.exists() else '不存在'})")
+    if mt > 0:
+        when = datetime.fromtimestamp(mt).strftime("%Y-%m-%d %H:%M:%S")
+        hours = (time.time() - mt) / 3600
+        ago = f"{hours:.1f}h" if hours < 48 else f"{hours/24:.1f}d"
+        print(f"最新 db 修改: {when}  ({ago} 前)")
+    else:
+        print("最新 db 修改: 数据目录里没有任何 .db")
+    print("追新机制: vchat_core.cache 按 mtime 自动检测重连。")
+    print(f"已解密 db 数: {db_count}")
+
+
+def cmd_corpus(args):
+    """All published message shards, with snapshot-bound resumable pages."""
+    import sqlite3
+    from vchat_core import corpus
+    from vchat_core.output import emit
+    try:
+        if args.action == 'stats':
+            value = corpus.stats(DATA_DIR, since=args.since, until=args.until)
+        elif args.stream or args.pages is not None:
+            for value in corpus.iter_export(DATA_DIR, cursor=args.cursor, limit=args.limit, pages=args.pages, since=args.since, until=args.until):
+                # One complete JSON frame per line; flush lets the receiver
+                # durably commit this page before requesting/reading the next.
+                sys.stdout.write(json.dumps(value, ensure_ascii=False, separators=(',', ':')) + '\n')
+                sys.stdout.flush()
+            return
+        else:
+            value = corpus.export(DATA_DIR, cursor=args.cursor, limit=args.limit, since=args.since, until=args.until)
+    except (RuntimeError, OSError, ValueError, sqlite3.Error) as error:
+        # Do not echo arbitrary DB text or SQLite identifiers as diagnostics.
+        message = str(error) if isinstance(error, RuntimeError) else '微信语料快照读取失败或达到时限，未推进导出游标'
+        failure = {'command': 'corpus ' + args.action, 'error': message}
+        if getattr(args, 'stream', False) or getattr(args, 'pages', None) is not None:
+            sys.stdout.write(json.dumps(failure, ensure_ascii=False, separators=(',', ':')) + '\n')
+            sys.stdout.flush()
+        else:
+            emit(failure, json_mode=True)
+        sys.exit(70)
+    emit(value, json_mode=True)
+
+
+def cmd_ls(args):
+    check_freshness()
+    n = args.n or 20
+    if getattr(args, "json_out", False):
+        from vchat_core.messages import get_recent_sessions_dict
+        from vchat_core.output import emit
+        emit({"sessions": get_recent_sessions_dict(limit=n)}, json_mode=True)
+        return
+    from vchat_core import _compat as mcp_server
+    print(mcp_server.get_recent_sessions(limit=n))
+
+
+def cmd_search(args):
+    check_freshness()
+    from vchat_core import _compat as mcp_server
+    print(mcp_server.search_messages(
+        keyword=args.keyword,
+        chat_name=args.chat,
+        limit=args.n or 30,
+    ))
+
+
+def cmd_history(args):
+    check_freshness()
+    since = getattr(args, "since", "") or ""
+    until = getattr(args, "until", "") or ""
+    if getattr(args, "json_out", False):
+        from vchat_core.messages import get_chat_history_dict
+        from vchat_core.contacts import resolve_chat_context
+        from vchat_core.output import emit
+        ctx = resolve_chat_context(args.name)
+        if not ctx:
+            emit({
+                "chat_name": args.name,
+                "error": f"找不到聊天对象: {args.name}",
+                "messages": [],
+                "message_count": 0,
+            }, json_mode=True)
+            return
+        messages = get_chat_history_dict(
+            chat_name=args.name,
+            limit=args.n or 50,
+            start_time=since,
+            end_time=until,
+            oldest_first=args.asc,
+        )
+        emit({
+            "chat_name": args.name,
+            "username": ctx["username"],
+            "is_chatroom": ctx["is_chatroom"],
+            "display_name": ctx["display_name"],
+            "since": since or None,
+            "until": until or None,
+            "message_count": len(messages),
+            "messages": messages,
+        }, json_mode=True)
+        return
+    from vchat_core import _compat as mcp_server
+    out = mcp_server.get_chat_history(
+        chat_name=args.name,
+        limit=args.n or 50,
+        start_time=since,
+        end_time=until,
+        oldest_first=args.asc,
+    )
+    print(out)
+
+
+def cmd_contacts(args):
+    check_freshness()
+    from vchat_core import _compat as mcp_server
+    print(mcp_server.get_contacts(query=args.query or "", limit=args.n or 50))
+
+
+def cmd_export(args):
+    check_freshness()
+    out_path = args.output or f"{args.name}_export.json"
+    out_path = str(Path(out_path).expanduser().resolve())
+
+    from vchat_core.messages import get_chat_history_dict
+    from vchat_core.contacts import resolve_chat_context
+
+    ctx = resolve_chat_context(args.name)
+    if not ctx:
+        print(f"❌ 找不到聊天对象: {args.name}", file=sys.stderr)
+        sys.exit(2)
+
+    messages = get_chat_history_dict(
+        chat_name=args.name, limit=10**9, oldest_first=True,
+    )
+    payload = {
+        "chat_name": args.name,
+        "username": ctx["username"],
+        "is_chatroom": ctx["is_chatroom"],
+        "display_name": ctx["display_name"],
+        "exported_at": int(time.time()),
+        "message_count": len(messages),
+        "messages": messages,
+    }
+    Path(out_path).write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
+    )
+    print(f"✅ 导出 {len(messages)} 条消息 → {out_path}")
+    if args.md:
+        md_path = out_path.rsplit(".", 1)[0] + ".md"
+        json_to_md(out_path, md_path)
+        print(f"✅ Markdown: {md_path}")
+
+
+def cmd_sns_images(args):
+    """批量解密 cache/<YYYY-MM>/Sns/Img 下所有图片。
+
+    XML md5 跟 cache 文件名对不上号（CDN 内部哈希），所以做不到"按朋友圈反查"。
+    务实路径：按月份扫整个 Sns/Img 目录，全部 v2 解密成 JPEG，按源文件 mtime 命名。
+    """
+    import json as _json
+    from vchat_core import image_codec as decode_image
+
+    cfg = _json.loads((PROJECT_DIR / "config.json").read_text())
+    aes_key = cfg.get("image_aes_key")
+    xor_key = cfg.get("image_xor_key", 0x88)
+    if not aes_key:
+        print(f"config.json 缺 image_aes_key。先跑: cd {PROJECT_DIR} && .venv/bin/python find_image_key_macos.py", file=sys.stderr)
+        sys.exit(2)
+
+    wxid_dir = Path(cfg["db_dir"]).parent  # xwechat_files/<wxid>/
+    cache_root = wxid_dir / "cache"
+    if not cache_root.exists():
+        print(f"找不到 {cache_root}", file=sys.stderr)
+        sys.exit(2)
+
+    month_filter = args.target  # e.g. "2026-05"，None 表示全部
+    out_dir = Path(args.output or "~/Downloads/wx-sns-images").expanduser().resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    months = sorted([d for d in cache_root.iterdir() if d.is_dir() and (month_filter is None or d.name == month_filter)])
+    if not months:
+        print(f"cache 下没匹配的月份目录（filter={month_filter}）", file=sys.stderr)
+        sys.exit(2)
+
+    total_ok = total_fail = 0
+    for month_dir in months:
+        img_dir = month_dir / "Sns" / "Img"
+        if not img_dir.exists():
+            continue
+        month_out = out_dir / month_dir.name
+        month_out.mkdir(parents=True, exist_ok=True)
+        for f in img_dir.rglob("*"):
+            if not f.is_file():
+                continue
+            try:
+                ts = int(f.stat().st_mtime)
+                stem = datetime.fromtimestamp(ts).strftime("%m%d_%H%M%S") + "_" + f.name[:8]
+                # decode_image 自己处理 V1/V2/XOR，传 aes_key + xor_key
+                out_path, fmt = decode_image.decrypt_dat(
+                    str(f), str(month_out / f"{stem}.tmp"),
+                    aes_key=aes_key, xor_key=xor_key
+                )
+                if out_path:
+                    # 改名加正确后缀
+                    final = month_out / f"{stem}.{fmt}"
+                    Path(out_path).rename(final)
+                    total_ok += 1
+                else:
+                    total_fail += 1
+            except Exception as e:
+                total_fail += 1
+        print(f"{month_dir.name}: 累计 ok={total_ok} fail={total_fail}")
+
+    print(f"\n完成。{total_ok} 张图导出到 {out_dir}，{total_fail} 失败/非 V2 格式")
+
+
+def _parse_sns_xml(content_xml):
+    """SnsTimeLine.content 是 <SnsDataItem><TimelineObject>...</TimelineObject></SnsDataItem>"""
+    import xml.etree.ElementTree as ET
+    try:
+        root = ET.fromstring(content_xml)
+    except ET.ParseError:
+        return None
+    obj = root.find("TimelineObject")
+    if obj is None:
+        obj = root
+    media_types = {1: "img", 2: "img", 6: "video", 7: "link", 8: "link"}
+    medias = []
+    for m in obj.findall(".//mediaList/media"):
+        t = int(m.findtext("type") or "0")
+        medias.append(media_types.get(t, f"type{t}"))
+    loc = obj.find("location")
+    poi = loc.get("poiName") if loc is not None else ""
+    return {
+        "id": obj.findtext("id") or "",
+        "username": obj.findtext("username") or "",
+        "create_time": int(obj.findtext("createTime") or 0),
+        "text": (obj.findtext("contentDesc") or "").strip(),
+        "private": (obj.findtext("private") or "0") == "1",
+        "media": medias,
+        "poi": poi or "",
+    }
+
+
+def cmd_sns(args):
+    """朋友圈 ls/user/search/mentions/export"""
+    check_freshness()
+    import sqlite3, os as _os
+    from vchat_core import _compat as mcp_server
+    db = mcp_server._cache.get(_os.path.join("sns", "sns.db"))
+    if not db:
+        print("DBCache 拿不到 sns.db", file=sys.stderr)
+        sys.exit(2)
+
+    try:
+        names = mcp_server.get_contact_names() or {}
+    except Exception:
+        names = {}
+
+    def display(uname):
+        return names.get(uname) or uname
+
+    def render(uname, parsed):
+        when = datetime.fromtimestamp(parsed["create_time"]).strftime("%Y-%m-%d %H:%M") if parsed["create_time"] else "?"
+        head = f"[{when}] {display(uname)}"
+        if parsed["private"]:
+            head += " 🔒"
+        if parsed["media"]:
+            head += f"  📎{','.join(parsed['media'])}"
+        if parsed["poi"]:
+            head += f"  📍{parsed['poi']}"
+        text = parsed["text"]
+        if args.action != "export" and len(text) > 200:
+            text = text[:200] + "…"
+        return f"{head}\n  {text.replace(chr(10), chr(10) + '  ')}\n"
+
+    with connect_snapshot(db) as conn:
+        if args.action == "ls":
+            rows = conn.execute(
+                "SELECT user_name, content FROM SnsTimeLine ORDER BY tid DESC LIMIT ?",
+                (args.n or 20,)
+            ).fetchall()
+        elif args.action in ("user", "export"):
+            ctx = mcp_server._resolve_chat_context(args.target)
+            if not ctx:
+                print(f"找不到联系人: {args.target}", file=sys.stderr)
+                sys.exit(2)
+            rows = conn.execute(
+                "SELECT user_name, content FROM SnsTimeLine WHERE user_name = ? ORDER BY tid DESC LIMIT ?",
+                (ctx["username"], args.n or 100)
+            ).fetchall()
+        elif args.action == "search":
+            rows = conn.execute(
+                "SELECT user_name, content FROM SnsTimeLine WHERE content LIKE ? ORDER BY tid DESC LIMIT ?",
+                (f"%{args.target}%", args.n or 30)
+            ).fetchall()
+        elif args.action == "images":
+            cmd_sns_images(args)
+            return
+        elif args.action == "mentions":
+            mrows = conn.execute(
+                "SELECT create_time, type, from_username, from_nickname, content FROM SnsMessage_tmp3 ORDER BY create_time DESC LIMIT ?",
+                (args.n or 20,)
+            ).fetchall()
+            type_map = {1: "评论", 2: "点赞", 3: "@我"}
+            for ct, t, fu, fn, c in mrows:
+                when = datetime.fromtimestamp(ct).strftime("%Y-%m-%d %H:%M") if ct else "?"
+                tag = type_map.get(t, f"type{t}")
+                who = fn or display(fu)
+                msg = f": {c}" if c else ""
+                print(f"[{when}] {tag} 来自 {who}{msg}")
+            return
+        else:
+            print(f"未知 action: {args.action}", file=sys.stderr)
+            sys.exit(2)
+
+    parsed_rows = []
+    for uname, content in rows:
+        p = _parse_sns_xml(content)
+        if p:
+            parsed_rows.append((uname, p))
+
+    if args.action == "export":
+        out_path = Path(args.output or f"{args.target}_sns.md").expanduser().resolve()
+        lines = [f"# {args.target} 的朋友圈", "", f"> 导出于 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  共 {len(parsed_rows)} 条", ""]
+        for uname, p in parsed_rows:
+            lines.append("---")
+            lines.append(render(uname, p))
+        out_path.write_text("\n".join(lines), encoding="utf-8")
+        print(f"导出到 {out_path}（{len(parsed_rows)} 条）")
+        return
+
+    if not parsed_rows:
+        print("（无结果）")
+        return
+    for uname, p in parsed_rows:
+        print(render(uname, p))
+
+
+def cmd_files(args):
+    """聊天里收发过的图片/视频/文件，基于 hardlink.db 索引
+
+    vchat files <chat>                列某人/某群的图/视频/文件
+    vchat files <chat> -k video       只看视频
+    vchat files <chat> --export -o d  解密导出到目录
+    """
+    check_freshness()
+    import sqlite3, hashlib, json
+    from pathlib import Path as _P
+    from vchat_core import image_codec as decode_image
+    from vchat_core import _compat as mcp_server
+    db = mcp_server._cache.get(os.path.join("hardlink", "hardlink.db"))
+    if not db:
+        print("拿不到 hardlink.db", file=sys.stderr); sys.exit(2)
+
+    ctx = mcp_server._resolve_chat_context(args.target)
+    if not ctx:
+        print(f"找不到聊天对象: {args.target}", file=sys.stderr); sys.exit(2)
+    username = ctx["username"]
+    chat_hash = hashlib.md5(username.encode()).hexdigest()
+
+    kind = args.kind or "all"
+    tables = {"image": "image_hardlink_info_v4", "video": "video_hardlink_info_v4", "file": "file_hardlink_info_v4"}
+    target_tables = [tables[kind]] if kind != "all" else list(tables.values())
+
+    cfg_path = PROJECT_DIR / "config.json"
+    if cfg_path.exists():
+        cfg = json.loads(cfg_path.read_text())
+        wxid_dir = _P(cfg["db_dir"]).parent
+    else:
+        from vchat_core.decrypt_pipeline import find_db_storage
+        storage = find_db_storage()
+        if storage is None:
+            print("无法定位当前账号 db_storage，附件路径不可用", file=sys.stderr)
+            sys.exit(2)
+        cfg = {}
+        wxid_dir = storage.parent
+    aes_key = cfg.get("image_aes_key")
+    xor_key = cfg.get("image_xor_key", 0x88)
+
+    sub_dirs = {"image_hardlink_info_v4": "Img", "video_hardlink_info_v4": "Video", "file_hardlink_info_v4": "File"}
+
+    conn = connect_snapshot(db)
+    # 找 chat_hash 对应的 dir2id rowid
+    r = conn.execute("SELECT rowid FROM dir2id WHERE username=?", (chat_hash,)).fetchone()
+    if not r:
+        print(f"{ctx['display_name']} 在 hardlink.db 里没有附件记录")
+        return
+    dir1_rowid = r[0]
+
+    all_items = []
+    matches = [value.lower() for value in (args.match or [])]
+    for tbl in target_tables:
+        for fname, fsize, mtime, dir2 in conn.execute(
+            f"SELECT file_name, file_size, modify_time, dir2 FROM {tbl} WHERE dir1=? ORDER BY modify_time DESC",
+            (dir1_rowid,)
+        ).fetchall():
+            if matches and not any(fname.lower().startswith(prefix) for prefix in matches):
+                continue
+            month = conn.execute("SELECT username FROM dir2id WHERE rowid=?", (dir2,)).fetchone()
+            month = month[0] if month else "?"
+            sub = sub_dirs[tbl]
+            full_path = wxid_dir / "msg/attach" / chat_hash / month / sub / fname
+            all_items.append((tbl, fname, fsize, mtime, month, full_path))
+
+    if not all_items:
+        print(f"{ctx['display_name']} 没有匹配的 {kind} 类型附件")
+        return
+
+    if not args.export:
+        print(f"{ctx['display_name']} 的附件（共 {len(all_items)} 项）:\n")
+        for tbl, fname, fsize, mtime, month, full in all_items[:args.n if args.n is not None else 50]:
+            t = tbl.split("_")[0]
+            when = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M") if mtime else "?"
+            mb = fsize / 1024 / 1024 if fsize else 0
+            mark = "✓" if full.exists() else "✗(本地缺)"
+            print(f"  [{when}] [{t}] {mb:6.2f}MB  {fname}  {mark}")
+        return
+
+    # export
+    out_dir = _P(args.output or f"~/Downloads/wx-files-{args.target}").expanduser().resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ok = fail = missing = 0
+    selected_items = all_items[:args.n] if args.n is not None else all_items
+    for tbl, fname, fsize, mtime, month, full in selected_items:
+        if not full.exists():
+            missing += 1
+            print(f"缺失 {fname}: 本地附件不存在")
+            continue
+        t = tbl.split("_")[0]
+        stem = datetime.fromtimestamp(mtime).strftime("%Y%m%d_%H%M%S") if mtime else "noTS"
+        try:
+            if t == "image":
+                if aes_key is None:
+                    with full.open("rb") as source:
+                        header = source.read(6)
+                    if header == decode_image.V2_MAGIC_6:
+                        fail += 1
+                        print(f"失败 {fname}: V2 图片缺少 image_aes_key")
+                        continue
+                # V2 .dat 解密
+                out_path, fmt = decode_image.decrypt_dat(
+                    str(full), str(out_dir / f"{stem}_{_P(fname).stem}.tmp"),
+                    aes_key=aes_key, xor_key=xor_key
+                )
+                if out_path and fmt and fmt != "bin":
+                    final = out_dir / f"{stem}_{_P(fname).stem}.{fmt}"
+                    _P(out_path).rename(final)
+                    ok += 1
+                    print(f"导出 {fname} -> {final}")
+                else:
+                    fail += 1
+                    print(f"失败 {fname}: 无法解码为可识别图片格式")
+            else:
+                # 文件/视频通常不加密，直接 copy
+                import shutil
+                ext = full.suffix or (".mp4" if t == "video" else ".bin")
+                shutil.copy(str(full), str(out_dir / f"{stem}_{fname[:20]}{ext}"))
+                ok += 1
+        except Exception as e:
+            fail += 1
+            print(f"失败 {fname}: {type(e).__name__}")
+    print(f"完成。{ok} ok / {fail} 失败 / {missing} 本地缺失 → {out_dir}")
+
+
+def cmd_solitaire(args):
+    """群接龙 ls/show"""
+    check_freshness()
+    import sqlite3, hashlib
+    from vchat_core import _compat as mcp_server
+    db = mcp_server._cache.get(os.path.join("solitaire", "solitaire.db"))
+    if not db:
+        print("拿不到 solitaire.db", file=sys.stderr); sys.exit(2)
+    names = mcp_server.get_contact_names() or {}
+
+    conn = connect_snapshot(db)
+    # 表名是 Solitaire_<hash> / SolitaireValid_<hash> / SolitaireFold_<hash>
+    sol_tables = [r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Solitaire\\_%' ESCAPE '\\'"
+    ).fetchall()]
+    hashes = sorted({t.replace("Solitaire_", "") for t in sol_tables})
+
+    # 反查 hash → group username
+    msg_db = mcp_server._cache.get(os.path.join("message", "message_0.db"))
+    h2u = {}
+    if msg_db:
+        for r in connect_snapshot(msg_db).execute("SELECT user_name FROM Name2Id"):
+            h2u[hashlib.md5(r[0].encode()).hexdigest()] = r[0]
+
+    if args.action == "ls":
+        print(f"有接龙的群（共 {len(hashes)} 个）:\n")
+        for h in hashes:
+            tbl = f"Solitaire_{h}"
+            cnt = conn.execute(f'SELECT COUNT(*) FROM "{tbl}"').fetchone()[0]
+            uname = h2u.get(h, "?")
+            display = names.get(uname) or uname
+            print(f"  {cnt:3d} 条接龙  {display}")
+        return
+
+    if args.action == "show":
+        if not args.target:
+            print("show 需要群名", file=sys.stderr); sys.exit(2)
+        ctx = mcp_server._resolve_chat_context(args.target)
+        if not ctx:
+            print(f"找不到群: {args.target}", file=sys.stderr); sys.exit(2)
+        h = hashlib.md5(ctx["username"].encode()).hexdigest()
+        tbl = f"Solitaire_{h}"
+        if tbl not in sol_tables:
+            print(f"{ctx['display_name']} 没有接龙记录")
+            return
+        rows = conn.execute(
+            f'SELECT header, footer, content, active_time FROM "{tbl}" ORDER BY active_time DESC LIMIT ?',
+            (args.n or 20,)
+        ).fetchall()
+        print(f"{ctx['display_name']} 的接龙（{len(rows)} 条）:\n")
+        for header, footer, content, ts in rows:
+            when = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M") if ts else "?"
+            print(f"[{when}] {header}")
+            if content:
+                for line in content.split("\n")[:8]:
+                    if line.strip():
+                        print(f"  {line.strip()}")
+            print()
+
+
+def cmd_voice(args):
+    """语音消息列表/导出。媒体在 media_0.db.VoiceInfo（305 条），mcp_server 有 decode/transcribe tool"""
+    check_freshness()
+    import sqlite3, hashlib
+    from vchat_core import _compat as mcp_server
+    db = mcp_server._cache.get(os.path.join("message", "media_0.db"))
+    if not db:
+        print("拿不到 media_0.db", file=sys.stderr); sys.exit(2)
+    names = mcp_server.get_contact_names() or {}
+    conn = connect_snapshot(db)
+
+    if args.action == "stats":
+        total = conn.execute("SELECT COUNT(*) FROM VoiceInfo").fetchone()[0]
+        print(f"本机缓存语音消息：{total} 条")
+        # 按 chat_name_id 分组 top
+        rows = conn.execute(
+            "SELECT n.user_name, COUNT(*) FROM VoiceInfo v JOIN Name2Id n ON n.rowid=v.chat_name_id "
+            "GROUP BY v.chat_name_id ORDER BY COUNT(*) DESC LIMIT 10"
+        ).fetchall()
+        print("\n各聊天对象的语音数 top 10:")
+        for uname, cnt in rows:
+            print(f"  {cnt:3d}  {names.get(uname) or uname}")
+        return
+
+    if args.action == "ls":
+        ctx = mcp_server._resolve_chat_context(args.target)
+        if not ctx:
+            print(f"找不到: {args.target}", file=sys.stderr); sys.exit(2)
+        rows = conn.execute(
+            "SELECT v.local_id, v.create_time, length(v.voice_data) FROM VoiceInfo v "
+            "JOIN Name2Id n ON n.rowid=v.chat_name_id WHERE n.user_name=? "
+            "ORDER BY v.create_time DESC LIMIT ?",
+            (ctx["username"], args.n or 30)
+        ).fetchall()
+        if not rows:
+            print(f"{ctx['display_name']} 没有缓存的语音")
+            return
+        print(f"{ctx['display_name']} 的语音（{len(rows)} 条）:\n")
+        for lid, ct, size in rows:
+            when = datetime.fromtimestamp(ct).strftime("%Y-%m-%d %H:%M") if ct else "?"
+            kb = (size or 0) / 1024
+            print(f"  local_id={lid}  [{when}]  {kb:.1f}KB")
+        print("\n提示: vchat voice transcribe <name> --local-id N  转录单条；CC 内调 MCP transcribe_voice 批量")
+        return
+
+    if args.action == "transcribe":
+        if not args.target or args.local_id is None:
+            print("transcribe 需要 <name> --local-id N", file=sys.stderr); sys.exit(2)
+        text = mcp_server.transcribe_voice(args.target, args.local_id)
+        print(text)
+        return
+
+
+def cmd_fav(args):
+    """微信收藏夹 ls/export"""
+    check_freshness()
+    import sqlite3
+    import xml.etree.ElementTree as ET
+    from vchat_core import _compat as mcp_server
+    db = mcp_server._cache.get(os.path.join("favorite", "favorite.db"))
+    if not db:
+        print("拿不到 favorite.db", file=sys.stderr); sys.exit(2)
+    names = mcp_server.get_contact_names() or {}
+
+    TYPE_MAP = {1: "文本", 2: "图片", 3: "语音", 4: "视频", 5: "URL", 6: "位置", 7: "动画表情",
+                8: "聊天记录", 14: "聊天记录", 17: "笔记", 18: "笔记", 21: "图文", 24: "小程序"}
+
+    with connect_snapshot(db) as conn:
+        rows = conn.execute(
+            "SELECT local_id, type, update_time, content, fromusr, realchatname FROM fav_db_item "
+            "ORDER BY update_time DESC LIMIT ?", (args.n or 50,)
+        ).fetchall()
+
+    if not rows:
+        print("收藏夹空"); return
+
+    parsed = []
+    for lid, t, ut, content, fromusr, realchat in rows:
+        # 从 favitem XML 提一些字段
+        title = ""; preview = ""
+        try:
+            root = ET.fromstring(content)
+            title = root.findtext(".//title") or root.findtext(".//datasource") or ""
+            preview = root.findtext(".//desc") or ""
+        except Exception:
+            preview = content[:100] if content else ""
+        when = datetime.fromtimestamp(ut).strftime("%Y-%m-%d %H:%M") if ut else "?"
+        kind = TYPE_MAP.get(t, f"type{t}")
+        chat = names.get(realchat or fromusr or "") or (realchat or fromusr or "")
+        parsed.append((lid, when, kind, chat, title, preview, content))
+
+    if args.action == "export":
+        out = Path(args.output or "~/Downloads/wechat_favorites.md").expanduser().resolve()
+        lines = [f"# 微信收藏夹", "", f"> 导出于 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  共 {len(parsed)} 条", ""]
+        for lid, when, kind, chat, title, preview, content in parsed:
+            lines.append(f"## [{when}] {kind}  ({chat})")
+            if title: lines.append(f"**{title}**")
+            if preview: lines.append(preview)
+            lines.append(f"\n<details><summary>raw XML</summary>\n\n```xml\n{content}\n```\n</details>\n")
+        out.write_text("\n\n".join(lines), encoding="utf-8")
+        print(f"导出 {len(parsed)} 条到 {out}")
+        return
+
+    # ls
+    print(f"收藏夹（共 {len(parsed)} 条）:\n")
+    for lid, when, kind, chat, title, preview, _ in parsed:
+        head = f"[{when}] [{kind}] {chat}"
+        print(head)
+        if title: print(f"  {title}")
+        if preview: print(f"  {preview[:120]}")
+        print()
+
+
+def cmd_friends(args):
+    """好友请求历史"""
+    check_freshness()
+    import sqlite3
+    from vchat_core import _compat as mcp_server
+    db = mcp_server._cache.get(os.path.join("general", "general.db"))
+    if not db:
+        print("拿不到 general.db", file=sys.stderr); sys.exit(2)
+    names = mcp_server.get_contact_names() or {}
+
+    SCENE_MAP = {
+        1: "QQ好友", 3: "手机号", 6: "公众号", 8: "群聊", 10: "通讯录", 13: "雷达",
+        14: "群聊", 15: "搜一搜", 17: "名片", 18: "附近", 25: "漂流瓶", 29: "摇一摇",
+        30: "扫一扫", 33: "微信号", 48: "扫一扫", 58: "公众号文章", 60: "视频号",
+    }
+    TYPE_MAP = {2: "我加的对方", 37: "对方加我"}
+
+    with connect_snapshot(db) as conn:
+        rows = conn.execute(
+            "SELECT user_name_, type_, timestamp_, content_, scene_, is_sender_ "
+            "FROM FMessageTable ORDER BY timestamp_ DESC LIMIT ?", (args.n or 30,)
+        ).fetchall()
+    if not rows:
+        print("没有好友请求记录"); return
+
+    print(f"好友请求历史（最近 {len(rows)} 条）:\n")
+    for uname, t, ts, content, scene, is_sender in rows:
+        when = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M") if ts else "?"
+        who = names.get(uname) or uname
+        action = TYPE_MAP.get(t, f"type{t}")
+        from_where = SCENE_MAP.get(scene, f"scene{scene}")
+        print(f"[{when}] {action}  来源：{from_where}")
+        print(f"  {who} ({uname})")
+        if content: print(f"  「{content[:200]}」")
+        print()
+
+
+def _pb_parse(data, depth=0):
+    """Raw protobuf scanner. 返回 list[(field, type, value)]"""
+    i = 0
+    out = []
+    while i < len(data):
+        b = data[i]; i += 1
+        shift = 7
+        while b & 0x80 and i < len(data):
+            b = (b & 0x7f) | (data[i] << shift)
+            i += 1; shift += 7
+        field = b >> 3
+        wire = b & 7
+        if wire == 0:
+            v = 0; shift = 0
+            while i < len(data):
+                bb = data[i]; i += 1
+                v |= (bb & 0x7f) << shift
+                if not (bb & 0x80): break
+                shift += 7
+            out.append((field, 'varint', v))
+        elif wire == 2:
+            L = 0; shift = 0
+            while i < len(data):
+                bb = data[i]; i += 1
+                L |= (bb & 0x7f) << shift
+                if not (bb & 0x80): break
+                shift += 7
+            chunk = data[i:i+L]; i += L
+            try:
+                s = chunk.decode('utf-8')
+                if all(c.isprintable() or c in '\n\t' for c in s) and s:
+                    out.append((field, 'str', s)); continue
+            except UnicodeDecodeError:
+                pass
+            if depth < 3:
+                nested = _pb_parse(chunk, depth+1)
+                if nested:
+                    out.append((field, 'nested', nested)); continue
+            out.append((field, 'bytes', chunk))
+        elif wire == 1: i += 8
+        elif wire == 5: i += 4
+        else: break
+    return out
+
+
+def cmd_finder(args):
+    """关注的视频号列表（protobuf 解出昵称）"""
+    check_freshness()
+    import sqlite3
+    from vchat_core import _compat as mcp_server
+    db = mcp_server._cache.get(os.path.join("general", "general.db"))
+    if not db:
+        print("拿不到 general.db", file=sys.stderr); sys.exit(2)
+
+    with connect_snapshot(db) as conn:
+        rows = conn.execute("SELECT username, extra_buffer FROM wcfinderuserpage").fetchall()
+
+    print(f"关注的视频号（共 {len(rows)} 个）:\n")
+    for uname, buf in rows:
+        nickname = ""
+        homepage = ""
+        if buf:
+            fields = _pb_parse(buf)
+            for f, t, v in fields:
+                if f == 2 and t == 'str' and not nickname:
+                    nickname = v
+                if f == 6 and t == 'str' and 'channels.weixin' in v:
+                    homepage = v.split('?')[0]
+        line = f"  {uname:30s}  {nickname}"
+        if homepage and args.urls:
+            line += f"  {homepage}"
+        print(line)
+
+
+def cmd_money(args):
+    """转账 + 红包历史。转账金额从 message_*.db 的 wcpayinfo 提取；红包金额库里没存（微信设计）"""
+    check_freshness()
+    import sqlite3, hashlib, re
+    from vchat_core import _compat as mcp_server
+    db_g = mcp_server._cache.get(os.path.join("general", "general.db"))
+    if not db_g:
+        print("拿不到 general.db", file=sys.stderr); sys.exit(2)
+    names = mcp_server.get_contact_names() or {}
+    self_id = mcp_server._get_self_username()
+
+    with connect_snapshot(db_g) as conn:
+        transfers = conn.execute(
+            "SELECT message_server_id, second_message_server_id, begin_transfer_time, session_name, pay_payer, pay_receiver "
+            "FROM transferTable ORDER BY begin_transfer_time DESC"
+        ).fetchall()
+        reds = conn.execute(
+            "SELECT message_server_id, session_name, sender_user_name "
+            "FROM redEnvelopeTable ORDER BY message_server_id DESC"
+        ).fetchall()
+
+    # JOIN 转账 → message_0.db Msg_<md5(session)>.server_id = msg_id
+    db_m = mcp_server._cache.get(os.path.join("message", "message_0.db"))
+    msg_conn = connect_snapshot(db_m) if db_m else None
+
+    def fetch_transfer_detail(msg_id, second_id, session):
+        """从 message_0.db JOIN 拿到金额 + 备注"""
+        if not msg_conn: return None, None
+        tbl = f"Msg_{hashlib.md5(session.encode()).hexdigest()}"
+        # 检查表存在
+        if not msg_conn.execute("SELECT name FROM sqlite_master WHERE name=?", (tbl,)).fetchone():
+            return None, None
+        # 试 message_server_id 和 second_message_server_id
+        for sid in (msg_id, second_id):
+            if not sid: continue
+            r = msg_conn.execute(
+                f'SELECT message_content, WCDB_CT_message_content FROM "{tbl}" WHERE server_id=?',
+                (sid,)
+            ).fetchone()
+            if not r: continue
+            mc, wcdb = r
+            decoded = mcp_server._decompress_content(mc, wcdb) or ""
+            fee = re.search(r"<feedesc>(?:<!\[CDATA\[)?([^<\]]+)", str(decoded))
+            memo = re.search(r"<pay_memo>(?:<!\[CDATA\[)?([^<\]]+)", str(decoded))
+            return (fee.group(1) if fee else None, memo.group(1) if memo else None)
+        return None, None
+
+    def fetch_red_time(msg_id, session):
+        """红包没金额，至少拿个 create_time"""
+        if not msg_conn: return 0
+        tbl = f"Msg_{hashlib.md5(session.encode()).hexdigest()}"
+        if not msg_conn.execute("SELECT name FROM sqlite_master WHERE name=?", (tbl,)).fetchone():
+            return 0
+        r = msg_conn.execute(f'SELECT create_time FROM "{tbl}" WHERE server_id=?', (msg_id,)).fetchone()
+        return r[0] if r else 0
+
+    def display(uname):
+        return names.get(uname) or uname or "?"
+
+    events = []
+    for msg_id, second_id, ts, sess, payer, recv in transfers:
+        direction = "→" if payer == self_id else "←" if recv == self_id else "↔"
+        other = display(recv if payer == self_id else payer)
+        amount, memo = fetch_transfer_detail(msg_id, second_id, sess)
+        events.append((ts, "转账", direction, other, display(sess), amount or "?", memo or ""))
+    for sid, sess, sender in reds:
+        ts = fetch_red_time(sid, sess)
+        direction = "→" if sender == self_id else "←"
+        events.append((ts, "红包", direction, display(sender), display(sess), "(本地无)", ""))
+
+    events.sort(key=lambda e: -(e[0] or 0))
+    if msg_conn: msg_conn.close()
+
+    n = args.n or 40
+    transfer_total_in = sum(1 for e in events if e[1] == "转账" and e[2] == "←")
+    transfer_total_out = sum(1 for e in events if e[1] == "转账" and e[2] == "→")
+    print(f"转账 {len(transfers)} 条（收 {transfer_total_in} / 付 {transfer_total_out}） + 红包 {len(reds)} 条")
+    print("红包金额微信本地不存（设计如此），转账金额从消息内容里提取\n")
+    print(f"{'日期':<19}  {'类型':<4}  {'方向':<3}  {'金额':<10}  {'对方/发送者':<20}  群/对话  备注")
+    for ts, kind, direction, other, chat, amount, memo in events[:n]:
+        when = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M") if ts else "(?)"
+        chat_short = chat if chat == other else chat[:14]
+        memo_short = f"📝{memo[:20]}" if memo else ""
+        print(f"  {when}  {kind}  {direction}  {amount:<10}  {other[:18]:<18s}  {chat_short:<20s}  {memo_short}")
+
+
+def cmd_stats(args):
+    """数据洞察：top-contacts / top-groups / monthly / hourly / overview"""
+    check_freshness()
+    import sqlite3, hashlib
+    from vchat_core import _compat as mcp_server
+    db = mcp_server._cache.get(os.path.join("message", "message_0.db"))
+    if not db:
+        print("拿不到 message_0.db", file=sys.stderr); sys.exit(2)
+    conn = connect_snapshot(db)
+    names = mcp_server.get_contact_names() or {}
+    self_id = mcp_server._get_self_username()
+
+    # 拿所有 Msg_<hash> 表对应的 username
+    n2t = {}
+    for r in conn.execute("SELECT user_name FROM Name2Id").fetchall():
+        h = hashlib.md5(r[0].encode()).hexdigest()
+        n2t[f"Msg_{h}"] = r[0]
+    tables = [r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%'"
+    ).fetchall()]
+
+    def display(uname):
+        return names.get(uname) or uname
+
+    # 全表聚合（local_type=1 文本，3 图，34 语音 …全算消息）
+    # real_sender_id 在群里区分发言者，1v1 里 self_id 不一定有 id
+    if args.action == "overview":
+        total_msgs = 0
+        total_chats = 0
+        total_sent = 0  # 我发的
+        for t in tables:
+            uname = n2t.get(t, "?")
+            cnt = conn.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]
+            if cnt == 0: continue
+            total_chats += 1
+            total_msgs += cnt
+            # 我发的（real_sender_id 关联 SELF）
+            sent = conn.execute(
+                f'SELECT COUNT(*) FROM "{t}" WHERE real_sender_id IN ('
+                f'SELECT rowid FROM Name2Id WHERE user_name=?)', (self_id,)
+            ).fetchone()[0]
+            total_sent += sent
+        print(f"消息总数:        {total_msgs:,}")
+        print(f"聊天对象数:      {total_chats:,}")
+        print(f"我发的消息数:    {total_sent:,}")
+        print(f"对方发的消息数:  {total_msgs - total_sent:,}")
+        # 时间跨度
+        first, last = None, None
+        for t in tables[:50]:  # 抽样
+            r = conn.execute(f'SELECT MIN(create_time), MAX(create_time) FROM "{t}" WHERE create_time>0').fetchone()
+            if r[0]:
+                first = min(first or r[0], r[0])
+                last = max(last or r[1], r[1])
+        if first and last:
+            print(f"时间跨度:        {datetime.fromtimestamp(first).date()} 至 {datetime.fromtimestamp(last).date()}")
+        return
+
+    if args.action in ("top-contacts", "top-groups"):
+        is_group_mode = args.action == "top-groups"
+        ranks = []
+        for t in tables:
+            uname = n2t.get(t, "")
+            if not uname: continue
+            is_group = uname.endswith("@chatroom")
+            if is_group_mode and not is_group: continue
+            if not is_group_mode and is_group: continue
+            cnt = conn.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]
+            if cnt == 0: continue
+            ranks.append((uname, cnt))
+        ranks.sort(key=lambda x: -x[1])
+        n = args.n or 20
+        kind = "群" if is_group_mode else "联系人"
+        print(f"消息量 top {min(n, len(ranks))} {kind}（共 {len(ranks)} 个）:\n")
+        for uname, cnt in ranks[:n]:
+            print(f"  {cnt:6d}  {display(uname)}")
+        return
+
+    if args.action == "monthly":
+        # 全表按月聚合（用 create_time）
+        agg = {}
+        for t in tables:
+            for ym, cnt in conn.execute(
+                f"SELECT strftime('%Y-%m', create_time, 'unixepoch','localtime') AS ym, COUNT(*) "
+                f'FROM "{t}" WHERE create_time > 0 GROUP BY ym'
+            ).fetchall():
+                agg[ym] = agg.get(ym, 0) + cnt
+        print("每月消息量（含收发双方）:\n")
+        for ym in sorted(agg.keys()):
+            bar = "█" * min(60, agg[ym] // max(1, max(agg.values()) // 60))
+            print(f"  {ym}  {agg[ym]:6d}  {bar}")
+        return
+
+    if args.action == "hourly":
+        agg = [0] * 24
+        for t in tables:
+            for hour, cnt in conn.execute(
+                f"SELECT CAST(strftime('%H', create_time, 'unixepoch','localtime') AS INTEGER) AS h, COUNT(*) "
+                f'FROM "{t}" WHERE create_time > 0 GROUP BY h'
+            ).fetchall():
+                agg[hour] += cnt
+        m = max(agg)
+        print("24h 消息分布:\n")
+        for h in range(24):
+            bar = "█" * (agg[h] * 50 // m)
+            print(f"  {h:02d}时  {agg[h]:6d}  {bar}")
+        return
+
+    print(f"未知 action: {args.action}", file=sys.stderr); sys.exit(2)
+
+
+def _biz_db():
+    from vchat_core import _compat as mcp_server
+    return mcp_server._cache.get("message/biz_message_0.db")
+
+
+def _article_key(url):
+    """URL 里取 __biz+mid+idx+sn 做去重 key，chksm 动态变不能用"""
+    import re
+    if not url:
+        return ""
+    parts = {}
+    for k in ("__biz", "mid", "idx", "sn"):
+        m = re.search(rf"[?&]{k}=([^&]+)", url)
+        if m: parts[k] = m.group(1)
+    return f"{parts.get('__biz','')}#{parts.get('mid','')}#{parts.get('idx','')}#{parts.get('sn','')}"
+
+
+def _parse_biz_xml(text):
+    """公众号文章 XML 解析。一条推送可能含多篇文章（mmreader/category/item）。返回 list[dict]"""
+    import xml.etree.ElementTree as ET
+    if not text:
+        return []
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        return []
+    appmsg = root.find("appmsg")
+    if appmsg is None:
+        return []
+    cat = appmsg.find(".//mmreader/category")
+    biz_name = cat.findtext("name") if cat is not None else ""
+    articles = []
+    # topnew (头条) + items (副条)
+    if cat is not None:
+        topnew = cat.find("topnew")
+        if topnew is not None:
+            articles.append({
+                "biz": biz_name,
+                "title": appmsg.findtext("title") or "",
+                "url": appmsg.findtext("url") or "",
+                "digest": (appmsg.findtext("des") or "").strip(),
+                "cover": topnew.findtext("cover") or "",
+            })
+        for it in cat.findall("item"):
+            articles.append({
+                "biz": biz_name,
+                "title": it.findtext("title") or "",
+                "url": it.findtext("url") or "",
+                "digest": (it.findtext("digest") or "").strip(),
+                "cover": it.findtext("cover") or "",
+            })
+    if not articles:  # fallback: 用 appmsg 顶层
+        articles.append({
+            "biz": biz_name or "?",
+            "title": appmsg.findtext("title") or "",
+            "url": appmsg.findtext("url") or "",
+            "digest": (appmsg.findtext("des") or "").strip(),
+            "cover": "",
+        })
+    return articles
+
+
+def cmd_biz(args):
+    """公众号订阅历史 ls/accounts/search/articles"""
+    check_freshness()
+    import sqlite3
+    from vchat_core import _compat as mcp_server
+    db = _biz_db()
+    if not db:
+        print("拿不到 biz_message_0.db", file=sys.stderr)
+        sys.exit(2)
+    conn = connect_snapshot(db)
+    tables = [r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%'"
+    ).fetchall()]
+    names = mcp_server.get_contact_names() or {}
+    BIZ_TYPE = 21474836529  # 公众号文章推送
+
+    def _table_for_biz(query):
+        """从联系人名解析到该公众号的 Msg 表名"""
+        ctx = mcp_server._resolve_chat_context(query)
+        if not ctx:
+            return None, None
+        username = ctx["username"]
+        # Name2Id 表里 user_name → 哪张 Msg_<hash>
+        row = conn.execute("SELECT user_name FROM Name2Id WHERE user_name=?", (username,)).fetchone()
+        if not row:
+            return None, ctx["display_name"]
+        import hashlib
+        h = hashlib.md5(username.encode()).hexdigest()
+        tbl = f"Msg_{h}"
+        if tbl not in tables:
+            return None, ctx["display_name"]
+        return tbl, ctx["display_name"]
+
+    if args.action == "accounts":
+        # 按消息数排序公众号列表
+        stats = []
+        for t in tables:
+            cnt = conn.execute(f'SELECT COUNT(*) FROM "{t}" WHERE local_type=?', (BIZ_TYPE,)).fetchone()[0]
+            if cnt == 0: continue
+            # 反查 wxid: t = Msg_<md5(wxid)>
+            stats.append((t, cnt))
+        stats.sort(key=lambda x: -x[1])
+
+        # 反查 wxid → name：扫 Name2Id 算 md5 匹配
+        n2t = {}
+        for r in conn.execute("SELECT user_name FROM Name2Id").fetchall():
+            import hashlib
+            h = hashlib.md5(r[0].encode()).hexdigest()
+            n2t[f"Msg_{h}"] = r[0]
+
+        n = args.n or 50
+        print(f"看过文章的公众号 top {min(n,len(stats))}（共 {len(stats)} 个有文章的公众号）:\n")
+        for tbl, cnt in stats[:n]:
+            wxid = n2t.get(tbl, "?")
+            name = names.get(wxid, wxid)
+            print(f"  {cnt:5d} 篇  {name}  ({wxid})")
+        return
+
+    if args.action == "ls":
+        # 全库最近 N 条文章（合并所有 Msg 表）
+        n = args.n or 20
+        all_rows = []
+        for t in tables:
+            for row in conn.execute(
+                f'SELECT create_time, message_content, WCDB_CT_message_content FROM "{t}" '
+                f'WHERE local_type=? ORDER BY create_time DESC LIMIT ?',
+                (BIZ_TYPE, n)
+            ).fetchall():
+                all_rows.append((t, row[0], row[1], row[2]))
+        all_rows.sort(key=lambda x: -x[1])
+        all_rows = all_rows[:n]
+
+        seen = set()
+        shown = 0
+        for tbl, ct, mc, wcdb_ct in all_rows:
+            decoded = mcp_server._decompress_content(mc, wcdb_ct)
+            for art in _parse_biz_xml(decoded):
+                k = _article_key(art['url'])
+                if k and k in seen: continue
+                seen.add(k)
+                when = datetime.fromtimestamp(ct).strftime("%m-%d %H:%M")
+                print(f"[{when}] [{art['biz']}] {art['title']}")
+                if art['digest']:
+                    print(f"  {art['digest'][:100]}")
+                if art['url']:
+                    print(f"  {art['url']}")
+                print()
+                shown += 1
+                if shown >= n: return
+        return
+
+    if args.action == "search":
+        kw = args.target
+        if not kw:
+            print("search 需要关键词", file=sys.stderr); sys.exit(2)
+        n = args.n or 30
+        # message_content 是 zstd 压缩的，SQL LIKE 搜不到，全量解压扫
+        kw_lower = kw.lower()
+        seen = set()
+        hits = []
+        scanned = 0
+        for t in tables:
+            rows = conn.execute(
+                f'SELECT create_time, message_content, WCDB_CT_message_content FROM "{t}" '
+                f'WHERE local_type=? ORDER BY create_time DESC',
+                (BIZ_TYPE,)
+            ).fetchall()
+            for ct, mc, wcdb_ct in rows:
+                scanned += 1
+                decoded = mcp_server._decompress_content(mc, wcdb_ct)
+                if not decoded or kw_lower not in str(decoded).lower():
+                    continue
+                for art in _parse_biz_xml(decoded):
+                    if kw_lower not in (art['title'] + art['digest']).lower():
+                        continue
+                    k = _article_key(art['url'])
+                    if k and k in seen: continue
+                    seen.add(k)
+                    hits.append((ct, art))
+                    if len(hits) >= n: break
+                if len(hits) >= n: break
+            if len(hits) >= n: break
+        hits.sort(key=lambda x: -x[0])
+        if not hits:
+            print(f"没找到含「{kw}」的公众号文章（扫描 {scanned} 条）")
+            return
+        print(f"搜「{kw}」找到 {len(hits)} 条（扫描 {scanned} 条）:\n")
+        for ct, art in hits:
+            when = datetime.fromtimestamp(ct).strftime("%Y-%m-%d %H:%M")
+            print(f"[{when}] [{art['biz']}] {art['title']}")
+            if art['url']:
+                print(f"  {art['url']}")
+            print()
+        return
+
+    if args.action == "articles":
+        if not args.target:
+            print("articles 需要公众号名/wxid", file=sys.stderr); sys.exit(2)
+        tbl, dname = _table_for_biz(args.target)
+        if not tbl:
+            print(f"找不到公众号: {args.target}", file=sys.stderr); sys.exit(2)
+        n = args.n or 100
+        rows = conn.execute(
+            f'SELECT create_time, message_content, WCDB_CT_message_content FROM "{tbl}" '
+            f'WHERE local_type=? ORDER BY create_time DESC LIMIT ?',
+            (BIZ_TYPE, n)
+        ).fetchall()
+        seen = set()
+        out = []
+        for ct, mc, wcdb_ct in rows:
+            decoded = mcp_server._decompress_content(mc, wcdb_ct)
+            for art in _parse_biz_xml(decoded):
+                k = _article_key(art['url'])
+                if k and k in seen: continue
+                seen.add(k)
+                out.append((ct, art))
+        print(f"{dname} 的文章历史（去重后 {len(out)} 篇）:\n")
+        for ct, art in out:
+            when = datetime.fromtimestamp(ct).strftime("%Y-%m-%d %H:%M")
+            print(f"[{when}] {art['title']}")
+            if art['url']:
+                print(f"  {art['url']}")
+        return
+
+    print(f"未知 action: {args.action}", file=sys.stderr); sys.exit(2)
+
+
+def cmd_avatar(args):
+    """提取头像。head_image.db 里 image_buffer 直接就是 JPEG 字节。
+    走 mcp_server._cache 拿最新解密快照（按 mtime 检测 + WAL patch），保证新加好友的头像也能拿到。
+    """
+    check_freshness()
+    import sqlite3
+    import os as _os
+    from vchat_core import _compat as mcp_server
+    db = mcp_server._cache.get(_os.path.join("head_image", "head_image.db"))
+    if not db:
+        print("DBCache 拿不到 head_image.db，可能 all_keys.json 过期，sudo wxrefresh", file=sys.stderr)
+        sys.exit(2)
+
+    out_dir = Path(args.output_dir or "~/Downloads").expanduser().resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.all:
+        with connect_snapshot(db) as conn:
+            rows = conn.execute(
+                "SELECT username, image_buffer FROM head_image WHERE image_buffer IS NOT NULL"
+            ).fetchall()
+        ok = 0
+        for uname, buf in rows:
+            if not buf or buf[:3] != b"\xff\xd8\xff":
+                continue
+            safe = uname.replace("/", "_").replace("@", "_at_")
+            (out_dir / f"{safe}.jpg").write_bytes(buf)
+            ok += 1
+        print(f"导出 {ok}/{len(rows)} 个头像到 {out_dir}")
+        return
+
+    # 按名字解析到 username
+    ctx = mcp_server._resolve_chat_context(args.name)
+    if not ctx:
+        print(f"找不到联系人/群: {args.name}", file=sys.stderr)
+        sys.exit(2)
+    target = ctx["username"]
+
+    if ctx.get("is_group"):
+        # 群头像也走 head_image，username 是 chatroom id
+        targets = [target]
+    else:
+        targets = [target]
+
+    with connect_snapshot(db) as conn:
+        for uname in targets:
+            row = conn.execute(
+                "SELECT image_buffer FROM head_image WHERE username = ?", (uname,)
+            ).fetchone()
+            if not row or not row[0]:
+                print(f"{uname}: 库里没有头像", file=sys.stderr)
+                continue
+            buf = row[0]
+            if buf[:3] != b"\xff\xd8\xff":
+                print(f"{uname}: image_buffer 不是 JPEG（前 4 字节 {buf[:4].hex()}）", file=sys.stderr)
+                continue
+            safe = uname.replace("/", "_").replace("@", "_at_")
+            out_path = out_dir / f"{ctx['display_name']}_{safe}.jpg"
+            out_path.write_bytes(buf)
+            print(out_path)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# v2 新增子命令（22+ 个）
+# ═══════════════════════════════════════════════════════════════════
+
+def cmd_doctor(args):
+    """数据目录健康检查（缺什么 db 一目了然）"""
+    from vchat_core.exitcodes import EX_NOINPUT, EX_OSFILE
+    json_mode = getattr(args, "json_out", False)
+
+    required = {
+        "contact/contact.db":    "联系人 / 群成员",
+        "session/session.db":    "最近会话",
+        "message/message_0.db":  "消息",
+    }
+    optional = {
+        "message/media_0.db":      "媒体",
+        "head_image/head_image.db":"头像",
+        "favorite/favorite.db":    "收藏夹",
+        "sns/sns.db":              "朋友圈",
+    }
+
+    if not DECRYPTED.exists():
+        if json_mode:
+            from vchat_core.output import emit
+            emit({"data_dir": str(DATA_DIR), "exists": False,
+                  "missing_required": list(required.keys())}, json_mode=True)
+        else:
+            print(f"数据目录: {DATA_DIR}")
+            print(f"❌ {DECRYPTED} 不存在 — 先跑 sudo vchat setup")
+        sys.exit(EX_NOINPUT)
+
+    payload = {"data_dir": str(DATA_DIR), "decrypted_dir": str(DECRYPTED),
+               "exists": True, "required": [], "optional": [],
+               "message_shards": [], "missing_required": []}
+    for rel, why in required.items():
+        p = DECRYPTED / rel
+        payload["required"].append({"path": rel, "purpose": why,
+            "exists": p.exists(),
+            "size_kb": (p.stat().st_size / 1024) if p.exists() else 0})
+        if not p.exists():
+            payload["missing_required"].append(rel)
+    msg_dir = DECRYPTED / "message"
+    for rel, why in optional.items():
+        if rel == "message/media_0.db":
+            shards = sorted(msg_dir.glob("media_*.db")) if msg_dir.exists() else []
+            payload["optional"].append({"path": "message/media_*.db", "purpose": why,
+                "exists": bool(shards), "shards": len(shards),
+                "total_kb": sum(p.stat().st_size for p in shards) / 1024})
+            continue
+        p = DECRYPTED / rel
+        payload["optional"].append({"path": rel, "purpose": why,
+            "exists": p.exists(),
+            "size_kb": (p.stat().st_size / 1024) if p.exists() else 0})
+    if msg_dir.exists():
+        for p in sorted(msg_dir.glob("message_*.db")):
+            payload["message_shards"].append({"path": str(p.relative_to(DECRYPTED)),
+                "size_mb": p.stat().st_size / (1024 * 1024)})
+
+    if json_mode:
+        from vchat_core.output import emit
+        emit(payload, json_mode=True)
+        if payload["missing_required"]:
+            sys.exit(EX_OSFILE)
+        return
+
+    print(f"数据目录: {DATA_DIR}\n\n必需 db:")
+    for it in payload["required"]:
+        sym = "✅" if it["exists"] else "❌"
+        sz = f"{it['size_kb']:>7.1f} KB" if it["exists"] else "缺失       "
+        print(f"  {sym} {it['path']:30s}  {sz}  · {it['purpose']}")
+    print("\n可选 db:")
+    for it in payload["optional"]:
+        sym = "✅" if it["exists"] else "⚪"
+        if "shards" in it:
+            print(f"  {sym} {it['path']} (×{it['shards']})  {it['total_kb']:>7.1f} KB  · {it['purpose']}")
+        else:
+            sz = f"{it['size_kb']:>7.1f} KB" if it["exists"] else "未提供     "
+            print(f"  {sym} {it['path']:30s}  {sz}  · {it['purpose']}")
+    if payload["message_shards"]:
+        total = sum(s["size_mb"] for s in payload["message_shards"])
+        print(f"\n消息分片: {len(payload['message_shards'])} 个，合计 {total:.1f} MB")
+    print()
+    if payload["missing_required"]:
+        print(f"⚠️  缺 {len(payload['missing_required'])} 个必需 db")
+        sys.exit(EX_OSFILE)
+    print("✅ 必需 db 齐全，vchat 可正常工作。")
+
+
+def cmd_revoked(args):
+    """列被撤回的消息（缓存稀疏，微信只保留近期撤回）"""
+    check_freshness()
+    import sqlite3
+    from vchat_core import _compat as core
+    db = core._cache.get("general/general.db")
+    if not db:
+        print("❌ general.db 不可用", file=sys.stderr); sys.exit(2)
+    conn = connect_snapshot(db)
+    names = core.get_contact_names() or {}
+    rows = conn.execute(
+        "SELECT revoke_time, to_user_name, message_type, content "
+        "FROM revokemessage ORDER BY revoke_time DESC LIMIT ?", (args.n or 50,)
+    ).fetchall()
+    bat = conn.execute(
+        "SELECT msg_create_time, session_name, msg_local_id, batch_id "
+        "FROM revokebatchmessage ORDER BY msg_create_time DESC LIMIT ?", (args.n or 50,)
+    ).fetchall()
+    if not rows and not bat:
+        print("（撤回缓存为空 — 微信只保留近期撤回，老的会被清）"); return
+    if rows:
+        print(f"== 单条撤回（{len(rows)} 条）==")
+        for rt, u, mtype, c in rows:
+            when = datetime.fromtimestamp(rt).strftime("%Y-%m-%d %H:%M:%S") if rt else "?"
+            print(f"  [{when}] [{names.get(u, u)}] type={mtype}  {(c or '')[:80]}")
+        print()
+    if bat:
+        print(f"== 批量撤回（{len(bat)} 条）==")
+        for ct, sn, local_id, bid in bat:
+            when = datetime.fromtimestamp(ct).strftime("%Y-%m-%d %H:%M:%S") if ct else "?"
+            print(f"  [{when}] [{names.get(sn, sn)}] local_id={local_id} batch_id={bid}")
+
+
+def cmd_unread(args):
+    """未读消息明细（指定群或全局聚合）"""
+    check_freshness()
+    import sqlite3
+    from vchat_core import _compat as core
+    db = core._cache.get("session/session.db")
+    if not db:
+        print("❌ session.db 不可用", file=sys.stderr); sys.exit(2)
+    conn = connect_snapshot(db)
+    names = core.get_contact_names() or {}
+    rowid_to_user = {r[0]: r[1] for r in conn.execute("SELECT rowid, user_name FROM Name2Id").fetchall()}
+
+    if args.target:
+        ctx = core._resolve_chat_context(args.target)
+        if not ctx:
+            print(f"❌ 找不到聊天对象: {args.target}", file=sys.stderr); sys.exit(2)
+        uid = next((r for r, u in rowid_to_user.items() if u == ctx["username"]), None)
+        if uid is None:
+            print(f"（{ctx['display_name']} 无未读）"); return
+        rows = conn.execute(
+            "SELECT server_id, create_time FROM SessionUnreadListTable_1 "
+            "WHERE username_id=? ORDER BY create_time DESC LIMIT ?",
+            (uid, args.n or 200)
+        ).fetchall()
+        if not rows:
+            print(f"{ctx['display_name']} 无未读"); return
+        print(f"{ctx['display_name']} 未读 {len(rows)} 条:")
+        for sid, ct in rows:
+            when = datetime.fromtimestamp(ct).strftime("%Y-%m-%d %H:%M") if ct else "?"
+            print(f"  [{when}]  server_id={sid}")
+        return
+
+    rows = conn.execute(
+        "SELECT username_id, COUNT(*) AS n, MAX(create_time) AS latest "
+        "FROM SessionUnreadListTable_1 GROUP BY username_id ORDER BY n DESC LIMIT ?",
+        (args.n or 30,)
+    ).fetchall()
+    if not rows:
+        print("（无未读）"); return
+    total = conn.execute("SELECT COUNT(*) FROM SessionUnreadListTable_1").fetchone()[0]
+    print(f"未读总计: {total} 条 / {len(rows)} 个会话有未读\n")
+    for uid, n, latest in rows:
+        u = rowid_to_user.get(uid, f"?id={uid}")
+        when = datetime.fromtimestamp(latest).strftime("%Y-%m-%d %H:%M") if latest else "?"
+        print(f"  📬{n:5d}  [{when}]  {names.get(u, u)}")
+
+
+def cmd_tags(args):
+    """联系人标签 ls / members"""
+    check_freshness()
+    import sqlite3
+    from vchat_core import _compat as core
+    db = core._cache.get("contact/contact.db")
+    if not db:
+        print("❌ contact.db 不可用", file=sys.stderr); sys.exit(2)
+    conn = connect_snapshot(db)
+
+    if args.action == "ls":
+        rows = conn.execute("SELECT label_id_, label_name_, sort_order_ FROM contact_label ORDER BY sort_order_").fetchall()
+        if not rows:
+            print("（没有标签）"); return
+        print(f"联系人标签（{len(rows)} 个）：")
+        for lid, name, _ in rows:
+            print(f"  [{lid:3d}]  {name}")
+        return
+
+    if args.action == "members":
+        if not args.target:
+            print("❌ vchat tags-members <标签名或id>", file=sys.stderr); sys.exit(2)
+        try:
+            label_id = int(args.target)
+            row = conn.execute("SELECT label_name_ FROM contact_label WHERE label_id_=?", (label_id,)).fetchone()
+            label_name = row[0] if row else f"id={label_id}"
+        except ValueError:
+            row = conn.execute("SELECT label_id_, label_name_ FROM contact_label WHERE label_name_=?", (args.target,)).fetchone()
+            if not row:
+                print(f"❌ 没有标签: {args.target}", file=sys.stderr); sys.exit(2)
+            label_id, label_name = row
+
+        rows = conn.execute(
+            "SELECT username, nick_name, remark, extra_buffer FROM contact "
+            "WHERE extra_buffer IS NOT NULL AND length(extra_buffer) > 2"
+        ).fetchall()
+
+        def _scan(buf, target):
+            i, n = 0, len(buf)
+            while i < n - 1:
+                tag = buf[i]; i += 1
+                wt = tag & 0x7
+                if wt != 2:
+                    if wt == 0:
+                        while i < n and buf[i] & 0x80: i += 1
+                        i += 1
+                    elif wt == 1: i += 8
+                    elif wt == 5: i += 4
+                    else: break
+                    continue
+                length, shift = 0, 0
+                while i < n and shift < 64:
+                    b = buf[i]; i += 1
+                    length |= (b & 0x7f) << shift
+                    if not (b & 0x80): break
+                    shift += 7
+                if length <= 0 or length > 200 or i + length > n:
+                    continue
+                blk = buf[i:i+length]; i += length
+                j = 0
+                while j < len(blk):
+                    val, shift = 0, 0
+                    while j < len(blk) and shift < 64:
+                        b = blk[j]; j += 1
+                        val |= (b & 0x7f) << shift
+                        if not (b & 0x80): break
+                        shift += 7
+                    if val == target: return True
+                    if val > 200: break
+            return False
+
+        hits = []
+        for u, n, r, eb in rows:
+            if _scan(eb, label_id):
+                hits.append((u, r or n or u))
+        print(f"标签「{label_name}」(id={label_id}) 下的成员（启发式扫描）：")
+        if not hits:
+            print("  （没扫到）"); return
+        print(f"  {len(hits)} 个候选：\n")
+        for u, name in hits[:args.n or 200]:
+            print(f"  {u:35s}  {name}")
+        print("\n注：基于 extra_buffer protobuf 启发式扫描；精确度有限。")
+
+
+def cmd_group_info(args):
+    """群详情：群主 + 公告 + 公告作者 + 公告时间 + 成员数"""
+    check_freshness()
+    import sqlite3
+    from vchat_core import _compat as core
+    from vchat_core.contacts import get_chatroom_members
+    db = core._cache.get("contact/contact.db")
+    if not db:
+        print("❌ contact.db 不可用", file=sys.stderr); sys.exit(2)
+    ctx = core._resolve_chat_context(args.group)
+    if not ctx:
+        print(f"❌ 找不到群: {args.group}", file=sys.stderr); sys.exit(2)
+    if not ctx.get("is_group"):
+        print(f"❌ {args.group} 不是群聊", file=sys.stderr); sys.exit(2)
+    uname = ctx["username"]
+    names = core.get_contact_names() or {}
+    conn = connect_snapshot(db)
+    row = conn.execute("SELECT id, owner FROM chat_room WHERE username=?", (uname,)).fetchone()
+    if not row:
+        print(f"❌ {ctx['display_name']} 在 chat_room 表里没有记录", file=sys.stderr); sys.exit(2)
+    rid, owner = row
+    det = conn.execute(
+        "SELECT announcement_, announcement_editor_, announcement_publish_time_, chat_room_status_ "
+        "FROM chat_room_info_detail WHERE room_id_=?", (rid,)
+    ).fetchone()
+    ann, editor, pubtime, status = det or ("", "", 0, 0)
+    n = len(get_chatroom_members(uname))
+
+    print(f"群: {ctx['display_name']}")
+    print(f"  username:  {uname}")
+    print(f"  id:        {rid}")
+    print(f"  群主:      {names.get(owner, owner)}  ({owner})")
+    print(f"  成员数:    {n}")
+    print(f"  状态码:    {status}")
+    if ann:
+        ann_pub = datetime.fromtimestamp(pubtime).strftime("%Y-%m-%d %H:%M") if pubtime else "?"
+        ed_name = names.get(editor, editor) if editor else ""
+        print(f"\n  📋 群公告（发布于 {ann_pub}{(' · 作者 ' + ed_name) if ed_name else ''}）:")
+        for line in ann.split("\n"):
+            print(f"    {line}")
+    else:
+        print("\n  📋 群公告: （无）")
+
+
+def cmd_group_members(args):
+    """列群成员（wxid+昵称+备注），可选批量导出头像"""
+    check_freshness()
+    from vchat_core.contacts import resolve_chat_context, get_chatroom_members
+    ctx = resolve_chat_context(args.group)
+    if not ctx:
+        print(f"❌ 找不到群: {args.group}", file=sys.stderr); sys.exit(2)
+    if not ctx["is_chatroom"]:
+        print(f"❌ {args.group} 不是群聊", file=sys.stderr); sys.exit(2)
+    members = get_chatroom_members(ctx["username"])
+    if not members:
+        print(f"❌ 群 {ctx['display_name']} 没拿到成员", file=sys.stderr); sys.exit(2)
+
+    if getattr(args, "json_out", False):
+        print(json.dumps({
+            "group": args.group, "username": ctx["username"],
+            "display_name": ctx["display_name"], "member_count": len(members),
+            "members": members,
+        }, ensure_ascii=False, indent=2))
+    else:
+        print(f"{ctx['display_name']} 共 {len(members)} 名成员：\n")
+        for m in members:
+            name = m["remark"] or m["nick_name"] or m["username"]
+            print(f"  {m['username']:35s}  {name}")
+
+    if not args.avatars:
+        return
+    import sqlite3
+    from vchat_core import _compat as core
+    db = core._cache.get("head_image/head_image.db")
+    if not db:
+        print("\n❌ head_image.db 不可用", file=sys.stderr); sys.exit(2)
+    safe_group = args.group.replace("/", "_")
+    out_dir = Path(args.output_dir or f"~/Downloads/{safe_group}_avatars").expanduser().resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ok = miss = 0
+    with connect_snapshot(db) as conn:
+        for m in members:
+            uname = m["username"]
+            row = conn.execute("SELECT image_buffer FROM head_image WHERE username = ?", (uname,)).fetchone()
+            if row and row[0] and row[0][:3] == b"\xff\xd8\xff":
+                safe = uname.replace("/", "_").replace("@", "_at_")
+                (out_dir / f"{safe}.jpg").write_bytes(row[0])
+                ok += 1
+            else:
+                miss += 1
+    print(f"\n✅ 头像 {ok}/{len(members)} 张 → {out_dir}  ({miss} 缺)")
+
+
+def cmd_search_fast(args):
+    """走 message_fts.db 集中索引（180k 行）快速全库搜"""
+    check_freshness()
+    import sqlite3
+    from vchat_core.cache import default_cache
+    fts_path = default_cache()._root / "message" / "message_fts.db"
+    if not fts_path.exists():
+        print("❌ message_fts.db 不存在", file=sys.stderr); sys.exit(2)
+    conn = connect_snapshot(fts_path)
+    id2name = {r[0]: r[1] for r in conn.execute("SELECT rowid, username FROM name2id").fetchall()}
+    from vchat_core import _compat as core
+    names = core.get_contact_names() or {}
+    pat = f"%{args.keyword}%"
+    limit = args.n or 30
+    out = [f"全库 FTS 搜「{args.keyword}」(limit {limit}):"]
+    hits = 0
+    for shard in range(4):
+        if hits >= limit: break
+        tbl = f"message_fts_v4_{shard}_content"
+        try:
+            rows = conn.execute(
+                f"SELECT c0, c4, c5, c6 FROM {tbl} WHERE c0 LIKE ? ORDER BY c6 DESC LIMIT ?",
+                (pat, limit - hits)
+            ).fetchall()
+        except sqlite3.OperationalError:
+            continue
+        for content, sid, snd, ct in rows:
+            when = datetime.fromtimestamp(ct).strftime("%Y-%m-%d %H:%M") if ct else "?"
+            sess_u = id2name.get(sid, f"?sid={sid}")
+            sess = names.get(sess_u, sess_u)
+            snd_u = id2name.get(snd, "")
+            snd_n = names.get(snd_u, snd_u) if snd_u else ""
+            line = f"  [{when}] [{sess}]"
+            if snd_n: line += f" {snd_n}:"
+            line += f" {(content or '').replace(chr(10), ' ')[:120]}"
+            out.append(line)
+            hits += 1
+            if hits >= limit: break
+    print("\n".join(out) if hits else f"全库未搜到「{args.keyword}」")
+
+
+def cmd_contacts_fast(args):
+    """走 contact_fts.db 拼音 FTS 搜联系人"""
+    check_freshness()
+    import sqlite3
+    from vchat_core.cache import default_cache
+    fts_path = default_cache()._root / "contact" / "contact_fts.db"
+    if not fts_path.exists():
+        print("❌ contact_fts.db 不存在", file=sys.stderr); sys.exit(2)
+    conn = connect_snapshot(fts_path)
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(contact_fts_v4_content)").fetchall()]
+    text_cols = [c for c in cols if c.startswith("c")][:6]
+    pat = f"%{args.query}%"
+    where = " OR ".join(f"{c} LIKE ?" for c in text_cols)
+    params = [pat] * len(text_cols) + [args.n or 30]
+    rows = conn.execute(
+        f"SELECT {', '.join(text_cols)} FROM contact_fts_v4_content WHERE {where} LIMIT ?",
+        params).fetchall()
+    if not rows:
+        print(f"未搜到「{args.query}」"); return
+    print(f"FTS contacts 搜「{args.query}」({len(rows)} 条):\n")
+    for r in rows:
+        vals = [str(v)[:30] for v in r if v]
+        print("  " + " | ".join(vals[:4]))
+
+
+def cmd_fav_search(args):
+    """走 favorite_fts.db 搜收藏夹"""
+    check_freshness()
+    import sqlite3
+    from vchat_core.cache import default_cache
+    fts_path = default_cache()._root / "favorite" / "favorite_fts.db"
+    if not fts_path.exists():
+        print("❌ favorite_fts.db 不存在", file=sys.stderr); sys.exit(2)
+    conn = connect_snapshot(fts_path)
+    pat = f"%{args.query}%"
+    rows = conn.execute(
+        "SELECT c0, c1, c2, c3 FROM fav_fts_v1_content "
+        "WHERE c0 LIKE ? ORDER BY c2 DESC LIMIT ?", (pat, args.n or 20)
+    ).fetchall()
+    if not rows:
+        print(f"收藏夹未搜到「{args.query}」"); return
+    print(f"收藏夹 FTS 搜「{args.query}」({len(rows)} 条):\n")
+    for ct, lid, ut, tp in rows:
+        when = datetime.fromtimestamp(ut).strftime("%Y-%m-%d %H:%M") if ut else "?"
+        print(f"  [{when}] type={tp} local_id={lid}")
+        print(f"    {(ct or '').replace(chr(10), ' ')[:160]}")
+
+
+def cmd_fav_tags(args):
+    """收藏夹标签 + 标签下条目数"""
+    check_freshness()
+    import sqlite3
+    from vchat_core.cache import default_cache
+    db_path = default_cache()._root / "favorite" / "favorite.db"
+    conn = connect_snapshot(db_path)
+    tags = conn.execute("SELECT local_id, name FROM fav_tag_db_item ORDER BY seq").fetchall()
+    if not tags:
+        print("（没有收藏夹标签）"); return
+    print(f"收藏夹标签（{len(tags)} 个）：\n")
+    for tid, name in tags:
+        n = conn.execute("SELECT COUNT(*) FROM fav_bind_tag_db_item WHERE tag_local_id=?", (tid,)).fetchone()[0]
+        print(f"  [{tid}]  {name}   ({n} 个收藏)")
+
+
+def cmd_search_history(args):
+    """微信内搜索历史"""
+    check_freshness()
+    import sqlite3
+    from vchat_core.cache import default_cache
+    from vchat_core import _compat as core
+    db_path = default_cache()._root / "general" / "general.db"
+    conn = connect_snapshot(db_path)
+    names = core.get_contact_names() or {}
+    rows = conn.execute(
+        "SELECT username, query, score, last_click_time FROM SearchRecent "
+        "ORDER BY last_click_time DESC LIMIT ?", (args.n or 50,)
+    ).fetchall()
+    if not rows:
+        print("（无搜索历史）"); return
+    print(f"微信内搜索历史（{len(rows)} 条）:\n")
+    for u, q, score, lt in rows:
+        when = datetime.fromtimestamp(lt).strftime("%Y-%m-%d %H:%M") if lt else "?"
+        target = names.get(u, u) if u else "(关键词搜索)"
+        print(f"  [{when}]  score={score:2d}  → {target}   query: 「{q}」")
+
+
+def cmd_forward_history(args):
+    """最近转发对象"""
+    check_freshness()
+    import sqlite3
+    from vchat_core.cache import default_cache
+    from vchat_core import _compat as core
+    db_path = default_cache()._root / "general" / "general.db"
+    conn = connect_snapshot(db_path)
+    names = core.get_contact_names() or {}
+    rows = conn.execute(
+        "SELECT username, forward_time FROM ForwardRecent ORDER BY forward_time DESC LIMIT ?",
+        (args.n or 30,)
+    ).fetchall()
+    total = conn.execute("SELECT COUNT(*) FROM ForwardRecent").fetchone()[0]
+    print(f"最近转发对象（显示 {len(rows)} / 共 {total} 个）:\n")
+    for u, ft in rows:
+        when = datetime.fromtimestamp(ft).strftime("%Y-%m-%d %H:%M") if ft else "?"
+        print(f"  [{when}]  {names.get(u, u):30s}  ({u})")
+
+
+def cmd_subscriptions(args):
+    """服务通知订阅状态"""
+    check_freshness()
+    import sqlite3
+    from vchat_core.cache import default_cache
+    from vchat_core import _compat as core
+    db_path = default_cache()._root / "general" / "general.db"
+    conn = connect_snapshot(db_path)
+    names = core.get_contact_names() or {}
+    rows = conn.execute(
+        "SELECT biz_username, template_id, is_subscribe FROM biz_subscribe_status "
+        "ORDER BY biz_username LIMIT ?", (args.n or 100,)
+    ).fetchall()
+    if not rows:
+        print("（无订阅记录）"); return
+    print(f"服务通知订阅状态（{len(rows)} 条）:\n")
+    for biz, tid, sub in rows:
+        flag = "✅订阅" if sub else "✗未订阅"
+        print(f"  {flag}  {names.get(biz, biz):25s}  template={tid[:20]}…")
+
+
+def cmd_biz_info(args):
+    """公众号详情（历史入口 url / brand 信息）"""
+    check_freshness()
+    import sqlite3, json as _json
+    from vchat_core.cache import default_cache
+    db_path = default_cache()._root / "contact" / "contact.db"
+    conn = connect_snapshot(db_path)
+    if not args.target:
+        rows = conn.execute(
+            "SELECT bi.username, c.nick_name, bi.home_url "
+            "FROM biz_info bi LEFT JOIN contact c ON c.username=bi.username LIMIT ?",
+            (args.n or 30,)).fetchall()
+        total = conn.execute("SELECT COUNT(*) FROM biz_info").fetchone()[0]
+        print(f"已加的公众号（显示 {len(rows)} / 共 {total} 个）:\n")
+        for u, name, home in rows:
+            print(f"  {u:25s}  {name or '?'}")
+        return
+
+    from vchat_core.contacts import search_contacts
+    cand = list(search_contacts(args.target, limit=10))
+    if not cand:
+        print(f"❌ 找不到: {args.target}", file=sys.stderr); sys.exit(2)
+    for c in cand:
+        row = conn.execute(
+            "SELECT username, type, home_url, external_info, brand_info, brand_icon_url "
+            "FROM biz_info WHERE username=?", (c["username"],)).fetchone()
+        if not row: continue
+        u, tp, home, ext, brand, icon = row
+        print(f"== {c['nick_name'] or u} ==")
+        print(f"  username:   {u}")
+        print(f"  type:       {tp}")
+        print(f"  home_url:   {home}")
+        if icon: print(f"  icon:       {icon[:80]}")
+        if brand:
+            try:
+                bj = _json.loads(brand)
+                if "urls" in bj:
+                    print(f"  历史入口:")
+                    for it in bj["urls"][:5]:
+                        print(f"    · {it.get('title','?')}: {it.get('url','')[:80]}")
+            except: pass
+        if ext:
+            try:
+                ej = _json.loads(ext)
+                print(f"  external:   {list(ej.keys())[:8]}")
+            except: pass
+        print()
+
+
+def cmd_msg_resource(args):
+    """消息资源元数据（svr_id / 跨端来源）"""
+    check_freshness()
+    import sqlite3
+    from vchat_core.cache import default_cache
+    conn = default_cache().get("message/message_resource.db")
+    if args.local_id:
+        rows = conn.execute(
+            "SELECT message_id, chat_id, sender_id, message_local_type, "
+            "message_create_time, message_svr_id, message_origin_source "
+            "FROM MessageResourceInfo WHERE message_local_id=? LIMIT ?",
+            (args.local_id, args.n or 20)).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT message_id, chat_id, sender_id, message_local_type, "
+            "message_create_time, message_svr_id, message_origin_source "
+            "FROM MessageResourceInfo ORDER BY message_create_time DESC LIMIT ?",
+            (args.n or 20,)).fetchall()
+    if not rows:
+        print("（无记录）"); return
+    total = conn.execute("SELECT COUNT(*) FROM MessageResourceInfo").fetchone()[0]
+    SOURCE = {0: "本机", 1: "云端", 2: "跨端"}
+    print(f"消息资源（显示 {len(rows)} / 共 {total} 条）:\n")
+    for mid, cid, snd, ltyp, ct, sid, origin in rows:
+        when = datetime.fromtimestamp(ct).strftime("%Y-%m-%d %H:%M") if ct else "?"
+        src = SOURCE.get(origin, f"src{origin}")
+        print(f"  [{when}]  msg_id={mid}  chat_id={cid}  type={ltyp}  svr_id={sid}  来源={src}")
+
+
+def cmd_deleted_sessions(args):
+    """被删除的会话"""
+    check_freshness()
+    import sqlite3
+    from vchat_core.cache import default_cache
+    from vchat_core import _compat as core
+    db_path = default_cache()._root / "session" / "session.db"
+    conn = connect_snapshot(db_path)
+    names = core.get_contact_names() or {}
+    rows = conn.execute(
+        "SELECT username, delete_time FROM SessionDeleteTable ORDER BY delete_time DESC LIMIT ?",
+        (args.n or 50,)).fetchall()
+    if not rows:
+        print("（无删除记录）"); return
+    print(f"被删除的会话（{len(rows)} 个）:\n")
+    for u, dt in rows:
+        when = datetime.fromtimestamp(dt).strftime("%Y-%m-%d %H:%M") if dt else "?"
+        print(f"  [{when}]  {names.get(u, u):30s}  ({u})")
+
+
+def cmd_emoji(args):
+    """表情包 ls/packages/export"""
+    check_freshness()
+    import sqlite3
+    from vchat_core.cache import default_cache
+    db_path = default_cache()._root / "emoticon" / "emoticon.db"
+    if not db_path.exists():
+        print("❌ emoticon.db 不存在", file=sys.stderr); sys.exit(2)
+    conn = connect_snapshot(db_path)
+    if args.action == "packages":
+        rows = conn.execute(
+            "SELECT package_id_, package_name_, sort_order_, author_, store_icon_url_ "
+            "FROM kStoreEmoticonPackageTable ORDER BY sort_order_").fetchall()
+        print(f"安装的表情包（{len(rows)} 个）:\n")
+        for pid, name, sort, author, icon in rows:
+            print(f"  [{sort}] {name or '(未命名)'}  作者={author or '?'}")
+            print(f"     id={pid}")
+        return
+    if args.action == "ls":
+        rows = conn.execute("SELECT type, md5, caption, cdn_url FROM kNonStoreEmoticonTable").fetchall()
+        print(f"收藏的散装表情（{len(rows)} 个）:\n")
+        for tp, md5, cap, url in rows[:args.n or 50]:
+            print(f"  [{tp}] {md5[:8]}…  {cap or '(无说明)'}")
+            if url: print(f"     {url[:80]}")
+        return
+    if args.action == "export":
+        if not args.target:
+            print("❌ vchat emoji-export <package_id 或 'all'>", file=sys.stderr); sys.exit(2)
+        import urllib.request
+        out_dir = Path(args.output or "~/Downloads/vchat-emoji").expanduser().resolve()
+        out_dir.mkdir(parents=True, exist_ok=True)
+        if args.target == "all":
+            rows = conn.execute("SELECT package_id_, md5_, caption_ FROM kStoreEmoticonCaptionsTable").fetchall()
+        else:
+            rows = conn.execute("SELECT package_id_, md5_, caption_ FROM kStoreEmoticonCaptionsTable WHERE package_id_=?", (args.target,)).fetchall()
+        if not rows:
+            print(f"❌ 找不到: {args.target}", file=sys.stderr); sys.exit(2)
+        url_by_md5 = {r[0]: r[1] for r in conn.execute("SELECT md5, cdn_url FROM kNonStoreEmoticonTable WHERE cdn_url IS NOT NULL").fetchall()}
+        print(f"试下载 {len(rows)} 张到 {out_dir}…")
+        ok = miss = fail = 0
+        for pkg_id, md5, caption in rows[:args.n or 200]:
+            url = url_by_md5.get(md5)
+            if not url:
+                miss += 1; continue
+            try:
+                safe_cap = (caption or md5[:8]).replace("/", "_").replace(" ", "")[:30]
+                urllib.request.urlretrieve(url, str(out_dir / f"{safe_cap}_{md5[:8]}.gif"))
+                ok += 1
+            except Exception:
+                fail += 1
+        print(f"✅ {ok} 下载 / {miss} 缺 cdn_url / {fail} 失败")
+
+
+def cmd_bizchat(args):
+    """企业微信会话 contacts/groups"""
+    check_freshness()
+    import sqlite3
+    from vchat_core.cache import default_cache
+    db_path = default_cache()._root / "bizchat" / "bizchat.db"
+    if not db_path.exists():
+        print("❌ bizchat.db 不存在", file=sys.stderr); sys.exit(2)
+    conn = connect_snapshot(db_path)
+    if args.action == "contacts":
+        rows = conn.execute("SELECT user_name, brand_user_name, head_img_url FROM user_info ORDER BY id LIMIT ?", (args.n or 50,)).fetchall()
+        total = conn.execute("SELECT COUNT(*) FROM user_info").fetchone()[0]
+        print(f"企业微信外部联系人（显示 {len(rows)} / 共 {total} 个）:\n")
+        for name, brand, head in rows:
+            print(f"  {name:25s}  brand={brand}")
+        return
+    if args.action == "groups":
+        rows = conn.execute("SELECT group_id, chat_name, owner_id, max_member_count, user_list FROM chat_group").fetchall()
+        print(f"企业微信群（{len(rows)} 个）:\n")
+        for gid, name, owner, mx, ulist in rows:
+            members = ulist.count(";") + 1 if ulist else 0
+            print(f"  {name}\n    group_id={gid}\n    owner={owner}\n    成员={members}/{mx}\n")
+
+
+def cmd_sns_likes(args):
+    """朋友圈互动记录（被读 / 点赞 / 评论）"""
+    check_freshness()
+    import sqlite3
+    from vchat_core.cache import default_cache
+    from vchat_core import _compat as core
+    db_path = default_cache()._root / "sns" / "sns.db"
+    conn = connect_snapshot(db_path)
+    names = core.get_contact_names() or {}
+    where = ""; params = []
+    if args.target:
+        from vchat_core.contacts import search_contacts
+        cand = [r["username"] for r in search_contacts(args.target, limit=20)]
+        if not cand:
+            print(f"❌ 找不到: {args.target}", file=sys.stderr); sys.exit(2)
+        where = f"WHERE username IN ({','.join('?'*len(cand))})"
+        params = cand
+    n = args.n or 30
+    rows = conn.execute(
+        f"SELECT tid, username, create_time, last_read_time, is_read "
+        f"FROM SnsTopItem_1 {where} ORDER BY last_read_time DESC LIMIT ?",
+        params + [n]).fetchall()
+    if not rows:
+        print("（无互动）"); return
+    total = conn.execute(f"SELECT COUNT(*) FROM SnsTopItem_1 {where}", params).fetchone()[0]
+    print(f"朋友圈互动条目（显示 {len(rows)} / 共 {total} 个）:\n")
+    for tid, u, ct, lr, is_read in rows:
+        ct_s = datetime.fromtimestamp(ct).strftime("%Y-%m-%d %H:%M") if ct else "?"
+        lr_s = datetime.fromtimestamp(lr).strftime("%Y-%m-%d %H:%M") if lr else "?"
+        flag = "✓已读" if is_read else "○新"
+        print(f"  发于 {ct_s}  被看 {lr_s}  {flag}  · {names.get(u, u)}  (tid={tid})")
+
+
+def cmd_sns_ads(args):
+    """朋友圈广告记录"""
+    check_freshness()
+    import sqlite3
+    from vchat_core.cache import default_cache
+    db_path = default_cache()._root / "sns" / "sns.db"
+    conn = connect_snapshot(db_path)
+    rows = conn.execute(
+        "SELECT tid, username, create_time, exposure_time, exposure_count, ad_content "
+        "FROM SnsAdTimeLine ORDER BY create_time DESC LIMIT ?", (args.n or 20,)).fetchall()
+    if not rows:
+        print("（无朋友圈广告）"); return
+    print(f"朋友圈广告（{len(rows)} 条）:\n")
+    for tid, u, ct, et, ec, ad in rows:
+        when = datetime.fromtimestamp(ct).strftime("%Y-%m-%d %H:%M") if ct else "?"
+        print(f"  [{when}]  exposure={ec}  {u}")
+        if ad: print(f"     ad: {ad[:100]}")
+
+
+def cmd_miniprogram(args):
+    """小程序联系人"""
+    check_freshness()
+    import sqlite3, json as _json
+    from vchat_core.cache import default_cache
+    db_path = default_cache()._root / "general" / "general.db"
+    conn = connect_snapshot(db_path)
+    rows = conn.execute("SELECT user_name, external_info, app_id FROM wacontact ORDER BY user_name LIMIT ?", (args.n or 100,)).fetchall()
+    total = conn.execute("SELECT COUNT(*) FROM wacontact").fetchone()[0]
+    print(f"小程序联系人（显示 {len(rows)} / 共 {total} 个）:\n")
+    for u, ext, app_id in rows:
+        body = ""
+        if ext:
+            try:
+                info = _json.loads(ext)
+                body = info.get("RegisterSource", {}).get("RegisterBody", "")
+            except: pass
+        print(f"  {u:35s}  {body[:40]}")
+
+
+def cmd_finder_lives(args):
+    """视频号直播状态"""
+    check_freshness()
+    import sqlite3
+    from vchat_core.cache import default_cache
+    db_path = default_cache()._root / "general" / "general.db"
+    conn = connect_snapshot(db_path)
+    rows = conn.execute(
+        "SELECT finder_live_id, finder_username, live_status, replay_status, charge_flag "
+        "FROM wcfinderlivestatus ORDER BY finder_live_id DESC LIMIT ?", (args.n or 30,)).fetchall()
+    if not rows:
+        print("（无直播记录）"); return
+    total = conn.execute("SELECT COUNT(*) FROM wcfinderlivestatus").fetchone()[0]
+    LIVE = {0: "未开播", 1: "直播中", 2: "已结束"}
+    REPLAY = {0: "无回放", 1: "有回放"}
+    print(f"视频号直播状态（显示 {len(rows)} / 共 {total} 场）:\n")
+    for lid, uname, ls, rs, charge in rows:
+        print(f"  live={lid}  {LIVE.get(ls,'?'):6s}  {REPLAY.get(rs,'?'):6s}  charge={charge}")
+        print(f"     主播: {uname[:30]}…")
+
+
+def cmd_external_contacts(args):
+    """跨平台外部联系人（钉钉 / 飞书 / 企微）"""
+    check_freshness()
+    import sqlite3
+    from vchat_core.cache import default_cache
+    db_path = default_cache()._root / "contact" / "contact.db"
+    conn = connect_snapshot(db_path)
+    acct = {r[0]: r[1] for r in conn.execute("SELECT lang_id, acc_type_id FROM openim_acct_type").fetchall()}
+    rows = conn.execute(
+        "SELECT lang_id, app_id, wording_id, wording, pinyin, update_time "
+        "FROM openim_wording ORDER BY update_time DESC LIMIT ?", (args.n or 50,)).fetchall()
+    total = conn.execute("SELECT COUNT(*) FROM openim_wording").fetchone()[0]
+    print(f"跨平台外部联系人（显示 {len(rows)} / 共 {total} 个）:")
+    for lid, app, wid, word, py, ut in rows:
+        plat = acct.get(lid, f"?lang={lid}")
+        when = datetime.fromtimestamp(ut).strftime("%Y-%m-%d") if ut else "?"
+        print(f"  [{plat}] {word:25s}  app={app}  ({when})")
+
+
+def cmd_watch(args):
+    """实时监听新消息（tail -f 风格）"""
+    check_freshness()
+    import sqlite3, time as _time, hashlib
+    from vchat_core.cache import default_cache
+    from vchat_core import _compat as core
+    from vchat_core.messages import find_message_table, _build_sender_map
+
+    target_username = None
+    if args.chat:
+        ctx = core._resolve_chat_context(args.chat)
+        if not ctx:
+            print(f"❌ 找不到: {args.chat}", file=sys.stderr); sys.exit(2)
+        target_username = ctx["username"]
+        print(f"▶ 监听 [{ctx['display_name']}]", file=sys.stderr)
+    else:
+        print(f"▶ 监听全部新消息", file=sys.stderr)
+
+    names = core.get_contact_names() or {}
+    cache = default_cache()
+    res_path = cache._root / "message" / "message_resource.db"
+
+    def _baseline():
+        c = connect_snapshot(res_path)
+        r = c.execute("SELECT MAX(message_id) FROM MessageResourceInfo").fetchone()
+        c.close()
+        return r[0] or 0
+
+    last = _baseline()
+    print(f"  基线 message_id = {last}", file=sys.stderr)
+
+    def _chat_map():
+        c = connect_snapshot(res_path)
+        m = {r[0]: r[1] for r in c.execute("SELECT rowid, user_name FROM ChatName2Id").fetchall()}
+        c.close()
+        return m
+
+    interval = args.interval or 5
+    keyword = args.keyword
+    try:
+        while True:
+            _time.sleep(interval)
+            c = connect_snapshot(res_path)
+            new_rows = c.execute(
+                "SELECT message_id, chat_id, sender_id, message_local_type, "
+                "message_create_time, message_local_id, message_svr_id "
+                "FROM MessageResourceInfo WHERE message_id > ? "
+                "ORDER BY message_id ASC LIMIT 200", (last,)
+            ).fetchall()
+            c.close()
+            if not new_rows: continue
+            chat_map = _chat_map()
+            for mid, cid, snd_id, ltype, ct, local_id, svr_id in new_rows:
+                last = mid
+                chat_u = chat_map.get(cid, f"?cid={cid}")
+                if target_username and chat_u != target_username: continue
+                content = ""; sender = "?"
+                try:
+                    loc = find_message_table(chat_u)
+                    if loc:
+                        db_rel, table = loc
+                        mc = cache.get(db_rel)
+                        row = mc.execute(
+                            f"SELECT message_content, real_sender_id FROM [{table}] WHERE local_id=? LIMIT 1",
+                            (local_id,)).fetchone()
+                        if row:
+                            t = row["message_content"]
+                            if isinstance(t, bytes):
+                                try: t = t.decode("utf-8")
+                                except: t = "<bytes>"
+                            content = (t or "").replace("\n", " ")[:200]
+                            smap = _build_sender_map(db_rel)
+                            wxid = smap.get(row["real_sender_id"], "")
+                            sender = names.get(wxid, wxid) if wxid else "[系统]"
+                except Exception as e:
+                    content = f"<err: {e}>"
+                if keyword and keyword not in content: continue
+                when = datetime.fromtimestamp(ct).strftime("%H:%M:%S") if ct else "?"
+                chat_disp = names.get(chat_u, chat_u)
+                tag = ""
+                if ltype == 3: tag = "[图]"
+                elif ltype == 34: tag = "[语音]"
+                elif ltype == 43: tag = "[视频]"
+                elif ltype == 47: tag = "[表情]"
+                elif ltype == 49: tag = "[卡片]"
+                print(f"[{when}] [{chat_disp}] {sender}: {tag}{content}")
+                sys.stdout.flush()
+    except KeyboardInterrupt:
+        print(f"\n▶ 停止监听（最终 message_id = {last}）", file=sys.stderr)
+
+
+def cmd_key(args):
+    """恢复微信 4.1.8x 新增库的解密密钥（frida spawn 捕获开库派生）。"""
+    from vchat_core.frida_keys import run_key_capture
+    recovered = run_key_capture(DATA_DIR, DATA_DIR / "keys.json",
+                                duration=args.duration, assume_yes=args.yes)
+    if recovered:
+        print(f"\n✅ 已恢复 {len(recovered)} 个库的密钥，跑 `vchat decrypt` 完成解密。")
+    else:
+        print("\n未恢复新密钥（可能全部库密钥有效，或窗口内未登录/开库）。")
+
+
+def cmd_decrypt(args):
+    """一键解密：扫内存 → 配 key → 解所有 db"""
+    import platform
+    from vchat_core.exitcodes import EX_UNAVAILABLE, EX_NOPERM, EX_SOFTWARE
+    sys_name = platform.system()
+    if sys_name not in ("Darwin", "Windows"):
+        print(f"❌ 暂不支持 {sys_name}", file=sys.stderr); sys.exit(EX_UNAVAILABLE)
+    from vchat_core.decrypt_pipeline import full_pipeline
+    scanner = Path(__file__).resolve().parent / "vchat_native" / "find_keys_macos"
+    cached_keys = DATA_DIR / "keys.json"
+    try:
+        from vchat_core.snapshot import active, begin, publish, refresh_lock
+        configured_root = getattr(args, 'snapshot_root', None)
+        prior = active(DATA_DIR) if configured_root is None else None
+        use_snapshot = configured_root is not None or prior is not None
+        import contextlib
+        with refresh_lock(DATA_DIR) if use_snapshot else contextlib.nullcontext():
+            output = begin(DATA_DIR, configured_root) if use_snapshot else None
+            summary = full_pipeline(scanner, DATA_DIR, cached_keys, output_root=output)
+            snapshot = publish(DATA_DIR, output, summary) if use_snapshot else None
+    except PermissionError as e:
+        hint = "sudo vchat decrypt" if sys_name == "Darwin" else "以管理员身份运行 vchat decrypt"
+        print(f"❌ {e}\n  → {hint}", file=sys.stderr); sys.exit(EX_NOPERM)
+    except RuntimeError as e:
+        print(f"❌ {e}", file=sys.stderr); sys.exit(EX_SOFTWARE)
+    if getattr(args, 'json_out', False):
+        from vchat_core.output import emit
+        emit({'command': 'decrypt', 'source_identity': snapshot['source_identity'] if snapshot else None,
+              'coverage': snapshot['coverage'] if snapshot else {
+                  'source_databases': summary['dbs_total'], 'matched_databases': summary['dbs_matched'],
+                  'successful_databases': summary['dbs_decrypted_ok'], 'failed_databases': summary['dbs_failed'],
+                  'missing_keys': summary['missing_keys'], 'upstream_sync_complete': False}}, json_mode=True)
+        return
+    print(f"\n✅ 解密完成")
+    print(f"  数据目录: {summary['data_dir']}")
+    print(f"  匹配 keys: {summary['dbs_matched']} / {summary['dbs_total']}")
+    print(f"  解密成功: {summary['dbs_decrypted_ok']}")
+    if summary.get("missing_keys"):
+        print("  未匹配库:")
+        for db_name in summary["missing_keys"]:
+            print(f"    {db_name}")
+    if summary["dbs_failed"]:
+        print(f"  失败: {summary['dbs_failed']}")
+    print(f"\n试一下：vchat doctor → vchat ls 20")
+
+
+def cmd_setup(args):
+    """一键安装：检测环境 → codesign → 编译 native → 解密"""
+    import platform
+    from vchat_core.exitcodes import EX_UNAVAILABLE
+    sys_name = platform.system()
+    if sys_name == "Windows":
+        print("▶ Windows · 直接跑 decrypt（无需 codesign / make）")
+        cmd_decrypt(args); return
+    if sys_name != "Darwin":
+        print(f"❌ setup 暂不支持 {sys_name}", file=sys.stderr); sys.exit(EX_UNAVAILABLE)
+
+    print("▶ 步骤 1/5 · 检查 WeChat.app")
+    wechat = Path("/Applications/WeChat.app")
+    if not wechat.exists():
+        print(f"❌ 没找到 {wechat}", file=sys.stderr); sys.exit(2)
+    print(f"  ✓ {wechat}")
+
+    print("\n▶ 步骤 2/5 · ad-hoc codesign")
+    if os.geteuid() != 0:
+        print("⚠ 这步需要 sudo。请用 sudo vchat setup"); sys.exit(3)
+    out = subprocess.run(["codesign", "--force", "--deep", "--sign", "-", str(wechat)],
+                         capture_output=True, text=True)
+    if out.returncode != 0:
+        print(f"❌ codesign 失败:\n{out.stderr}", file=sys.stderr); sys.exit(4)
+    print(f"  ✓ codesign 完成")
+
+    print("\n▶ 步骤 3/5 · 编译 vchat_native/find_keys_macos")
+    native_dir = Path(__file__).resolve().parent / "vchat_native"
+    out = subprocess.run(["make", "-C", str(native_dir)], capture_output=True, text=True)
+    if out.returncode != 0:
+        print(f"❌ make 失败:\n{out.stderr}", file=sys.stderr); sys.exit(5)
+    print(f"  ✓ {native_dir / 'find_keys_macos'}")
+
+    print("\n▶ 步骤 4/5 · 检查 WeChat 是否运行")
+    pid_out = subprocess.run(["pgrep", "-f", "WeChat.app/Contents/MacOS/WeChat$"],
+                             capture_output=True, text=True)
+    if pid_out.returncode != 0:
+        print("❌ WeChat 没在跑"); sys.exit(6)
+    print(f"  ✓ WeChat pid = {pid_out.stdout.split()[0]}")
+
+    print("\n▶ 步骤 5/6 · 内存扫描 + 解密 db")
+    cmd_decrypt(args)
+
+    print("\n▶ 步骤 6/6 · 扫 image_aes_key（让 files-export / sns-images 也能用）")
+    _try_extract_image_key(native_dir)
+
+
+def _try_extract_image_key(native_dir):
+    """跑 find_image_key_macos 扫 image_aes_key，写到 $DATA_DIR/config.json"""
+    import sqlite3, hashlib, json as _json
+    scanner = native_dir / "find_image_key_macos"
+    if not scanner.exists():
+        print(f"  ⚪ 跳过：{scanner} 未编译"); return
+
+    # 先找一个 V2 格式的真实 .dat 文件作 oracle
+    sample = _find_v2_dat_sample()
+    if not sample:
+        print("  ⚪ 跳过：没找到 V2 格式 .dat 文件作 oracle")
+        print("       （在微信里点开几张近期图片让缓存生成，再跑 vchat decrypt 重试）")
+        return
+    print(f"  ✓ 样本: {sample.name}")
+
+    pid_out = subprocess.run(["pgrep", "-f", "WeChat.app/Contents/MacOS/WeChat$"],
+                             capture_output=True, text=True)
+    if pid_out.returncode != 0:
+        print("  ⚪ 跳过：WeChat 未运行"); return
+    pid = pid_out.stdout.split()[0]
+
+    out = subprocess.run(
+        [str(scanner), "--pid", pid, "--sample", str(sample)],
+        capture_output=True, text=True, timeout=300
+    )
+    sys.stderr.write(out.stderr)
+    if out.returncode != 0:
+        print(f"  ⚠ image_aes_key 没扫到（returncode={out.returncode}）"); return
+
+    try:
+        result = _json.loads(out.stdout)
+    except Exception:
+        print(f"  ⚠ 输出不是 JSON: {out.stdout[:200]}"); return
+
+    # 合并写 config.json
+    cfg_path = DATA_DIR / "config.json"
+    cfg = {}
+    if cfg_path.exists():
+        try:
+            cfg = _json.loads(cfg_path.read_text())
+        except Exception:
+            cfg = {}
+    cfg.update(result)
+    # 记录 sample 作为以后增量验证
+    cfg["_image_key_sample"] = str(sample)
+    cfg["db_dir"] = str(sample.parent.parent.parent.parent.parent / "db_storage")  # 给 cmd_files 用
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg_path.write_text(_json.dumps(cfg, indent=2, ensure_ascii=False))
+    print(f"  ✓ image_aes_key 写入 {cfg_path}")
+    print(f"  ✓ files --export / sns-images 现在可用")
+
+
+def _find_v2_dat_sample():
+    """找一个 V2 格式 .dat 文件作 image key 扫描的 oracle。"""
+    candidates_root = Path.home() / "Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files"
+    if not candidates_root.exists():
+        return None
+    V2_MAGIC = b"\x07\x08V2\x08\x07"
+    # 找最新的 wxid_xxx/msg/attach/*/202*/Img/*.dat
+    for wxid_dir in candidates_root.iterdir():
+        if not wxid_dir.is_dir(): continue
+        attach = wxid_dir / "msg" / "attach"
+        if not attach.exists(): continue
+        # 找最近修改的几个 .dat 文件试
+        dats = sorted(attach.rglob("*.dat"), key=lambda p: -p.stat().st_mtime)[:30]
+        for f in dats:
+            try:
+                with open(f, "rb") as fp:
+                    head = fp.read(6)
+                if head == V2_MAGIC:
+                    return f
+            except Exception:
+                continue
+    return None
+
+
+def cmd_completion(args):
+    """shell completion（bash/zsh/fish）"""
+    cmds = sorted([
+        "ls", "search", "contacts", "contacts-fast", "history", "export",
+        "files", "friends", "finder", "finder-lives", "money", "avatar",
+        "info", "doctor", "setup", "decrypt", "watch",
+        "search-history", "forward-history", "subscriptions",
+        "biz-ls", "biz-accounts", "biz-search", "biz-articles", "biz-info",
+        "sns-ls", "sns-user", "sns-search", "sns-mentions", "sns-export",
+        "sns-images", "sns-likes", "sns-ads",
+        "voice-ls", "voice-stats", "voice-transcribe",
+        "stats-overview", "stats-top-contacts", "stats-top-groups",
+        "stats-monthly", "stats-hourly",
+        "solitaire-ls", "solitaire-show",
+        "fav-ls", "fav-export", "fav-search", "fav-tags",
+        "emoji-ls", "emoji-packages", "emoji-export",
+        "bizchat-contacts", "bizchat-groups",
+        "miniprogram", "external-contacts",
+        "revoked", "unread", "tags-ls", "tags-members",
+        "group-info", "group-members", "msg-resource", "deleted-sessions",
+        "completion",
+    ])
+    cmd_list = " ".join(cmds)
+    if args.shell == "bash":
+        print(f"""# vchat bash completion · 装到 ~/.local/share/bash-completion/completions/vchat
+_vchat_complete()
+{{
+    local cur prev cmds
+    COMPREPLY=()
+    cur="${{COMP_WORDS[COMP_CWORD]}}"
+    prev="${{COMP_WORDS[COMP_CWORD-1]}}"
+    cmds="{cmd_list}"
+    if [ "$COMP_CWORD" -eq 1 ] || [[ "$prev" == --json || "$prev" == --no-color || "$prev" == -q || "$prev" == -v ]]; then
+        COMPREPLY=( $(compgen -W "$cmds --version --help --json --no-color -q -v" -- "$cur") )
+        return 0
+    fi
+    case "$cur" in
+        -*)
+            COMPREPLY=( $(compgen -W "--help -n -o --output --json --asc --fast --all --local-id" -- "$cur") )
+            ;;
+    esac
+}}
+complete -F _vchat_complete vchat
+""")
+    elif args.shell == "zsh":
+        print(f"""#compdef vchat
+_vchat() {{
+    local -a cmds
+    cmds=({' '.join(f'"{c}"' for c in cmds)})
+    _arguments -C \\
+        '--version[show version]' \\
+        '--help[show help]' \\
+        '--json[machine-readable JSON output]' \\
+        '--no-color[disable color]' \\
+        '(-q --quiet)'{{-q,--quiet}}'[quiet mode]' \\
+        '(-v --verbose)'{{-v,--verbose}}'[verbose mode]' \\
+        '1: :->cmds' \\
+        '*: :->args'
+    case $state in
+        cmds) _values 'vchat subcommand' $cmds ;;
+        args) _files ;;
+    esac
+}}
+_vchat "$@"
+""")
+    elif args.shell == "fish":
+        print("# vchat fish completion · 装到 ~/.config/fish/completions/vchat.fish")
+        for c in cmds:
+            print(f"complete -c vchat -n '__fish_use_subcommand' -a '{c}'")
+        print("complete -c vchat -l version -d 'show version'")
+        print("complete -c vchat -l json -d 'JSON output'")
+        print("complete -c vchat -l no-color -d 'no color'")
+        print("complete -c vchat -s q -l quiet -d 'quiet'")
+        print("complete -c vchat -s v -l verbose -d 'verbose'")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 辅助
+# ═══════════════════════════════════════════════════════════════════
+
+_TYPE_TAG = {1: "", 3: "[图片]", 34: "[语音]", 43: "[视频]", 47: "[表情]", 49: "[链接/文件]"}
+
+
+def json_to_md(in_json, out_md):
+    data = json.loads(Path(in_json).read_text(encoding="utf-8"))
+    is_group = data.get("is_chatroom", data.get("is_group", False))
+    title = data.get("display_name") or data.get("chat_name") or "聊天记录"
+    exported = data.get("exported_at", 0)
+    when = datetime.fromtimestamp(exported).strftime("%Y-%m-%d %H:%M") if exported else ""
+    lines = [f"# {title}", "", f"> 导出于 {when}  共 {len(data['messages'])} 条", ""]
+    for m in data["messages"]:
+        ts = datetime.fromtimestamp(m["create_time"]).strftime("%m-%d %H:%M")
+        sender = m.get("sender_name") or "—"
+        local_type = m.get("local_type", 1)
+        content = (m.get("content") or "").strip()
+        prefix = f"**{ts}** {sender}: " if is_group or sender == "me" else f"**{ts}** "
+        if local_type == 1:
+            lines.append(prefix + content)
+        else:
+            tag = _TYPE_TAG.get(local_type, f"[type={local_type}]")
+            lines.append(prefix + (f"{tag} {content}" if content else tag))
+    Path(out_md).write_text("\n\n".join(lines), encoding="utf-8")
+
+
+def main():
+    global DECRYPTED
+    here = Path(__file__).resolve().parent
+    if str(here) not in sys.path:
+        sys.path.insert(0, str(here))
+
+    from vchat_core import __version__
+    from vchat_core.output import disable_color
+
+    p = argparse.ArgumentParser(
+        prog="vchat",
+        description="vchat — 微信本地数据查询、解密、导出 CLI（万涂幻象出品 · 个人学习用途）",
+        epilog="详见 README.md · https://github.com/xiangruiai/vantasma-toolkit",
+    )
+    p.add_argument("--version", action="version", version=f"vchat {__version__}")
+    p.add_argument("--json", dest="json_out", action="store_true",
+                   help="输出结构化 JSON（机器可读）")
+    p.add_argument("--no-color", action="store_true", help="禁用颜色输出")
+    p.add_argument("-q", "--quiet", action="store_true", help="只输出关键结果")
+    p.add_argument("-v", "--verbose", action="store_true", help="额外调试信息")
+    sub = p.add_subparsers(dest="cmd", required=True, metavar="<subcommand>")
+
+    # 基础查询
+    sp = sub.add_parser("ls", help="最近会话")
+    sp.add_argument("n", nargs="?", type=int, default=20)
+    sp.set_defaults(func=cmd_ls)
+
+    sp = sub.add_parser("search", help="搜消息")
+    sp.add_argument("keyword")
+    sp.add_argument("-c", "--chat", help="限定聊天对象")
+    sp.add_argument("-n", type=int)
+    sp.add_argument("--fast", action="store_true", help="走 message_fts.db 索引（快 10x+）")
+    sp.set_defaults(func=lambda a: cmd_search_fast(a) if a.fast else cmd_search(a))
+
+    sp = sub.add_parser("contacts-fast", help="走 contact_fts.db 拼音 FTS 搜")
+    sp.add_argument("query")
+    sp.add_argument("-n", type=int)
+    sp.set_defaults(func=cmd_contacts_fast)
+
+    sp = sub.add_parser("history", help="看历史")
+    sp.add_argument("name")
+    sp.add_argument("-n", type=int)
+    sp.add_argument("--asc", action="store_true", help="旧到新")
+    sp.add_argument("--since", default="", help="起始时间 YYYY-MM-DD / YYYY-MM-DD HH:MM")
+    sp.add_argument("--until", default="", help="结束时间 YYYY-MM-DD / YYYY-MM-DD HH:MM")
+    sp.set_defaults(func=cmd_history)
+
+    sp = sub.add_parser("contacts", help="找联系人")
+    sp.add_argument("query", nargs="?")
+    sp.add_argument("-n", type=int)
+    sp.set_defaults(func=cmd_contacts)
+
+    sp = sub.add_parser("export", help="导出 JSON/MD")
+    sp.add_argument("name")
+    sp.add_argument("-o", "--output")
+    sp.add_argument("--md", action="store_true", help="顺带生成 markdown")
+    sp.set_defaults(func=cmd_export)
+
+    # ── sns-* 拆分 ───────────────────────────────
+    def _make_sns(action):
+        def _f(a): a.action = action; cmd_sns(a) if action != "images" else cmd_sns_images(a)
+        return _f
+    for act, helptxt, need_target in [
+        ("ls", "朋友圈最近 N 条", False),
+        ("user", "某人的朋友圈", True),
+        ("search", "全朋友圈关键词搜", True),
+        ("mentions", "朋友圈互动通知", False),
+        ("export", "导出某人朋友圈到 markdown", True),
+        ("images", "解密朋友圈图片到目录", False),
+    ]:
+        sp = sub.add_parser(f"sns-{act}", help=helptxt)
+        if need_target: sp.add_argument("target", help="联系人名 / 关键词")
+        else: sp.add_argument("target", nargs="?")
+        sp.add_argument("-n", type=int)
+        sp.add_argument("-o", "--output")
+        sp.set_defaults(func=_make_sns(act))
+
+    sp = sub.add_parser("files", help="聊天附件 列/导出")
+    sp.add_argument("target", help="联系人名/群名")
+    sp.add_argument("-k", "--kind", choices=["all", "image", "video", "file"], default="all")
+    sp.add_argument("--match", action="append", default=[],
+                    help="仅匹配附件文件名的 MD5 前缀；可重复指定，作用于列表和导出")
+    sp.add_argument("--export", action="store_true", help="解密并导出（不带就只列表）")
+    sp.add_argument("-o", "--output", help="export 输出目录")
+    sp.add_argument("-n", type=int)
+    sp.set_defaults(func=cmd_files)
+
+    # ── solitaire-* 拆分 ─────────────────────────
+    def _make_sol(action):
+        def _f(a): a.action = action; cmd_solitaire(a)
+        return _f
+    for act, helptxt, need_target in [
+        ("ls", "列有接龙的群", False),
+        ("show", "看某群的接龙详情", True),
+    ]:
+        sp = sub.add_parser(f"solitaire-{act}", help=helptxt)
+        if need_target: sp.add_argument("target", help="群名")
+        else: sp.add_argument("target", nargs="?")
+        sp.add_argument("-n", type=int)
+        sp.set_defaults(func=_make_sol(act))
+
+    # ── voice-* 拆分 ─────────────────────────────
+    def _make_voice(action):
+        def _f(a): a.action = action; cmd_voice(a)
+        return _f
+    for act, helptxt, need_target in [
+        ("stats", "语音密度全局排行", False),
+        ("ls", "某聊天里的语音 local_id 列表", True),
+        ("transcribe", "转录单条语音", True),
+    ]:
+        sp = sub.add_parser(f"voice-{act}", help=helptxt)
+        if need_target: sp.add_argument("target", help="聊天对象")
+        else: sp.add_argument("target", nargs="?")
+        sp.add_argument("--local-id", type=int)
+        sp.add_argument("-n", type=int)
+        sp.set_defaults(func=_make_voice(act))
+
+    # ── fav-* 拆分 ───────────────────────────────
+    sp = sub.add_parser("fav-ls", help="收藏夹最近 N 条")
+    sp.add_argument("-n", type=int)
+    sp.set_defaults(func=lambda a: (setattr(a, "action", "ls"), cmd_fav(a)))
+
+    sp = sub.add_parser("fav-export", help="收藏夹导出为 markdown")
+    sp.add_argument("-o", "--output")
+    sp.add_argument("-n", type=int)
+    sp.set_defaults(func=lambda a: (setattr(a, "action", "export"), cmd_fav(a)))
+
+    sp = sub.add_parser("fav-search", help="收藏夹 FTS 关键词搜")
+    sp.add_argument("query", help="关键词")
+    sp.add_argument("-n", type=int)
+    sp.set_defaults(func=cmd_fav_search)
+
+    sp = sub.add_parser("fav-tags", help="收藏夹标签 + 标签下条目数")
+    sp.set_defaults(func=cmd_fav_tags)
+
+    sp = sub.add_parser("friends", help="好友请求历史")
+    sp.add_argument("-n", type=int)
+    sp.set_defaults(func=cmd_friends)
+
+    sp = sub.add_parser("finder", help="关注的视频号列表")
+    sp.add_argument("--urls", action="store_true", help="附带 channels.weixin.qq.com URL")
+    sp.set_defaults(func=cmd_finder)
+
+    sp = sub.add_parser("finder-lives", help="视频号直播状态")
+    sp.add_argument("-n", type=int)
+    sp.set_defaults(func=cmd_finder_lives)
+
+    sp = sub.add_parser("money", help="转账+红包历史（不含金额）")
+    sp.add_argument("-n", type=int)
+    sp.set_defaults(func=cmd_money)
+
+    # ── stats-* 拆分 ─────────────────────────────
+    def _make_stats(action):
+        def _f(a): a.action = action; cmd_stats(a)
+        return _f
+    for act, helptxt in [
+        ("overview", "消息总数 / 联系人数 / 时间跨度"),
+        ("top-contacts", "联系人发言量排行"),
+        ("top-groups", "群发言量排行"),
+        ("monthly", "月活跃度直方图"),
+        ("hourly", "24h 活跃度直方图"),
+    ]:
+        sp = sub.add_parser(f"stats-{act}", help=helptxt)
+        sp.add_argument("-n", type=int)
+        sp.set_defaults(func=_make_stats(act))
+
+    # ── biz-* 拆分 ───────────────────────────────
+    def _make_biz(action):
+        def _f(a): a.action = action; cmd_biz(a)
+        return _f
+    for act, helptxt, need_target in [
+        ("ls", "公众号文章最新 N 条", False),
+        ("accounts", "看过文章的公众号 top N", False),
+        ("search", "公众号文章搜", True),
+        ("articles", "看某公众号的所有文章", True),
+    ]:
+        sp = sub.add_parser(f"biz-{act}", help=helptxt)
+        if need_target: sp.add_argument("target", help="关键词 / 公众号名")
+        else: sp.add_argument("target", nargs="?")
+        sp.add_argument("-n", type=int)
+        sp.set_defaults(func=_make_biz(act))
+
+    sp = sub.add_parser("biz-info", help="公众号详情")
+    sp.add_argument("target", nargs="?")
+    sp.add_argument("-n", type=int)
+    sp.set_defaults(func=cmd_biz_info)
+
+    sp = sub.add_parser("avatar", help="导出头像（JPEG）")
+    sp.add_argument("name", nargs="?")
+    sp.add_argument("--all", action="store_true", help="批量导出全部")
+    sp.add_argument("-o", "--output-dir")
+    sp.set_defaults(func=cmd_avatar)
+
+    # v2 新命令
+    sp = sub.add_parser("setup", help="一键安装（codesign + 编译 + 解密）")
+    sp.set_defaults(func=cmd_setup)
+
+    sp = sub.add_parser("key", help="恢复新增库的解密密钥（微信 4.1.8x，重启微信捕获派生）")
+    sp.add_argument("--duration", type=int, default=600, help="等待登录/开库的秒数（默认 600）")
+    sp.add_argument("--yes", action="store_true", help="跳过重启微信的交互确认")
+    sp.set_defaults(func=cmd_key)
+
+    sp = sub.add_parser("decrypt", help="解密微信本地 db")
+    sp.add_argument('--snapshot-root', help='将本次解密结果隔离发布到快照根目录（默认 ~/.vchat/snapshots，可用 VCHAT_SNAPSHOT_ROOT 覆盖）')
+    sp.set_defaults(func=cmd_decrypt)
+
+    sp = sub.add_parser("watch", help="实时监听新消息（tail -f 风格）")
+    sp.add_argument("--chat", help="只监听某个会话")
+    sp.add_argument("--keyword", help="只显示含某关键词")
+    sp.add_argument("--interval", type=int, default=5)
+    sp.set_defaults(func=cmd_watch)
+
+    sp = sub.add_parser("completion", help="输出 shell completion 脚本")
+    sp.add_argument("shell", choices=["bash", "zsh", "fish"])
+    sp.set_defaults(func=cmd_completion)
+
+    sp = sub.add_parser("search-history", help="微信内搜索历史")
+    sp.add_argument("-n", type=int)
+    sp.set_defaults(func=cmd_search_history)
+
+    sp = sub.add_parser("forward-history", help="最近转发对象")
+    sp.add_argument("-n", type=int)
+    sp.set_defaults(func=cmd_forward_history)
+
+    sp = sub.add_parser("subscriptions", help="服务通知订阅状态")
+    sp.add_argument("-n", type=int)
+    sp.set_defaults(func=cmd_subscriptions)
+
+    sp = sub.add_parser("msg-resource", help="消息资源元数据")
+    sp.add_argument("--local-id", type=int)
+    sp.add_argument("-n", type=int)
+    sp.set_defaults(func=cmd_msg_resource)
+
+    sp = sub.add_parser("sns-ads", help="朋友圈广告记录")
+    sp.add_argument("-n", type=int)
+    sp.set_defaults(func=cmd_sns_ads)
+
+    sp = sub.add_parser("sns-likes", help="朋友圈互动记录")
+    sp.add_argument("target", nargs="?")
+    sp.add_argument("-n", type=int)
+    sp.set_defaults(func=cmd_sns_likes)
+
+    sp = sub.add_parser("deleted-sessions", help="被删除的会话")
+    sp.add_argument("-n", type=int)
+    sp.set_defaults(func=cmd_deleted_sessions)
+
+    # emoji-*
+    def _make_emoji(action):
+        def _f(a): a.action = action; cmd_emoji(a)
+        return _f
+    for act, helptxt, need_target in [
+        ("ls", "收藏的散装表情", False),
+        ("packages", "安装的表情包", False),
+        ("export", "导出表情包", True),
+    ]:
+        sp = sub.add_parser(f"emoji-{act}", help=helptxt)
+        if need_target: sp.add_argument("target", help="package_id 或 'all'")
+        else: sp.add_argument("target", nargs="?")
+        sp.add_argument("-n", type=int)
+        sp.add_argument("-o", "--output")
+        sp.set_defaults(func=_make_emoji(act))
+
+    # bizchat-*
+    def _make_bizchat(action):
+        def _f(a): a.action = action; cmd_bizchat(a)
+        return _f
+    for act, helptxt in [("contacts", "企业微信外部联系人"), ("groups", "企业微信群")]:
+        sp = sub.add_parser(f"bizchat-{act}", help=helptxt)
+        sp.add_argument("-n", type=int)
+        sp.set_defaults(func=_make_bizchat(act))
+
+    sp = sub.add_parser("miniprogram", help="小程序联系人")
+    sp.add_argument("-n", type=int)
+    sp.set_defaults(func=cmd_miniprogram)
+
+    sp = sub.add_parser("external-contacts", help="跨平台外部联系人")
+    sp.add_argument("-n", type=int)
+    sp.set_defaults(func=cmd_external_contacts)
+
+    sp = sub.add_parser("revoked", help="列被撤回的消息")
+    sp.add_argument("-n", type=int, default=50)
+    sp.set_defaults(func=cmd_revoked)
+
+    sp = sub.add_parser("unread", help="未读消息明细")
+    sp.add_argument("target", nargs="?")
+    sp.add_argument("-n", type=int)
+    sp.set_defaults(func=cmd_unread)
+
+    # tags-*
+    sp = sub.add_parser("tags-ls", help="联系人标签列表")
+    sp.set_defaults(func=lambda a: (setattr(a, "action", "ls"), setattr(a, "target", None), cmd_tags(a)))
+
+    sp = sub.add_parser("tags-members", help="某标签下的成员（启发式）")
+    sp.add_argument("target", help="标签名或 id")
+    sp.add_argument("-n", type=int)
+    sp.set_defaults(func=lambda a: (setattr(a, "action", "members"), cmd_tags(a)))
+
+    sp = sub.add_parser("group-info", help="群详情（群主/公告/成员数）")
+    sp.add_argument("group")
+    sp.set_defaults(func=cmd_group_info)
+
+    sp = sub.add_parser("group-members", help="列群成员，可批量导出头像")
+    sp.add_argument("group")
+    sp.add_argument("--avatars", action="store_true")
+    sp.add_argument("-o", "--output-dir")
+    sp.set_defaults(func=cmd_group_members)
+
+    sp = sub.add_parser("info", help="数据库状态")
+    sp.set_defaults(func=cmd_info)
+
+    sp = sub.add_parser("doctor", help="数据目录健康检查")
+    sp.set_defaults(func=cmd_doctor)
+
+    sp = sub.add_parser('corpus', help='完整快照语料统计及可中断分页导出（原生 JSON）')
+    cp = sp.add_subparsers(dest='action', required=True)
+    stats_parser = cp.add_parser('stats', help='统计全部已发布消息分片的条数与时间跨度')
+    stats_parser.add_argument('--since', default=None, help='含时区 ISO 时间，包含创建时间起点；省略表示无下界')
+    stats_parser.add_argument('--until', default=None, help='含时区 ISO 时间，不包含创建时间终点；省略表示无上界')
+    stats_parser.set_defaults(func=cmd_corpus)
+    export_parser = cp.add_parser('export', help='分页遍历全部消息表；页数不限制总语料')
+    export_parser.add_argument('--cursor', default=None, help='上一页 next_cursor；仅对同一快照有效')
+    export_parser.add_argument('--limit', type=int, default=1000, help='单页最多条数（1—1000）')
+    export_parser.add_argument('--stream', action='store_true', help='单进程 NDJSON 逐页导出，直到读完或主动停止')
+    export_parser.add_argument('--pages', type=int, default=None, help='本次最多输出 N 个 NDJSON 页；可继续最后游标')
+    export_parser.add_argument('--since', default=None, help='按消息创建时间包含此起点；与游标绑定，窗口外旧编辑需全量复核')
+    export_parser.add_argument('--until', default=None, help='按消息创建时间不包含此终点；与游标绑定')
+    export_parser.set_defaults(func=cmd_corpus)
+
+    args = p.parse_args()
+    if args.cmd == 'decrypt' and getattr(args, 'snapshot_root', None) is not None:
+        # Refresh does not read the old decrypted tree. An explicit isolated
+        # refresh may repair an invalid old pointer without falling back to it.
+        DECRYPTED = DATA_DIR / 'decrypted'
+    else:
+        DECRYPTED = get_decrypted_dir()
+    if args.no_color:
+        disable_color()
+
+    NATIVE_JSON = {"ls", "info", "doctor", "group-members", "history", "decrypt", "corpus"}
+
+    def _run(args):
+        if not getattr(args, "json_out", False) or args.cmd in NATIVE_JSON:
+            args.func(args); return
+        import io, contextlib
+        buf = io.StringIO()
+        rc = 0
+        try:
+            with contextlib.redirect_stdout(buf):
+                args.func(args)
+        except SystemExit as e:
+            rc = e.code if isinstance(e.code, int) else 1
+        json.dump({"command": args.cmd, "output_text": buf.getvalue(),
+                   "exit_code": rc, "format": "text_wrapped",
+                   "note": "this command does not yet emit native JSON."},
+                  sys.stdout, ensure_ascii=False, indent=2)
+        sys.stdout.write("\n")
+        if rc: sys.exit(rc)
+
+    try:
+        _run(args)
+    except KeyboardInterrupt:
+        print("", file=sys.stderr)
+        from vchat_core.exitcodes import EX_TEMPFAIL
+        sys.exit(EX_TEMPFAIL)
+    except BrokenPipeError:
+        sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()

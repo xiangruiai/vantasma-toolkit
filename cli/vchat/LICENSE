@@ -1,0 +1,48 @@
+MIT License
+
+Copyright (c) 2026 xiangruiai (李祥瑞) and vchat contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+──────────────────────────────────────────────────────────────────────
+
+附加条款 · ADDITIONAL TERMS (PERSONAL LEARNING ONLY)
+
+本软件仅用于个人学习与研究用途 (Personal Learning and Research Only)。
+
+1. 使用者必须仅在自己拥有合法访问权的微信账号数据上使用本软件，
+   严禁用于他人微信数据；严禁任何商业目的的批量采集、出售、转发；
+   严禁用于监控、跟踪、骚扰他人。
+
+2. 使用者必须自行确保使用行为符合所在地法律法规，包括但不限于
+   《中华人民共和国网络安全法》《个人信息保护法》《数据安全法》
+   以及微信《软件许可及服务协议》《用户协议》。
+
+3. 微信、WeChat、SQLCipher、WCDB 等名称归其各自持有人所有。本项目
+   与腾讯公司、Zetetic 等公司或开源项目无任何关联，亦未获其授权或背书。
+
+4. 一旦下载、复制、修改、分发或以任何方式使用本软件，即视为使用者
+   已阅读、理解并完整接受 MIT 协议以及本附加条款。若不接受任何一条，
+   请立即停止使用并销毁本软件副本。
+
+The Software is provided for personal learning and research only.
+Users are solely responsible for ensuring their use complies with all
+applicable laws in their jurisdiction. Commercial use, bulk data
+harvesting, unauthorized access to others' WeChat data, and any form
+of surveillance are strictly prohibited.
