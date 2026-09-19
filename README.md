@@ -247,18 +247,18 @@ cp -r skills/飞书办公/feishu-proposal ~/.claude/skills/
 
 ## 关于万涂幻象
 
-**万涂幻象是一个面向真实业务场景的企业 AI 落地实践社区。**
+**北京万涂幻象科技有限公司** · 成立于 2026 年 5 月 · 北京亦庄 · 国家信创园 WaytoAGI 模数 OPC 社区
 
-从真实业务现场出发，我们连接一线业务实践者、能力贡献者和企业团队，共同发现问题、定义场景、验证方案、交付结果，并把有效经验沉淀为可复用的案例、方法和行业 Know-how。
+万涂幻象的理念，是为硅基智能构建长期连续性的系统基础：以自研的 **Agent 上下文与主体连续性技术**为底座，在上面跑着三条业务——**企业 AI 落地**（定制开发 · FDE 深度陪跑 · 企业内训 · 项目制咨询，聚焦制造、教育、电商）、**课程与培训**（企业 AI 实战工作坊 · 个人实战课程）、**品牌宣传**（公众号「祥瑞的上下文」，230+ 篇原创）。技术不空转，每一次业务交付都是对底座的一次真实验证。
 
 | | |
 |---|---|
-| 社区与知识库 | [了解万涂幻象](https://vantasma.feishu.cn/wiki/MC1nwBft0izODokXe4acHKjZnsh) |
+| 公司业务最新介绍 | [北京万涂幻象科技有限公司 · 飞书](<https://waytoagi.feishu.cn/wiki/EAJkw9JcviTt3UkjoyXcKkLzn1W>) |
 | 开源工具箱 | [xiangruiai/vantasma-toolkit](https://github.com/xiangruiai/vantasma-toolkit) |
-| 公开工作台 | [xiangruiai.com](https://www.xiangruiai.com) |
+| 公众号 | 祥瑞的上下文 |
 | 联系 | li@xiangruiai.com |
 
-> 问题在这里被发现，方案在这里被交付，人在这里被找到。
+> 央视财经《生财有道》专访：《一人公司 解锁年轻人AI新财富》（2026 年 8 月 · CCTV-2）。问题在这里被发现，方案在这里被交付，人在这里被找到。
 
 ---
 

@@ -130,12 +130,8 @@ ERROR 必须清零。WARNING 用于人工确认，零 WARNING 不代表排版一
 
 ## 关于万涂幻象
 
-万涂幻象关注企业 AI 场景、知识管理、Agent 记忆与治理，把真实业务中的有效经验沉淀成可复用的工具和方法。
+**北京万涂幻象科技有限公司**：以自研的 Agent 上下文与主体连续性技术为底座，在上面跑着企业 AI 落地、课程与培训、品牌宣传三条业务。技术不空转，每一次业务交付都是对底座的一次真实验证。
 
+- [公司业务最新介绍（飞书）](https://waytoagi.feishu.cn/wiki/EAJkw9JcviTt3UkjoyXcKkLzn1W)
 - [万涂幻象开源工具箱](https://github.com/xiangruiai/vantasma-toolkit)
-- [公开工作台](https://www.xiangruiai.com)
 - 联系：li@xiangruiai.com
-
-## 微信赞赏
-
-项目永久免费使用。如果它帮到了你，欢迎[请祥瑞喝杯咖啡](https://pay.xiangruiai.com/?project=wechat-editorial)，支持后续维护和继续开源。赞赏完全自愿，不解锁任何功能。

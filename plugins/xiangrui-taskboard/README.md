@@ -73,11 +73,8 @@ node scripts/sync-xiangrui-taskboard.mjs --source /path/to/dashi-taskboard --wri
 
 ## 关于万涂幻象
 
-**万涂幻象是一个面向真实业务场景的企业 AI 落地实践社区。**
+**北京万涂幻象科技有限公司**：以自研的 Agent 上下文与主体连续性技术为底座，在上面跑着企业 AI 落地、课程与培训、品牌宣传三条业务。技术不空转，每一次业务交付都是对底座的一次真实验证。
 
-从真实业务现场出发，我们连接一线业务实践者、能力贡献者和企业团队，共同发现问题、定义场景、验证方案、交付结果，并把有效经验沉淀为可复用的案例、方法和行业 Know-how。
-
-- [社区与知识库](https://vantasma.feishu.cn/wiki/MC1nwBft0izODokXe4acHKjZnsh)
+- [公司业务最新介绍（飞书）](https://waytoagi.feishu.cn/wiki/EAJkw9JcviTt3UkjoyXcKkLzn1W)
 - [万涂幻象开源工具箱](https://github.com/xiangruiai/vantasma-toolkit)
-- [公开工作台](https://www.xiangruiai.com)
 - 联系：li@xiangruiai.com
