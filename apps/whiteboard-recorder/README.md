@@ -4,7 +4,7 @@
 
 祥瑞白板录制工具把白板、摄像头、录制画幅、幻灯片、素材库和提词器放在同一个工作台里。它适合用来录制讲解视频、产品演示、课程片段、异步说明和知识卡片式内容。
 
-本项目是 `xiangruiai/vantasma-toolkit` 的一部分，源码目录为 `apps/whiteboard-recorder`。
+本项目是 `xiangruiai/xiangrui-toolkit` 的一部分，源码目录为 `apps/whiteboard-recorder`。
 
 在线使用：[https://whiteboard.xiangruiai.com](https://whiteboard.xiangruiai.com)
 
@@ -30,8 +30,8 @@
 ## 安装
 
 ```bash
-git clone https://github.com/xiangruiai/vantasma-toolkit.git
-cd vantasma-toolkit/apps/whiteboard-recorder
+git clone https://github.com/xiangruiai/xiangrui-toolkit.git
+cd xiangrui-toolkit/apps/whiteboard-recorder
 npm install
 ```
 
@@ -130,5 +130,5 @@ npm run preview
 **北京万涂幻象科技有限公司**：以自研的 Agent 上下文与主体连续性技术为底座，在上面跑着企业 AI 落地、课程与培训、品牌宣传三条业务。技术不空转，每一次业务交付都是对底座的一次真实验证。
 
 - [公司业务最新介绍（飞书）](https://waytoagi.feishu.cn/wiki/EAJkw9JcviTt3UkjoyXcKkLzn1W)
-- [万涂幻象开源工具箱](https://github.com/xiangruiai/vantasma-toolkit)
+- [万涂幻象开源工具箱](https://github.com/xiangruiai/xiangrui-toolkit)
 - 联系：li@xiangruiai.com

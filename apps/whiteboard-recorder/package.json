@@ -6,7 +6,7 @@
   "homepage": "https://whiteboard.xiangruiai.com",
   "repository": {
     "type": "git",
-    "url": "https://github.com/xiangruiai/vantasma-toolkit.git",
+    "url": "https://github.com/xiangruiai/xiangrui-toolkit.git",
     "directory": "apps/whiteboard-recorder"
   },
   "author": "xiangruiai (李祥瑞 / 万涂幻象)",

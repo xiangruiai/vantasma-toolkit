@@ -46,12 +46,12 @@ ffmpeg 拼装 + 音效 + 自动封面（钩子帧）──► final.mp4
 
 最省事的方式，把下面这句话直接发给你的 AI（Claude Code / Codex / 任意能跑命令的 agent）：
 
-> 帮我安装 xiangrui-video skill：clone https://github.com/xiangruiai/vantasma-toolkit ，把里面的 `skills/内容设计/xiangrui-video` 复制到 `~/.claude/skills/xiangrui-video`，然后运行 `bash ~/.claude/skills/xiangrui-video/scripts/setup.sh --install` 把缺失的依赖装好，最后把体检结果给我看。
+> 帮我安装 xiangrui-video skill：clone https://github.com/xiangruiai/xiangrui-toolkit ，把里面的 `skills/内容设计/xiangrui-video` 复制到 `~/.claude/skills/xiangrui-video`，然后运行 `bash ~/.claude/skills/xiangrui-video/scripts/setup.sh --install` 把缺失的依赖装好，最后把体检结果给我看。
 
 手动安装也行：
 
 ```bash
-git clone --depth 1 https://github.com/xiangruiai/vantasma-toolkit.git /tmp/vt
+git clone --depth 1 https://github.com/xiangruiai/xiangrui-toolkit.git /tmp/vt
 cp -r "/tmp/vt/skills/内容设计/xiangrui-video" ~/.claude/skills/
 
 # 体检 + 一键装依赖
@@ -73,7 +73,7 @@ bash ~/.claude/skills/xiangrui-video/scripts/setup.sh --install
 或者一行命令（不动你 `~/.config/xiangrui-video/config.json` 里的换皮配置）：
 
 ```bash
-D=$(mktemp -d) && git clone --depth 1 -q https://github.com/xiangruiai/vantasma-toolkit.git "$D" && cp -rf "$D/skills/内容设计/xiangrui-video" ~/.claude/skills/ && echo "✅ xiangrui-video 已升级到最新"
+D=$(mktemp -d) && git clone --depth 1 -q https://github.com/xiangruiai/xiangrui-toolkit.git "$D" && cp -rf "$D/skills/内容设计/xiangrui-video" ~/.claude/skills/ && echo "✅ xiangrui-video 已升级到最新"
 ```
 
 依赖没动就不用再跑 setup.sh；万一提示缺依赖，补跑一次 `bash ~/.claude/skills/xiangrui-video/scripts/setup.sh --install` 即可。
@@ -141,5 +141,5 @@ MIT License.
 **北京万涂幻象科技有限公司**：以自研的 Agent 上下文与主体连续性技术为底座，在上面跑着企业 AI 落地、课程与培训、品牌宣传三条业务。技术不空转，每一次业务交付都是对底座的一次真实验证。
 
 - [公司业务最新介绍（飞书）](https://waytoagi.feishu.cn/wiki/EAJkw9JcviTt3UkjoyXcKkLzn1W)
-- [万涂幻象开源工具箱](https://github.com/xiangruiai/vantasma-toolkit)
+- [万涂幻象开源工具箱](https://github.com/xiangruiai/xiangrui-toolkit)
 - 联系：li@xiangruiai.com

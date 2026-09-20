@@ -29,7 +29,7 @@
 
 把下面这句话直接发给 Agent：
 
-> **请安装 https://github.com/xiangruiai/vantasma-toolkit/tree/main/skills/知识管理/three-layer-memory 里的 three-layer-memory Skill，安装到当前 Agent 的 skills 目录；安装后打开当前 Vault 根目录并初始化三层记忆系统，完成记忆体检后告诉我结果。**
+> **请安装 https://github.com/xiangruiai/xiangrui-toolkit/tree/main/skills/知识管理/three-layer-memory 里的 three-layer-memory Skill，安装到当前 Agent 的 skills 目录；安装后打开当前 Vault 根目录并初始化三层记忆系统，完成记忆体检后告诉我结果。**
 
 ## ✦ 手动安装
 
@@ -37,7 +37,7 @@
 
 ```bash
 python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
-  --repo xiangruiai/vantasma-toolkit \
+  --repo xiangruiai/xiangrui-toolkit \
   --path 'skills/知识管理/three-layer-memory'
 ```
 
@@ -46,8 +46,8 @@ python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-githu
 ### Claude Code
 
 ```bash
-git clone https://github.com/xiangruiai/vantasma-toolkit.git
-cp -R 'vantasma-toolkit/skills/知识管理/three-layer-memory' ~/.claude/skills/
+git clone https://github.com/xiangruiai/xiangrui-toolkit.git
+cp -R 'xiangrui-toolkit/skills/知识管理/three-layer-memory' ~/.claude/skills/
 ```
 
 安装后重启 Claude Code。
@@ -117,5 +117,5 @@ MIT。见 [LICENSE](LICENSE)。
 **北京万涂幻象科技有限公司**：以自研的 Agent 上下文与主体连续性技术为底座，在上面跑着企业 AI 落地、课程与培训、品牌宣传三条业务。技术不空转，每一次业务交付都是对底座的一次真实验证。
 
 - [公司业务最新介绍（飞书）](https://waytoagi.feishu.cn/wiki/EAJkw9JcviTt3UkjoyXcKkLzn1W)
-- [万涂幻象开源工具箱](https://github.com/xiangruiai/vantasma-toolkit)
+- [万涂幻象开源工具箱](https://github.com/xiangruiai/xiangrui-toolkit)
 - 联系：li@xiangruiai.com

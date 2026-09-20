@@ -29,7 +29,7 @@
 
 把下面这句话贴给你的 AI Agent Claude Code / Cursor / aider 都行：
 
-> **帮我安装 https://github.com/xiangruiai/vantasma-toolkit 里的 ming-li skill 路径 `skills/内容设计/ming-li/`。把整个目录 clone / 复制到 `~/.claude/skills/ming-li/`，然后给我一句话演示触发：『帮我算个八字，1990 年 5 月 1 日上午 10 点，山西出生』。**
+> **帮我安装 https://github.com/xiangruiai/xiangrui-toolkit 里的 ming-li skill 路径 `skills/内容设计/ming-li/`。把整个目录 clone / 复制到 `~/.claude/skills/ming-li/`，然后给我一句话演示触发：『帮我算个八字，1990 年 5 月 1 日上午 10 点，山西出生』。**
 
 Agent 会自动跑完。需要你介入的只有：
 
@@ -43,8 +43,8 @@ Agent 会自动跑完。需要你介入的只有：
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/xiangruiai/vantasma-toolkit.git
-cd vantasma-toolkit
+git clone https://github.com/xiangruiai/xiangrui-toolkit.git
+cd xiangrui-toolkit
 
 # 2. 复制 skill 到 Claude Code skills 目录
 cp -r skills/内容设计/ming-li ~/.claude/skills/
@@ -191,5 +191,5 @@ MIT。见根目录 `LICENSE`。
 **北京万涂幻象科技有限公司**：以自研的 Agent 上下文与主体连续性技术为底座，在上面跑着企业 AI 落地、课程与培训、品牌宣传三条业务。技术不空转，每一次业务交付都是对底座的一次真实验证。
 
 - [公司业务最新介绍（飞书）](https://waytoagi.feishu.cn/wiki/EAJkw9JcviTt3UkjoyXcKkLzn1W)
-- [万涂幻象开源工具箱](https://github.com/xiangruiai/vantasma-toolkit)
+- [万涂幻象开源工具箱](https://github.com/xiangruiai/xiangrui-toolkit)
 - 联系：li@xiangruiai.com

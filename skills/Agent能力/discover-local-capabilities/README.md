@@ -21,7 +21,7 @@ cp -R "<repo-root>/skills/Agent能力/discover-local-capabilities" "<agent-skill
 不熟悉命令行时，无论首次安装还是更新，都可以直接把下面这段发给 Agent：
 
 ```text
-请从 GitHub 仓库 xiangruiai/vantasma-toolkit 安装或更新路径 skills/Agent能力/discover-local-capabilities。如果本地目录不存在或不完整，就按全新安装恢复。先验证目标目录同时包含 SKILL.md 和 scripts/capability_map.py，再让我选择地图存储位置、Agent 和作用域。先展示零写入 setup plan，得到我的当次明确确认后再 apply。完成后运行 status，只有 installed=true 且 healthy=true 才算成功，并告诉我能力地图的精确位置、Skill/CLI/MCP/plugin 分类数量和任何 health_errors。
+请从 GitHub 仓库 xiangruiai/xiangrui-toolkit 安装或更新路径 skills/Agent能力/discover-local-capabilities。如果本地目录不存在或不完整，就按全新安装恢复。先验证目标目录同时包含 SKILL.md 和 scripts/capability_map.py，再让我选择地图存储位置、Agent 和作用域。先展示零写入 setup plan，得到我的当次明确确认后再 apply。完成后运行 status，只有 installed=true 且 healthy=true 才算成功，并告诉我能力地图的精确位置、Skill/CLI/MCP/plugin 分类数量和任何 health_errors。
 ```
 
 ## 一句话使用

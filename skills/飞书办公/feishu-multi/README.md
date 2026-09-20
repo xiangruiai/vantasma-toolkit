@@ -53,7 +53,7 @@
 
 把下面这句话贴给 Codex、Claude Code 或其他支持 Skill 的 Agent：
 
-> **帮我安装 https://github.com/xiangruiai/vantasma-toolkit 里的 feishu-multi skill，路径是 skills/飞书办公/feishu-multi。安装到当前 Agent 的 skills 目录，检查脚本权限并运行 status；确认无误后告诉我重启或开启新对话，再用“帮我双开飞书”触发。**
+> **帮我安装 https://github.com/xiangruiai/xiangrui-toolkit 里的 feishu-multi skill，路径是 skills/飞书办公/feishu-multi。安装到当前 Agent 的 skills 目录，检查脚本权限并运行 status；确认无误后告诉我重启或开启新对话，再用“帮我双开飞书”触发。**
 
 Codex 也可以使用自带的 `skill-installer` 从 GitHub 路径安装。
 
@@ -61,7 +61,7 @@ Codex 也可以使用自带的 `skill-installer` 从 GitHub 路径安装。
 
 ```bash
 python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
-  --repo xiangruiai/vantasma-toolkit \
+  --repo xiangruiai/xiangrui-toolkit \
   --path 'skills/飞书办公/feishu-multi'
 ```
 
@@ -70,8 +70,8 @@ python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-githu
 ### Claude Code 手动安装
 
 ```bash
-git clone https://github.com/xiangruiai/vantasma-toolkit.git
-cp -R 'vantasma-toolkit/skills/飞书办公/feishu-multi' ~/.claude/skills/
+git clone https://github.com/xiangruiai/xiangrui-toolkit.git
+cp -R 'xiangrui-toolkit/skills/飞书办公/feishu-multi' ~/.claude/skills/
 ```
 
 安装后重启 Claude Code。
@@ -170,5 +170,5 @@ MIT。见 [LICENSE](LICENSE)。
 **北京万涂幻象科技有限公司**：以自研的 Agent 上下文与主体连续性技术为底座，在上面跑着企业 AI 落地、课程与培训、品牌宣传三条业务。技术不空转，每一次业务交付都是对底座的一次真实验证。
 
 - [公司业务最新介绍（飞书）](https://waytoagi.feishu.cn/wiki/EAJkw9JcviTt3UkjoyXcKkLzn1W)
-- [万涂幻象开源工具箱](https://github.com/xiangruiai/vantasma-toolkit)
+- [万涂幻象开源工具箱](https://github.com/xiangruiai/xiangrui-toolkit)
 - 联系：li@xiangruiai.com

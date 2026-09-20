@@ -13,7 +13,7 @@ xiangrui-hud 不是从零编写的项目，而是在开源项目 **claude-hud** 
   - 加入万涂幻象品牌标识——首行翠绿 `❖` 前缀 + 右下角翠绿 `xiangrui-hud` wordmark（`src/render/index.ts`、`src/render/colors.ts`），可通过 `display.brand` 关闭。
   - 新增品牌翠绿 `#22a667` 配色常量与 `brand()` 上色函数。
   - 将插件标识、配置目录名、DEBUG 命名空间、日志前缀、初始化文案从 `claude-hud` 改为 `xiangrui-hud`。
-  - 重写 `package.json`、`.claude-plugin/plugin.json`、README 等品牌与市场清单，并接入 `xiangruiai/vantasma-toolkit` 工具箱的插件市场。
+  - 重写 `package.json`、`.claude-plugin/plugin.json`、README 等品牌与市场清单，并接入 `xiangruiai/xiangrui-toolkit` 工具箱的插件市场。
 
 上游的 MIT 版权声明已完整保留在本目录 [`LICENSE`](LICENSE) 中，与万涂幻象的 fork 版权声明并列。
 

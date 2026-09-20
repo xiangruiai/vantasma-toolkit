@@ -44,7 +44,7 @@ $ vchat ls 5
 
 把下面这句话贴给 Claude Code、Codex 或其他 AI Agent：
 
-> **帮我安装 https://github.com/xiangruiai/vantasma-toolkit 里的 vchat CLI（微信本地数据查询 / 解密工具），路径是 cli/vchat。按它 README 走：clone 仓库 → cd cli/vchat → bash install.sh → pip3 install cryptography zstandard → sudo vchat setup。过程中需要我输一次 sudo 密码，解密时保持微信桌面版开着并已登录。装完跑 vchat doctor 和 vchat ls 20 给我看结果，再用三五句话告诉我最常用的命令。**
+> **帮我安装 https://github.com/xiangruiai/xiangrui-toolkit 里的 vchat CLI（微信本地数据查询 / 解密工具），路径是 cli/vchat。按它 README 走：clone 仓库 → cd cli/vchat → bash install.sh → pip3 install cryptography zstandard → sudo vchat setup。过程中需要我输一次 sudo 密码，解密时保持微信桌面版开着并已登录。装完跑 vchat doctor 和 vchat ls 20 给我看结果，再用三五句话告诉我最常用的命令。**
 
 Agent 会自动跑完全程。需要你亲自介入的只有两处：
 
@@ -54,8 +54,8 @@ Agent 会自动跑完全程。需要你亲自介入的只有两处：
 ### 手动安装
 
 ```bash
-git clone https://github.com/xiangruiai/vantasma-toolkit.git
-cd vantasma-toolkit/cli/vchat
+git clone https://github.com/xiangruiai/xiangrui-toolkit.git
+cd xiangrui-toolkit/cli/vchat
 bash install.sh          # 软链到 ~/.local/bin/vchat 并检查环境
 pip3 install cryptography zstandard
 sudo vchat setup         # macOS 一键解密
@@ -216,5 +216,5 @@ Agent 要站在自己主人的角度说话，用双方原本的语气和"咱们"
 **北京万涂幻象科技有限公司**：以自研的 Agent 上下文与主体连续性技术为底座，在上面跑着企业 AI 落地、课程与培训、品牌宣传三条业务。技术不空转，每一次业务交付都是对底座的一次真实验证。
 
 - [公司业务最新介绍（飞书）](https://waytoagi.feishu.cn/wiki/EAJkw9JcviTt3UkjoyXcKkLzn1W)
-- [万涂幻象开源工具箱](https://github.com/xiangruiai/vantasma-toolkit)
+- [万涂幻象开源工具箱](https://github.com/xiangruiai/xiangrui-toolkit)
 - 联系：li@xiangruiai.com

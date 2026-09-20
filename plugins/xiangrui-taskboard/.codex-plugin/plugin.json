@@ -8,7 +8,7 @@
     "url": "https://github.com/xiangruiai"
   },
   "homepage": "https://pay.xiangruiai.com/?project=xiangrui-taskboard",
-  "repository": "https://github.com/xiangruiai/vantasma-toolkit/tree/main/plugins/xiangrui-taskboard",
+  "repository": "https://github.com/xiangruiai/xiangrui-toolkit/tree/main/plugins/xiangrui-taskboard",
   "license": "MIT",
   "keywords": ["codex", "taskboard", "kanban", "agent", "xiangrui", "vantasma"],
   "skills": "./skills/",

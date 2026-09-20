@@ -30,10 +30,10 @@
     "Jarrod Watts (原作者 · https://github.com/jarrodwatts/claude-hud)"
   ],
   "license": "MIT",
-  "homepage": "https://github.com/xiangruiai/vantasma-toolkit/tree/main/plugins/xiangrui-hud",
+  "homepage": "https://github.com/xiangruiai/xiangrui-toolkit/tree/main/plugins/xiangrui-hud",
   "repository": {
     "type": "git",
-    "url": "https://github.com/xiangruiai/vantasma-toolkit.git",
+    "url": "https://github.com/xiangruiai/xiangrui-toolkit.git",
     "directory": "plugins/xiangrui-hud"
   },
   "engines": {

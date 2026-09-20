@@ -8,14 +8,14 @@
 
 把下面这句话复制粘贴到 Claude Code 里，它会自动完成所有安装：
 
-> 帮我安装公众号数据分析 skill：从 https://github.com/xiangruiai/vantasma-toolkit clone 下来，取 `skills/数据抓取/mp-data` 目录，安装 playwright 和 chromium 依赖
+> 帮我安装公众号数据分析 skill：从 https://github.com/xiangruiai/xiangrui-toolkit clone 下来，取 `skills/数据抓取/mp-data` 目录，安装 playwright 和 chromium 依赖
 
 <details>
 <summary>或者手动安装</summary>
 
 ```bash
-git clone https://github.com/xiangruiai/vantasma-toolkit.git
-cp -r vantasma-toolkit/skills/数据抓取/mp-data ~/.claude/skills/
+git clone https://github.com/xiangruiai/xiangrui-toolkit.git
+cp -r xiangrui-toolkit/skills/数据抓取/mp-data ~/.claude/skills/
 pip install playwright && playwright install chromium
 ```
 </details>
@@ -69,5 +69,5 @@ pip install playwright && playwright install chromium
 **北京万涂幻象科技有限公司**：以自研的 Agent 上下文与主体连续性技术为底座，在上面跑着企业 AI 落地、课程与培训、品牌宣传三条业务。技术不空转，每一次业务交付都是对底座的一次真实验证。
 
 - [公司业务最新介绍（飞书）](https://waytoagi.feishu.cn/wiki/EAJkw9JcviTt3UkjoyXcKkLzn1W)
-- [万涂幻象开源工具箱](https://github.com/xiangruiai/vantasma-toolkit)
+- [万涂幻象开源工具箱](https://github.com/xiangruiai/xiangrui-toolkit)
 - 联系：li@xiangruiai.com

@@ -220,7 +220,7 @@
       "title": "用 vchat CLI 解密本地微信数据",
       "author": "李祥瑞",
       "steps": [
-        "把这句话丢给你的 agent 让它自动安装：安装 vantasma-toolkit 里的 vchat CLI（路径 cli/vchat）",
+        "把这句话丢给你的 agent 让它自动安装：安装 xiangrui-toolkit 里的 vchat CLI（路径 cli/vchat）",
         "按 README 步骤：clone 仓库",
         "bash install.sh",
         "装依赖 cryptography 和 zstandard",

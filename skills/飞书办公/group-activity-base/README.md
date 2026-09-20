@@ -43,7 +43,7 @@ XX群 · 群活跃度分析（飞书多维表格）
 
 把这句话贴给你的 AI Agent（Claude Code / Cursor / aider 都行）：
 
-> **帮我安装 https://github.com/xiangruiai/vantasma-toolkit 里的 group-activity-base skill（路径 skills/飞书办公/group-activity-base）。按它的 README：clone 仓库 → 跑该目录的 install.sh（缺 vchat 就按 cli/vchat/README.md 安装，缺 lark-cli 就 npm i -g @larksuite/cli，每一步先问我同意）→ 确认微信是 4.x 版本 → 把 skill 目录拷到 ~/.claude/skills/ → 提醒我设置 GAB_SELF_NAME 环境变量和完成 lark-cli auth 授权。**
+> **帮我安装 https://github.com/xiangruiai/xiangrui-toolkit 里的 group-activity-base skill（路径 skills/飞书办公/group-activity-base）。按它的 README：clone 仓库 → 跑该目录的 install.sh（缺 vchat 就按 cli/vchat/README.md 安装，缺 lark-cli 就 npm i -g @larksuite/cli，每一步先问我同意）→ 确认微信是 4.x 版本 → 把 skill 目录拷到 ~/.claude/skills/ → 提醒我设置 GAB_SELF_NAME 环境变量和完成 lark-cli auth 授权。**
 
 Agent 会自动跑完。需要你介入的只有：同意安装、一次 sudo 密码（vchat 解密）、lark-cli 的 OAuth 授权、还有告诉它你的显示名。
 
@@ -142,5 +142,5 @@ MIT。见 `LICENSE`。
 **北京万涂幻象科技有限公司**：以自研的 Agent 上下文与主体连续性技术为底座，在上面跑着企业 AI 落地、课程与培训、品牌宣传三条业务。技术不空转，每一次业务交付都是对底座的一次真实验证。
 
 - [公司业务最新介绍（飞书）](https://waytoagi.feishu.cn/wiki/EAJkw9JcviTt3UkjoyXcKkLzn1W)
-- [万涂幻象开源工具箱](https://github.com/xiangruiai/vantasma-toolkit)
+- [万涂幻象开源工具箱](https://github.com/xiangruiai/xiangrui-toolkit)
 - 联系：li@xiangruiai.com

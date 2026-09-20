@@ -11,14 +11,14 @@ OpenClaw 技能：飞书多维表格的完整生命周期管理 — 从零搭建
 ## 一键安装
 
 ```bash
-zsh <(curl -fsSL "https://raw.githubusercontent.com/xiangruiai/vantasma-toolkit/main/skills/飞书办公/feishu-bitable-skill/install.sh")
+zsh <(curl -fsSL "https://raw.githubusercontent.com/xiangruiai/xiangrui-toolkit/main/skills/飞书办公/feishu-bitable-skill/install.sh")
 ```
 
 或者手动安装（从 toolkit clone）：
 
 ```bash
-git clone https://github.com/xiangruiai/vantasma-toolkit.git
-zsh "vantasma-toolkit/skills/飞书办公/feishu-bitable-skill/install.sh"
+git clone https://github.com/xiangruiai/xiangrui-toolkit.git
+zsh "xiangrui-toolkit/skills/飞书办公/feishu-bitable-skill/install.sh"
 ```
 
 安装器会自动：
@@ -104,5 +104,5 @@ MIT
 **北京万涂幻象科技有限公司**：以自研的 Agent 上下文与主体连续性技术为底座，在上面跑着企业 AI 落地、课程与培训、品牌宣传三条业务。技术不空转，每一次业务交付都是对底座的一次真实验证。
 
 - [公司业务最新介绍（飞书）](https://waytoagi.feishu.cn/wiki/EAJkw9JcviTt3UkjoyXcKkLzn1W)
-- [万涂幻象开源工具箱](https://github.com/xiangruiai/vantasma-toolkit)
+- [万涂幻象开源工具箱](https://github.com/xiangruiai/xiangrui-toolkit)
 - 联系：li@xiangruiai.com

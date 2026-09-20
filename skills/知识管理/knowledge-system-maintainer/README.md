@@ -21,7 +21,7 @@
 
 ```bash
 python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
-  --repo xiangruiai/vantasma-toolkit \
+  --repo xiangruiai/xiangrui-toolkit \
   --path 'skills/知识管理/knowledge-system-maintainer'
 ```
 
@@ -30,8 +30,8 @@ python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-githu
 ### Claude Code
 
 ```bash
-git clone https://github.com/xiangruiai/vantasma-toolkit.git
-cp -R 'vantasma-toolkit/skills/知识管理/knowledge-system-maintainer' ~/.claude/skills/
+git clone https://github.com/xiangruiai/xiangrui-toolkit.git
+cp -R 'xiangrui-toolkit/skills/知识管理/knowledge-system-maintainer' ~/.claude/skills/
 ```
 
 安装后重启 Claude Code。
@@ -89,5 +89,5 @@ MIT。见 [LICENSE](LICENSE)。
 **北京万涂幻象科技有限公司**：以自研的 Agent 上下文与主体连续性技术为底座，在上面跑着企业 AI 落地、课程与培训、品牌宣传三条业务。技术不空转，每一次业务交付都是对底座的一次真实验证。
 
 - [公司业务最新介绍（飞书）](https://waytoagi.feishu.cn/wiki/EAJkw9JcviTt3UkjoyXcKkLzn1W)
-- [万涂幻象开源工具箱](https://github.com/xiangruiai/vantasma-toolkit)
+- [万涂幻象开源工具箱](https://github.com/xiangruiai/xiangrui-toolkit)
 - 联系：li@xiangruiai.com

@@ -22,20 +22,20 @@
 先克隆工具箱：
 
 ```bash
-git clone --depth 1 https://github.com/xiangruiai/vantasma-toolkit.git
+git clone --depth 1 https://github.com/xiangruiai/xiangrui-toolkit.git
 ```
 
 安装到 Codex：
 
 ```bash
-cp -R vantasma-toolkit/skills/内容设计/wechat-editorial \
+cp -R xiangrui-toolkit/skills/内容设计/wechat-editorial \
   ~/.codex/skills/wechat-editorial
 ```
 
 安装到 Claude Code：
 
 ```bash
-cp -R vantasma-toolkit/skills/内容设计/wechat-editorial \
+cp -R xiangrui-toolkit/skills/内容设计/wechat-editorial \
   ~/.claude/skills/wechat-editorial
 ```
 
@@ -44,7 +44,7 @@ cp -R vantasma-toolkit/skills/内容设计/wechat-editorial \
 ## 快速开始
 
 ```bash
-cd vantasma-toolkit/skills/内容设计/wechat-editorial
+cd xiangrui-toolkit/skills/内容设计/wechat-editorial
 python3 md_to_editorial.py examples/demo.md --open
 ```
 
@@ -133,5 +133,5 @@ ERROR 必须清零。WARNING 用于人工确认，零 WARNING 不代表排版一
 **北京万涂幻象科技有限公司**：以自研的 Agent 上下文与主体连续性技术为底座，在上面跑着企业 AI 落地、课程与培训、品牌宣传三条业务。技术不空转，每一次业务交付都是对底座的一次真实验证。
 
 - [公司业务最新介绍（飞书）](https://waytoagi.feishu.cn/wiki/EAJkw9JcviTt3UkjoyXcKkLzn1W)
-- [万涂幻象开源工具箱](https://github.com/xiangruiai/vantasma-toolkit)
+- [万涂幻象开源工具箱](https://github.com/xiangruiai/xiangrui-toolkit)
 - 联系：li@xiangruiai.com

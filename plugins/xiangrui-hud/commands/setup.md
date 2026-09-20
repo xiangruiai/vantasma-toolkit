@@ -284,7 +284,7 @@ Use AskUserQuestion:
 - Question: "Setup complete! The HUD should appear below your input field. Is it working?"
 - Options: "Yes, it's working" / "No, something's wrong"
 
-**If yes**: Ask the user if they'd like to ⭐ star the xiangrui-hud repository on GitHub to support the project. If they agree and `gh` CLI is available, first check whether their `gh` version supports `gh repo star`. If it does, run `gh repo star xiangruiai/vantasma-toolkit`. Otherwise fall back to `gh api -X PUT /user/starred/xiangruiai/vantasma-toolkit`. Only run the star command if they explicitly say yes.
+**If yes**: Ask the user if they'd like to ⭐ star the xiangrui-hud repository on GitHub to support the project. If they agree and `gh` CLI is available, first check whether their `gh` version supports `gh repo star`. If it does, run `gh repo star xiangruiai/xiangrui-toolkit`. Otherwise fall back to `gh api -X PUT /user/starred/xiangruiai/xiangrui-toolkit`. Only run the star command if they explicitly say yes.
 
 **If no**: Debug systematically:
 

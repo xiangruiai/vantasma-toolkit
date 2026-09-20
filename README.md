@@ -1,4 +1,4 @@
-# vantasma-toolkit
+# xiangrui-toolkit
 
 > 万涂幻象开源工具箱。
 >
@@ -31,7 +31,7 @@
 ## 目录结构
 
 ```
-vantasma-toolkit/
+xiangrui-toolkit/
 ├── apps/
 │   ├── whiteboard-recorder/          ← 祥瑞白板录制工具（白板 + 录制 + 摄像头 + 素材库 + 提词器）
 │   └── deepseek-harness-desktop/     ← DeepSeek Harness 桌面安装说明（完整包在 Release）
@@ -85,8 +85,8 @@ vantasma-toolkit/
 这是一个网页端白板录制工具，不需要桌面端安装。移动端访问时会提示在电脑浏览器中使用，移动端体验后续再完善。
 
 ```bash
-git clone https://github.com/xiangruiai/vantasma-toolkit.git
-cd vantasma-toolkit/apps/whiteboard-recorder
+git clone https://github.com/xiangruiai/xiangrui-toolkit.git
+cd xiangrui-toolkit/apps/whiteboard-recorder
 npm install
 npm run dev
 ```
@@ -102,7 +102,7 @@ npm run preview  # 本地预览构建产物
 
 部署时把 `apps/whiteboard-recorder` 作为项目根目录，构建命令用 `npm install && npm run build`，静态输出目录为 `dist`。摄像头、麦克风和录屏能力需要在 `localhost` 或 HTTPS 域名下使用。
 
-本工具作为 `vantasma-toolkit` 的一部分开源，不再维护单独工具仓库。白板编辑基于 Excalidraw，录制、摄像头、提词器和幻灯片工作流参考了开源生态与 Excalicord 的产品思路，具体来源和许可证说明见第三方来源说明。
+本工具作为 `xiangrui-toolkit` 的一部分开源，不再维护单独工具仓库。白板编辑基于 Excalidraw，录制、摄像头、提词器和幻灯片工作流参考了开源生态与 Excalicord 的产品思路，具体来源和许可证说明见第三方来源说明。
 
 ---
 
@@ -127,7 +127,7 @@ npm run preview  # 本地预览构建产物
 在任意 Claude Code 会话里安装：
 
 ```
-/plugin marketplace add xiangruiai/vantasma-toolkit
+/plugin marketplace add xiangruiai/xiangrui-toolkit
 /plugin install xiangrui-hud
 ```
 
@@ -143,7 +143,7 @@ npm run preview  # 本地预览构建产物
 - 安装使用：[`plugins/xiangrui-taskboard/README.md`](plugins/xiangrui-taskboard/README.md)
 
 ```bash
-codex plugin marketplace add xiangruiai/vantasma-toolkit --ref main
+codex plugin marketplace add xiangruiai/xiangrui-toolkit --ref main
 codex plugin add xiangrui-taskboard@vantasma-codex
 ```
 
@@ -160,7 +160,7 @@ codex plugin add xiangrui-taskboard@vantasma-codex
 
 安装只需要把一句话贴给 Claude Code / Codex 等 AI Agent（自动 clone → install.sh → `sudo vchat setup`，过程中需要输一次 sudo 密码、保持微信桌面版开着并已登录）：
 
-> 帮我安装 https://github.com/xiangruiai/vantasma-toolkit 里的 vchat CLI（微信本地数据查询 / 解密工具），路径是 cli/vchat。按它 README 走完整安装，装完跑 vchat doctor 和 vchat ls 20 给我看结果，再告诉我常用命令怎么用。
+> 帮我安装 https://github.com/xiangruiai/xiangrui-toolkit 里的 vchat CLI（微信本地数据查询 / 解密工具），路径是 cli/vchat。按它 README 走完整安装，装完跑 vchat doctor 和 vchat ls 20 给我看结果，再告诉我常用命令怎么用。
 
 只处理自己本机、自己账号的本地数据，全程不上传；仅供个人学习研究，详见组件目录的免责声明与 LICENSE。
 
@@ -254,7 +254,7 @@ cp -r skills/飞书办公/feishu-proposal ~/.claude/skills/
 | | |
 |---|---|
 | 公司业务最新介绍 | [北京万涂幻象科技有限公司 · 飞书](<https://waytoagi.feishu.cn/wiki/EAJkw9JcviTt3UkjoyXcKkLzn1W>) |
-| 开源工具箱 | [xiangruiai/vantasma-toolkit](https://github.com/xiangruiai/vantasma-toolkit) |
+| 开源工具箱 | [xiangruiai/xiangrui-toolkit](https://github.com/xiangruiai/xiangrui-toolkit) |
 | 公众号 | 祥瑞的上下文 |
 | 联系 | li@xiangruiai.com |
 
