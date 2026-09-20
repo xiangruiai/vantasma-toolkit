@@ -230,3 +230,10 @@ macOS 和 Linux 通过 POSIX directory-handle backend 支持发现与常规生�
 ## License
 
 遵循本仓库根目录的 [LICENSE](../../../LICENSE)。
+
+---
+
+## 微信赞赏
+
+这个项目永久免费使用。如果它帮到了你，欢迎[请祥瑞喝杯咖啡](https://pay.xiangruiai.com/?project=discover-local-capabilities)，鼓励他继续维护并开源更多实用工具。赞赏完全自愿，不解锁任何功能。
+

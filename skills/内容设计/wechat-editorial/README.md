@@ -128,6 +128,10 @@ ERROR 必须清零。WARNING 用于人工确认，零 WARNING 不代表排版一
 
 本组件的翠绿主题基于 [isjiamu/gzh-design-skill](https://github.com/isjiamu/gzh-design-skill) 的 `theme-moyu-green` 改编。上游采用 AGPL-3.0-or-later，因此 `wechat-editorial` 组件也按 AGPL-3.0-or-later 开源。修改和归属说明见 [NOTICE](NOTICE)，完整协议见 [LICENSE](LICENSE)。
 
+## 微信赞赏
+
+这个项目永久免费使用。如果它帮到了你，欢迎[请祥瑞喝杯咖啡](https://pay.xiangruiai.com/?project=wechat-editorial)，鼓励他继续维护并开源更多实用工具。赞赏完全自愿，不解锁任何功能。
+
 ## 关于万涂幻象
 
 **北京万涂幻象科技有限公司**：以自研的 Agent 上下文与主体连续性技术为底座，在上面跑着企业 AI 落地、课程与培训、品牌宣传三条业务。技术不空转，每一次业务交付都是对底座的一次真实验证。
