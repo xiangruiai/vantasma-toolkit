@@ -38,7 +38,8 @@ $ vchat ls 5
 
 ## 安装
 
-要求：macOS（Apple Silicon / Intel 均可，Windows 支持查询，解密见 `vchat setup` 提示）+ 微信桌面版已登录 + Python 3。
+要求：macOS（Apple Silicon / Intel 均可）+ 微信桌面版已登录 + Python 3。
+Windows 支持查询与解密，但微信 ≥ 4.1.8 需要先跑 `tools/win_key_capture.py` 取密钥，见下文「Windows 微信 4.x」。
 
 ### 让 Agent 自动安装（推荐）
 
@@ -68,6 +69,31 @@ sudo vchat setup         # macOS 一键解密
 - 内存扫描提取 SQLCipher key + image AES key
 - 解密所有本地 db 到 `$VCHAT_DATA_DIR/decrypted/`
 - 后续跑 `vchat decrypt` 增量更新；微信升级后新库解不出 key 时用 `vchat key` 捕获
+
+### Windows 微信 4.x（4.1.8 起需要额外一步）
+
+| 微信版本 | 取 key 方式 |
+|---|---|
+| ≤ 4.1.7 | `vchat decrypt` 直接可用（密钥缓存在内存里，`find_keys_windows` 扫 `x'<key><salt>'` 即可） |
+| ≥ 4.1.8 | 需先跑 `tools/win_key_capture.py`：密钥不再落内存，只能挂钩派生现场 |
+
+4.1.8 起微信用 AES-NI，密钥编排（key schedule）时密钥只存在于 CPU 寄存器/xmm，明文不落内存。
+实测（4.1.15.11 / Windows 11）：34 个进程 13.4 GB 可读内存扫描 0 命中；主进程 1.33 GB 逐字节
+32 字节滑窗（读取覆盖率 100%）0 命中；bcrypt 的 PBKDF2 挂钩 0 次调用。因此改成挂钩
+`Weixin.dll` 里 `aeskeygenassist` / `aesimc` 指令点，在密钥诞生那一刻取候选并用 page-1 HMAC 验真：
+
+```bash
+pip install frida pycryptodome
+# 不重启微信（推荐）：挂着，正常用微信把各库打开
+python tools/win_key_capture.py --mode attach_all --seconds 1800
+# 或重启式全量：登录瞬间所有库都会开一遍
+python tools/win_key_capture.py --mode spawn --seconds 900
+vchat decrypt
+```
+
+注意：**每个库一把独立密钥**，`session.db`（`vchat ls` 依赖）与 `message_*.db` 必须都抓到；
+没抓到的库（朋友圈/收藏/表情/媒体索引等）需要对应功能被使用过才会重新做密钥编排，
+用 `--mode attach_all` 挂着、在微信里点开它们即可。key 会增量写入 `$VCHAT_DATA_DIR/keys.json`。
 
 ### 可选依赖
 
