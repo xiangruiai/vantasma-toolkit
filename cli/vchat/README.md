@@ -72,7 +72,22 @@ sudo vchat setup         # macOS 一键解密
 ### 可选依赖
 
 - `openai-whisper` + `silk-python`：仅 `vchat voice-transcribe` 需要
+- `Pillow`：`vchat image-key --local` 的完整图片验证需要，安装到运行 vchat 的同一 Python 环境
 - WeChat 桌面版必须保持开着 + 已登录（setup / decrypt 时要扫它的内存）
+
+### macOS 图片密钥本地恢复
+
+```bash
+vchat image-key --local
+# 也可指定当前账号已缓存的 V2 样本，避免遍历附件目录：
+vchat image-key --local --sample /absolute/path/to/image.dat
+```
+
+该路径从本机 `app_data/*/kvcomm` 缓存文件名及当前账号目录推导候选，
+通过 Pillow 完整解码验证后才以 0600 权限更新配置，无需 sudo 或进程内存扫描。
+缓存缺失、账号不匹配、样本损坏或格式不支持时不会覆盖已有配置。
+算法依据：[公开实现说明](https://github.com/erbanku/weixin-cli#附件提取图片)。
+排障过程、验证和已知边界见[精简修复记录](docs/macos-image-search-repair.md)。
 
 ---
 
@@ -89,7 +104,7 @@ vchat --help     # 60+ 个子命令总览
 ```bash
 # 看与搜
 vchat history "某群" -n 5000                    # 拉一个群 5000 条历史
-vchat search "关键词" --fast                     # FTS 全库快速搜
+vchat search "关键词" --fast                     # 读取搜索内容表的兼容查询
 vchat export "某某" -o ~/Desktop/x.json          # 导出全部历史 JSON
 vchat contacts "某昵称"                          # 找单人 wxid
 

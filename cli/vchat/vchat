@@ -240,7 +240,7 @@ def cmd_sns_images(args):
     aes_key = cfg.get("image_aes_key")
     xor_key = cfg.get("image_xor_key", 0x88)
     if not aes_key:
-        print(f"config.json 缺 image_aes_key。先跑: cd {PROJECT_DIR} && .venv/bin/python find_image_key_macos.py", file=sys.stderr)
+        print("config.json 缺 image_aes_key。可先运行 vchat image-key --local 恢复并完整验证。", file=sys.stderr)
         sys.exit(2)
 
     wxid_dir = Path(cfg["db_dir"]).parent  # xwechat_files/<wxid>/
@@ -1656,88 +1656,91 @@ def cmd_group_members(args):
 
 
 def cmd_search_fast(args):
-    """走 message_fts.db 集中索引（180k 行）快速全库搜"""
+    """Search compatible message index content tables without a private tokenizer."""
     check_freshness()
-    import sqlite3
+    from contextlib import closing
     from vchat_core.cache import default_cache
+    from vchat_core.search_compat import discover_content_tables, quote_identifier
     fts_path = default_cache()._root / "message" / "message_fts.db"
     if not fts_path.exists():
         print("❌ message_fts.db 不存在", file=sys.stderr); sys.exit(2)
-    conn = connect_snapshot(fts_path)
-    id2name = {r[0]: r[1] for r in conn.execute("SELECT rowid, username FROM name2id").fetchall()}
+    limit = args.n or 30
+    rows = []
+    with closing(connect_snapshot(fts_path)) as conn:
+        id2name = {r[0]: r[1] for r in conn.execute("SELECT rowid, username FROM name2id").fetchall()}
+        tables = discover_content_tables(conn, "message", required_columns=("c0", "c4", "c5", "c6"))
+        if not tables:
+            print("❌ 未找到兼容的消息索引内容表；可使用不带 --fast 的 search。", file=sys.stderr)
+            sys.exit(2)
+        for table in tables:
+            rows.extend(conn.execute(
+                f"SELECT c0, c4, c5, c6 FROM {quote_identifier(table)} "
+                "WHERE c0 LIKE ? ORDER BY c6 DESC LIMIT ?",
+                (f"%{args.keyword}%", limit),
+            ).fetchall())
+    rows = sorted(rows, key=lambda row: row[3] or 0, reverse=True)[:limit]
     from vchat_core import _compat as core
     names = core.get_contact_names() or {}
-    pat = f"%{args.keyword}%"
-    limit = args.n or 30
-    out = [f"全库 FTS 搜「{args.keyword}」(limit {limit}):"]
-    hits = 0
-    for shard in range(4):
-        if hits >= limit: break
-        tbl = f"message_fts_v4_{shard}_content"
-        try:
-            rows = conn.execute(
-                f"SELECT c0, c4, c5, c6 FROM {tbl} WHERE c0 LIKE ? ORDER BY c6 DESC LIMIT ?",
-                (pat, limit - hits)
-            ).fetchall()
-        except sqlite3.OperationalError:
-            continue
-        for content, sid, snd, ct in rows:
-            when = datetime.fromtimestamp(ct).strftime("%Y-%m-%d %H:%M") if ct else "?"
-            sess_u = id2name.get(sid, f"?sid={sid}")
-            sess = names.get(sess_u, sess_u)
-            snd_u = id2name.get(snd, "")
-            snd_n = names.get(snd_u, snd_u) if snd_u else ""
-            line = f"  [{when}] [{sess}]"
-            if snd_n: line += f" {snd_n}:"
-            line += f" {(content or '').replace(chr(10), ' ')[:120]}"
-            out.append(line)
-            hits += 1
-            if hits >= limit: break
-    print("\n".join(out) if hits else f"全库未搜到「{args.keyword}」")
+    out = [f"索引内容搜「{args.keyword}」(limit {limit}):"]
+    for content, sid, snd, ct in rows:
+        when = datetime.fromtimestamp(ct).strftime("%Y-%m-%d %H:%M") if ct else "?"
+        sess_u = id2name.get(sid, f"?sid={sid}")
+        sess = names.get(sess_u, sess_u)
+        snd_u = id2name.get(snd, "")
+        snd_n = names.get(snd_u, snd_u) if snd_u else ""
+        line = f"  [{when}] [{sess}]"
+        if snd_n: line += f" {snd_n}:"
+        line += f" {(content or '').replace(chr(10), ' ')[:120]}"
+        out.append(line)
+    print("\n".join(out) if rows else f"索引内容未搜到「{args.keyword}」")
 
 
 def cmd_contacts_fast(args):
-    """走 contact_fts.db 拼音 FTS 搜联系人"""
+    """Search compatible contact content tables, falling back to contact.db."""
     check_freshness()
-    import sqlite3
     from vchat_core.cache import default_cache
+    from vchat_core.contacts import search_contacts
+    from vchat_core.search_compat import search_contact_content
     fts_path = default_cache()._root / "contact" / "contact_fts.db"
-    if not fts_path.exists():
-        print("❌ contact_fts.db 不存在", file=sys.stderr); sys.exit(2)
-    conn = connect_snapshot(fts_path)
-    cols = [r[1] for r in conn.execute("PRAGMA table_info(contact_fts_v4_content)").fetchall()]
-    text_cols = [c for c in cols if c.startswith("c")][:6]
-    pat = f"%{args.query}%"
-    where = " OR ".join(f"{c} LIKE ?" for c in text_cols)
-    params = [pat] * len(text_cols) + [args.n or 30]
-    rows = conn.execute(
-        f"SELECT {', '.join(text_cols)} FROM contact_fts_v4_content WHERE {where} LIMIT ?",
-        params).fetchall()
+    conn = connect_snapshot(fts_path) if fts_path.exists() else None
+    try:
+        rows = search_contact_content(conn, args.query, args.n or 30, fallback=search_contacts)
+    finally:
+        if conn is not None:
+            conn.close()
     if not rows:
         print(f"未搜到「{args.query}」"); return
-    print(f"FTS contacts 搜「{args.query}」({len(rows)} 条):\n")
+    print(f"联系人内容搜「{args.query}」({len(rows)} 条):\n")
     for r in rows:
         vals = [str(v)[:30] for v in r if v]
         print("  " + " | ".join(vals[:4]))
 
 
 def cmd_fav_search(args):
-    """走 favorite_fts.db 搜收藏夹"""
+    """Search available versions of favorite index content tables."""
     check_freshness()
-    import sqlite3
+    from contextlib import closing
     from vchat_core.cache import default_cache
+    from vchat_core.search_compat import discover_content_tables, quote_identifier
     fts_path = default_cache()._root / "favorite" / "favorite_fts.db"
     if not fts_path.exists():
         print("❌ favorite_fts.db 不存在", file=sys.stderr); sys.exit(2)
-    conn = connect_snapshot(fts_path)
-    pat = f"%{args.query}%"
-    rows = conn.execute(
-        "SELECT c0, c1, c2, c3 FROM fav_fts_v1_content "
-        "WHERE c0 LIKE ? ORDER BY c2 DESC LIMIT ?", (pat, args.n or 20)
-    ).fetchall()
+    limit = args.n or 20
+    rows = []
+    with closing(connect_snapshot(fts_path)) as conn:
+        tables = discover_content_tables(conn, "favorite", required_columns=("c0", "c1", "c2", "c3"))
+        if not tables:
+            print("❌ 未找到兼容的收藏索引内容表。", file=sys.stderr)
+            sys.exit(2)
+        for table in tables:
+            rows.extend(conn.execute(
+                f"SELECT c0, c1, c2, c3 FROM {quote_identifier(table)} "
+                "WHERE c0 LIKE ? ORDER BY c2 DESC LIMIT ?", (f"%{args.query}%", limit)
+            ).fetchall())
+    rows = sorted(rows, key=lambda row: row[2] or 0, reverse=True)[:limit]
     if not rows:
         print(f"收藏夹未搜到「{args.query}」"); return
-    print(f"收藏夹 FTS 搜「{args.query}」({len(rows)} 条):\n")
+    print(f"收藏夹内容搜「{args.query}」({len(rows)} 条):\n")
     for ct, lid, ut, tp in rows:
         when = datetime.fromtimestamp(ut).strftime("%Y-%m-%d %H:%M") if ut else "?"
         print(f"  [{when}] type={tp} local_id={lid}")
@@ -2305,80 +2308,52 @@ def cmd_setup(args):
     _try_extract_image_key(native_dir)
 
 
+def _capture_image_key(native_dir, timeout_seconds=300, sample=None):
+    """Report only safe scan status; native output may contain key material."""
+    from vchat_core.image_keys import extract_image_key
+    print(f"▶ 图片密钥扫描，最多等待 {timeout_seconds} 秒；请保持微信已登录。", flush=True)
+    result = extract_image_key(DATA_DIR, native_dir,
+                               timeout_seconds=timeout_seconds, sample=sample)
+    if result.get("success"):
+        print(f"  ✓ 候选配置已保存：{result['config_path']}", flush=True)
+        print(f"  {result.get('reason', '完整图片仍需验证')}", flush=True)
+    else:
+        print(f"  ⚠ {result.get('reason', '图片密钥未找到')}", flush=True)
+        print("  → 请先核对上方具体原因；重复同一次扫描不一定能解决。", flush=True)
+    return result
+
+
 def _try_extract_image_key(native_dir):
-    """跑 find_image_key_macos 扫 image_aes_key，写到 $DATA_DIR/config.json"""
-    import sqlite3, hashlib, json as _json
-    scanner = native_dir / "find_image_key_macos"
-    if not scanner.exists():
-        print(f"  ⚪ 跳过：{scanner} 未编译"); return
+    """Optional setup step; retry separately without re-signing or decrypting DBs."""
+    return _capture_image_key(native_dir)
 
-    # 先找一个 V2 格式的真实 .dat 文件作 oracle
-    sample = _find_v2_dat_sample()
-    if not sample:
-        print("  ⚪ 跳过：没找到 V2 格式 .dat 文件作 oracle")
-        print("       （在微信里点开几张近期图片让缓存生成，再跑 vchat decrypt 重试）")
+
+def cmd_image_key(args):
+    """Extract only the image key; leave app signatures and databases alone."""
+    import platform
+    from vchat_core.exitcodes import EX_UNAVAILABLE, EX_NOPERM, EX_SOFTWARE
+    if platform.system() != "Darwin":
+        print("❌ image-key 暂只支持 macOS", file=sys.stderr)
+        sys.exit(EX_UNAVAILABLE)
+    if not 1 <= args.timeout <= 600:
+        print("❌ --timeout 必须为 1 到 600 秒", file=sys.stderr)
+        sys.exit(2)
+    if args.local:
+        from vchat_core.local_image_keys import recover_local_image_key
+        print("▶ 从本地缓存恢复图片密钥并完整验证样本。", flush=True)
+        result = recover_local_image_key(DATA_DIR, timeout_seconds=args.timeout, sample=args.sample)
+        symbol = "✓" if result.get("success") else "⚠"
+        print(f"  {symbol} {result['reason']}", flush=True)
+        if not result.get("success"):
+            sys.exit(EX_SOFTWARE)
         return
-    print(f"  ✓ 样本: {sample.name}")
-
-    pid_out = subprocess.run(["pgrep", "-f", "WeChat.app/Contents/MacOS/WeChat$"],
-                             capture_output=True, text=True)
-    if pid_out.returncode != 0:
-        print("  ⚪ 跳过：WeChat 未运行"); return
-    pid = pid_out.stdout.split()[0]
-
-    out = subprocess.run(
-        [str(scanner), "--pid", pid, "--sample", str(sample)],
-        capture_output=True, text=True, timeout=300
-    )
-    sys.stderr.write(out.stderr)
-    if out.returncode != 0:
-        print(f"  ⚠ image_aes_key 没扫到（returncode={out.returncode}）"); return
-
-    try:
-        result = _json.loads(out.stdout)
-    except Exception:
-        print(f"  ⚠ 输出不是 JSON: {out.stdout[:200]}"); return
-
-    # 合并写 config.json
-    cfg_path = DATA_DIR / "config.json"
-    cfg = {}
-    if cfg_path.exists():
-        try:
-            cfg = _json.loads(cfg_path.read_text())
-        except Exception:
-            cfg = {}
-    cfg.update(result)
-    # 记录 sample 作为以后增量验证
-    cfg["_image_key_sample"] = str(sample)
-    cfg["db_dir"] = str(sample.parent.parent.parent.parent.parent / "db_storage")  # 给 cmd_files 用
-    cfg_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg_path.write_text(_json.dumps(cfg, indent=2, ensure_ascii=False))
-    print(f"  ✓ image_aes_key 写入 {cfg_path}")
-    print(f"  ✓ files --export / sns-images 现在可用")
-
-
-def _find_v2_dat_sample():
-    """找一个 V2 格式 .dat 文件作 image key 扫描的 oracle。"""
-    candidates_root = Path.home() / "Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files"
-    if not candidates_root.exists():
-        return None
-    V2_MAGIC = b"\x07\x08V2\x08\x07"
-    # 找最新的 wxid_xxx/msg/attach/*/202*/Img/*.dat
-    for wxid_dir in candidates_root.iterdir():
-        if not wxid_dir.is_dir(): continue
-        attach = wxid_dir / "msg" / "attach"
-        if not attach.exists(): continue
-        # 找最近修改的几个 .dat 文件试
-        dats = sorted(attach.rglob("*.dat"), key=lambda p: -p.stat().st_mtime)[:30]
-        for f in dats:
-            try:
-                with open(f, "rb") as fp:
-                    head = fp.read(6)
-                if head == V2_MAGIC:
-                    return f
-            except Exception:
-                continue
-    return None
+    if os.geteuid() != 0:
+        print("❌ 读取微信内存需要 sudo；可先运行 vchat image-key --local 尝试本地恢复。", file=sys.stderr)
+        sys.exit(EX_NOPERM)
+    native_dir = Path(__file__).resolve().parent / "vchat_native"
+    result = _capture_image_key(native_dir, args.timeout, args.sample)
+    if not result.get("success"):
+        sys.exit(EX_SOFTWARE)
 
 
 def cmd_completion(args):
@@ -2386,7 +2361,7 @@ def cmd_completion(args):
     cmds = sorted([
         "ls", "search", "contacts", "contacts-fast", "history", "export",
         "files", "friends", "finder", "finder-lives", "money", "avatar",
-        "info", "doctor", "setup", "decrypt", "watch",
+        "info", "doctor", "setup", "decrypt", "image-key", "watch",
         "search-history", "forward-history", "subscriptions",
         "biz-ls", "biz-accounts", "biz-search", "biz-articles", "biz-info",
         "sns-ls", "sns-user", "sns-search", "sns-mentions", "sns-export",
@@ -2516,10 +2491,10 @@ def main():
     sp.add_argument("keyword")
     sp.add_argument("-c", "--chat", help="限定聊天对象")
     sp.add_argument("-n", type=int)
-    sp.add_argument("--fast", action="store_true", help="走 message_fts.db 索引（快 10x+）")
+    sp.add_argument("--fast", action="store_true", help="查询兼容版本的本地消息索引内容表")
     sp.set_defaults(func=lambda a: cmd_search_fast(a) if a.fast else cmd_search(a))
 
-    sp = sub.add_parser("contacts-fast", help="走 contact_fts.db 拼音 FTS 搜")
+    sp = sub.add_parser("contacts-fast", help="联系人内容搜索（兼容不同表版本）")
     sp.add_argument("query")
     sp.add_argument("-n", type=int)
     sp.set_defaults(func=cmd_contacts_fast)
@@ -2681,6 +2656,12 @@ def main():
     # v2 新命令
     sp = sub.add_parser("setup", help="一键安装（codesign + 编译 + 解密）")
     sp.set_defaults(func=cmd_setup)
+
+    sp = sub.add_parser("image-key", help="单独提取图片密钥（不重新签名或解密数据库）")
+    sp.add_argument("--local", action="store_true", help="从 macOS 本地缓存推导并完整验证（无需 sudo，需要 Pillow）")
+    sp.add_argument("--timeout", type=int, default=300, help="扫描超时秒数（1—600，默认 300）")
+    sp.add_argument("--sample", type=Path, help="当前账号下已缓存的 V2 图片 .dat 样本")
+    sp.set_defaults(func=cmd_image_key)
 
     sp = sub.add_parser("key", help="恢复新增库的解密密钥（微信 4.1.8x，重启微信捕获派生）")
     sp.add_argument("--duration", type=int, default=600, help="等待登录/开库的秒数（默认 600）")
