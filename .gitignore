@@ -42,6 +42,7 @@ config.json
 
 # 编译产物
 cli/vchat/vchat_native/find_keys_macos
+cli/vchat/vchat_native/find_image_key_macos
 cli/vchat/__pycache__/
 
 # 临时输出

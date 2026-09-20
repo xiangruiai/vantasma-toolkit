@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import struct
 from pathlib import Path
 from typing import Optional, Tuple
@@ -117,19 +118,71 @@ def xor_decrypt(path: Path, out_path: Optional[Path] = None,
     return Path(out_path), fmt
 
 
+def normalize_aes_key(key: bytes | str) -> bytes:
+    """Accept 16 raw bytes, 32 hex characters, or the legacy 16 ASCII form.
+
+    Never include a supplied key in diagnostics or silently truncate it.
+    """
+    if isinstance(key, bytes) and len(key) == 16:
+        return key
+    if isinstance(key, str):
+        if re.fullmatch(r"[0-9a-fA-F]{32}", key):
+            return bytes.fromhex(key)
+        if len(key) == 16 and key.isascii():
+            return key.encode("ascii")
+    raise ValueError("图片 AES key 必须为 16 字节、32 位十六进制或 16 个 ASCII 字符")
+
+
+def _v2_layout(header: bytes, file_size: int) -> Optional[tuple[int, int, int]]:
+    """Validate non-overlapping AES/raw/XOR regions before decoding anything."""
+    if len(header) < 15 or header[:6] not in (V1_MAGIC_6, V2_MAGIC_6):
+        return None
+    aes_size, xor_size = struct.unpack_from("<LL", header, 6)
+    aligned = aes_size + (16 - aes_size % 16)
+    if aes_size == 0 or aligned > file_size - 15 or xor_size > file_size - 15 - aligned:
+        return None
+    return aes_size, aligned, xor_size
+
+
+def infer_v2_xor_key(path: Path, image_format: str) -> Optional[int]:
+    """Infer a candidate tail byte only when every known footer byte agrees.
+
+    Call after validating the AES-decrypted image header. JPEG/PNG terminal
+    markers constrain the tail byte, but do not replace full image decoding.
+    Other formats and inconsistent/missing footers return None.
+    """
+    footer = {"jpg": b"\xff\xd9", "png": b"\x00\x00\x00\x00IEND\xaeB\x60\x82"}.get(image_format)
+    if footer is None:
+        return None
+    with Path(path).open("rb") as stream:
+        header = stream.read(15)
+        size = os.fstat(stream.fileno()).st_size
+        layout = _v2_layout(header, size)
+        if layout is None:
+            return None
+        _, _, xor_size = layout
+        if xor_size < len(footer):
+            return None
+        stream.seek(-len(footer), os.SEEK_END)
+        encrypted_footer = stream.read(len(footer))
+    candidates = {encrypted ^ expected for encrypted, expected in zip(encrypted_footer, footer)}
+    return candidates.pop() if len(candidates) == 1 else None
+
+
 def _aes_ecb_decrypt(key: bytes, ct: bytes) -> bytes:
     """AES-128-ECB 解密 + 去 PKCS7 填充。key 必须 16 字节。"""
     if len(key) != 16:
         raise ValueError(f"AES-128 key must be 16 bytes, got {len(key)}")
     cipher = Cipher(algorithms.AES(key), modes.ECB())
-    pt = cipher.decryptor().update(ct) + cipher.decryptor().finalize()
+    decryptor = cipher.decryptor()
+    pt = decryptor.update(ct) + decryptor.finalize()
     # PKCS7 unpad
     if not pt:
-        return pt
+        raise ValueError("图片 AES 数据缺少 PKCS7 填充")
     pad = pt[-1]
-    if 0 < pad <= 16 and pt[-pad:] == bytes([pad]) * pad:
-        pt = pt[:-pad]
-    return pt
+    if not 0 < pad <= 16 or pt[-pad:] != bytes([pad]) * pad:
+        raise ValueError("图片 AES 数据的 PKCS7 填充无效")
+    return pt[:-pad]
 
 
 def v2_decrypt(path: Path, out_path: Optional[Path] = None,
@@ -154,6 +207,10 @@ def v2_decrypt(path: Path, out_path: Optional[Path] = None,
     sig = data[:6]
     if sig not in (V1_MAGIC_6, V2_MAGIC_6):
         return None, None
+    layout = _v2_layout(data[:15], len(data))
+    if layout is None:
+        return None, None
+    aes_size, aligned, xor_size = layout
 
     # V1 固定 key = md5("0")[:16]
     if sig == V1_MAGIC_6:
@@ -161,30 +218,18 @@ def v2_decrypt(path: Path, out_path: Optional[Path] = None,
     else:
         if aes_key is None:
             return None, None
-        if isinstance(aes_key, str):
-            aes_key_b = aes_key.encode("ascii")[:16]
-        else:
-            aes_key_b = aes_key[:16]
-        if len(aes_key_b) < 16:
-            return None, None
+        aes_key_b = normalize_aes_key(aes_key)
 
     if isinstance(xor_key, str):
         xor_key = int(xor_key, 0)
 
-    aes_size, xor_size = struct.unpack_from("<LL", data, 6)
-
-    # AES 填充对齐：实际密文 >= aes_size 且向上对齐到 16
-    # 若 aes_size 已是 16 倍数，还需再加 16（完整填充块）。
-    aligned = aes_size + (16 - aes_size % 16)
-
     offset = 15
-    if offset + aligned > len(data):
-        return None, None
-
     aes_data = data[offset:offset + aligned]
     try:
         dec_aes = _aes_ecb_decrypt(aes_key_b, aes_data)
     except Exception:
+        return None, None
+    if len(dec_aes) != aes_size:
         return None, None
     offset += aligned
 
@@ -230,4 +275,6 @@ __all__ = [
     "xor_decrypt",
     "detect_format",
     "detect_xor_key",
+    "normalize_aes_key",
+    "infer_v2_xor_key",
 ]
