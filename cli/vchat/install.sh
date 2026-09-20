@@ -15,13 +15,42 @@ if [ ! -f "$VCHAT" ]; then
 fi
 
 # ───────────────────────────────────────────────────────────────
-# 1. 软链到 ~/.local/bin/
+# 1. 装到 ~/.local/bin/
+#    macOS / Linux: 软链到真实脚本
+#    Windows (Git-Bash / MSYS / Cygwin): `ln -s` 会退化成复制，而复制品既丢
+#    vchat_core 的 import 路径，`#!/usr/bin/env python3` 也解析不了（Windows 只装
+#    python.exe）。所以 Windows 上改成一个 shim（可用 PYTHON=/path/to/python 覆盖）。
 # ───────────────────────────────────────────────────────────────
 BIN_DIR="$HOME/.local/bin"
 mkdir -p "$BIN_DIR"
-ln -sf "$VCHAT" "$BIN_DIR/vchat"
 chmod +x "$VCHAT"
-echo "✅ vchat 已软链到 $BIN_DIR/vchat"
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    PYTHON_BIN="${PYTHON:-$(command -v python3 || command -v python || true)}"
+    if [ -z "$PYTHON_BIN" ]; then
+      echo "❌ 没找到 python（Windows 上通常只装 python.exe，没有 python3）。"
+      echo "   装好 Python 后重跑，或显式指定：PYTHON=/c/path/to/python.exe bash install.sh"
+      exit 1
+    fi
+    # 关键：shim 里要写 Windows 能认的路径。Git-Bash 的 /c/Users/... 直接喂给
+    # 原生 python.exe 会变成 C:\c\Users\... 而报 “No such file”。cygpath -m 转成
+    # C:/Users/... （正斜杠，原生程序也认）。
+    if command -v cygpath >/dev/null 2>&1; then
+      PYTHON_WIN="$(cygpath -m "$PYTHON_BIN")"
+      VCHAT_WIN="$(cygpath -m "$VCHAT")"
+    else
+      PYTHON_WIN="$PYTHON_BIN"
+      VCHAT_WIN="$VCHAT"
+    fi
+    printf '#!/usr/bin/env bash\nexec "%s" "%s" "$@"\n' "$PYTHON_WIN" "$VCHAT_WIN" > "$BIN_DIR/vchat"
+    chmod +x "$BIN_DIR/vchat"
+    echo "✅ 已生成 shim: $BIN_DIR/vchat → $PYTHON_WIN $VCHAT_WIN"
+    ;;
+  *)
+    ln -sf "$VCHAT" "$BIN_DIR/vchat"
+    echo "✅ vchat 已软链到 $BIN_DIR/vchat"
+    ;;
+esac
 
 # ───────────────────────────────────────────────────────────────
 # 2. PATH 检查
@@ -29,7 +58,7 @@ echo "✅ vchat 已软链到 $BIN_DIR/vchat"
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
   echo ""
   echo "⚠️  ~/.local/bin 不在你的 PATH 中。"
-  echo "    把下面这行加到 ~/.zshrc 或 ~/.bash_profile:"
+  echo "    把下面这行加到 ~/.zshrc / ~/.bash_profile / ~/.bashrc 末尾:"
   echo ""
   echo "    export PATH=\"\$HOME/.local/bin:\$PATH\""
 fi
@@ -66,6 +95,10 @@ else
   echo "    然后把产物（含 decrypted/ 子目录）放到下面任一位置，或显式指定："
   echo "      export VCHAT_DATA_DIR=/path/to/your/data"
   echo ""
+  echo "    Windows 微信 4.x 就地取密钥（4.1.8 起密钥不落内存，需挂钩派生现场）："
+  echo "      python tools/win_key_capture.py --mode attach_all --seconds 900"
+  echo "      vchat decrypt"
+  echo ""
   echo "    期望的目录结构见 docs/DATA_LAYOUT.md。"
 fi
 
@@ -98,6 +131,7 @@ echo "✅ 安装完成。"
 echo ""
 echo "▶ 数据目录没就绪？一键解密："
 echo "    sudo vchat setup        # macOS · 自动 codesign + 解 17 个 db"
+echo "    Windows 微信 4.x：python tools/win_key_capture.py --mode attach_all 然后 vchat decrypt"
 echo ""
 echo "▶ 已有数据目录，试试这些："
 echo "    vchat doctor            # 检查数据完整性"

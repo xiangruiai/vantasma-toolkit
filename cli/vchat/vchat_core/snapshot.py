@@ -16,6 +16,9 @@ MANAGED_VALUE = {'version': 1, 'mode': 'isolated-snapshots-no-legacy-fallback'}
 MAX_FILES = 2048
 ROOT_ENV = 'VCHAT_SNAPSHOT_ROOT'
 DEFAULT_ROOT = Path.home() / '.vchat' / 'snapshots'
+# Windows has no os.O_NOFOLLOW / os.O_NONBLOCK (and no fcntl.flock); 0 keeps the calls valid.
+O_NOFOLLOW = getattr(os, 'O_NOFOLLOW', 0)
+O_NONBLOCK = getattr(os, 'O_NONBLOCK', 0)
 
 
 def snapshot_root(value=None):
@@ -82,7 +85,7 @@ def begin(data_dir, configured_root=None):
 
 
 def _write_new(path, value):
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | O_NOFOLLOW, 0o600)
     with os.fdopen(fd, 'w') as stream:
         json.dump(value, stream, ensure_ascii=False, sort_keys=True)
         stream.flush()
@@ -90,7 +93,7 @@ def _write_new(path, value):
 
 
 def _read_metadata(path):
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    fd = os.open(path, os.O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
     try:
         before = os.fstat(fd)
         if not stat.S_ISREG(before.st_mode) or before.st_size > 2*1024*1024 or before.st_nlink != 1:
