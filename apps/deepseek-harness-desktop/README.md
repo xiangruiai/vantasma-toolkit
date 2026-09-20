@@ -6,8 +6,8 @@
 
 ## 下载
 
-- 安装包：https://github.com/xiangruiai/deepseek-harness-desktop/releases/download/v1.2.0/DeepSeek-Harness-Desktop-1.2.0-macOS-Apple-Silicon.dmg
-- 发布页：https://github.com/xiangruiai/deepseek-harness-desktop/releases/tag/v1.2.0
+- 安装包：https://github.com/xiangruiai/xiangrui-toolkit/releases/download/v1.2.0/DeepSeek-Harness-Desktop-1.2.0-macOS-Apple-Silicon.dmg
+- 发布页：https://github.com/xiangruiai/xiangrui-toolkit/releases/tag/v1.2.0
 
 ## 安装
 
